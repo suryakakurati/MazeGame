@@ -1,0 +1,33 @@
+# .NET build output
+bin/
+obj/
+artifacts/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+*.userprefs
+*.dotCover
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+
+# Test results and coverage
+TestResults/
+coverage*.xml
+coverage*.json
+*.trx
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Local SDK installs (see HANDOFF.md if dotnet is not on PATH)
+.dotnet/
+
+# Local logs
+*.log

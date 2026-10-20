@@ -1,0 +1,38 @@
+<Project>
+
+  <!--
+    Shared build settings for every project in the solution.
+    Keeping them here guarantees the Core, Tests and UI projects are compiled
+    with identical rules, so "it builds on my machine" differences are avoided.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+
+    <!-- Nullable reference types are enabled so the compiler catches null bugs. -->
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!--
+      Warnings are errors. The Definition of Done requires a warning-free build,
+      and this is the only way to guarantee it stays that way.
+    -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Microsoft's recommended analyzer set (CAxxxx rules). -->
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+
+    <!-- Deterministic, offline-friendly output. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Deterministic>true</Deterministic>
+
+    <!--
+      CA1707: test method names use underscores (Find_AfterUnion_ReturnsSameRoot).
+      That naming convention is required by the project brief, so the rule is
+      disabled for the whole solution instead of being re-disabled per project.
+    -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+</Project>

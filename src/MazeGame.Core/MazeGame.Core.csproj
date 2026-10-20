@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>MazeGame.Core</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!--
+      Generates the XML documentation file and turns "missing XML comment"
+      (CS1591) into an error, which enforces the project rule that every
+      public type and member is documented.
+    -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+</Project>

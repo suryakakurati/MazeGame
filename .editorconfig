@@ -1,0 +1,82 @@
+# EditorConfig for the COP3503H maze game.
+# https://learn.microsoft.com/dotnet/fundamentals/code-analysis/code-style-rule-options
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{csproj,props,targets,sln,json,yml,yaml,md}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.cs]
+# ---- Language style ------------------------------------------------------
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_var_for_built_in_types = false:silent
+csharp_style_var_when_type_is_apparent = true:silent
+csharp_style_var_elsewhere = false:silent
+csharp_style_expression_bodied_methods = when_on_single_line:silent
+csharp_style_expression_bodied_constructors = when_on_single_line:silent
+csharp_style_expression_bodied_properties = true:silent
+csharp_prefer_braces = when_multiline:silent
+csharp_prefer_simple_using_statement = true:suggestion
+csharp_style_prefer_switch_expression = true:suggestion
+csharp_style_prefer_primary_constructors = false:suggestion
+dotnet_style_object_initializer = true:suggestion
+dotnet_style_collection_initializer = true:suggestion
+dotnet_style_coalesce_expression = true:suggestion
+dotnet_style_null_propagation = true:suggestion
+dotnet_style_prefer_is_null_check_over_reference_equality_method = true:warning
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:warning
+dotnet_style_readonly_field = true:warning
+
+# ---- Using directives ----------------------------------------------------
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+# ---- Naming conventions --------------------------------------------------
+# _camelCase private fields, PascalCase public members, IInterface, TType.
+dotnet_naming_rule.private_fields_are_underscore_camel.symbols = private_fields
+dotnet_naming_rule.private_fields_are_underscore_camel.style = underscore_camel
+dotnet_naming_rule.private_fields_are_underscore_camel.severity = warning
+
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+
+dotnet_naming_style.underscore_camel.capitalization = camel_case
+dotnet_naming_style.underscore_camel.required_prefix = _
+
+dotnet_naming_rule.interfaces_start_with_i.symbols = interfaces
+dotnet_naming_rule.interfaces_start_with_i.style = pascal
+dotnet_naming_rule.interfaces_start_with_i.severity = warning
+
+dotnet_naming_symbols.interfaces.applicable_kinds = interface
+
+dotnet_naming_style.pascal.capitalization = pascal_case
+
+dotnet_naming_rule.constants_are_pascal.symbols = constants
+dotnet_naming_rule.constants_are_pascal.style = pascal
+dotnet_naming_rule.constants_are_pascal.severity = suggestion
+
+dotnet_naming_symbols.constants.applicable_kinds = field
+dotnet_naming_symbols.constants.required_modifiers = const
+
+# ---- Analyzer severity tuning -------------------------------------------
+# CA1062 (validate public arguments) is useful, but the codebase documents
+# argument contracts and validates at the real public boundaries only.
+dotnet_diagnostic.CA1062.severity = none
+# Test-friendly: assert messages and exception types are already covered.
+dotnet_diagnostic.CA2201.severity = none
+
+[**/tests/**/*.cs]
+# Test names intentionally use underscores (Find_AfterUnion_ReturnsSameRoot).
+dotnet_diagnostic.CA1707.severity = none
+# Tests assert with xUnit, not ArgumentNullException checks.
+dotnet_diagnostic.CA1861.severity = none
