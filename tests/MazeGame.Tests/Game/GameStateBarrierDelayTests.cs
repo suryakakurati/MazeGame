@@ -10,10 +10,17 @@ namespace MazeGame.Tests.Game;
 /// actually see the killer stall.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The corridor level is used with a step time of one second and the default obstacle cost
-/// of 5, so a barriered cell must take exactly 5 ticks (3 seconds at the shipped 0.6 s step).
-/// These tests failed before the delay existed: the killer used to cross a barrier at its
-/// normal pace, making the barrier look like it did nothing.
+/// of 5, so a spent barriered cell must take exactly 5 ticks (3 seconds at the shipped 0.6 s
+/// step). These tests failed before the delay existed: the killer used to cross a barrier at
+/// its normal pace, making the barrier look like it did nothing.
+/// </para>
+/// <para>
+/// Seals are switched off here (<c>barrierSealSeconds: 0</c>) so these tests pin the price of
+/// a <i>spent</i> barrier alone. A fresh barrier is sealed instead, which is a different rule
+/// with its own tests in <c>GameStateSealTests</c>.
+/// </para>
 /// </remarks>
 public sealed class GameStateBarrierDelayTests
 {
@@ -22,7 +29,7 @@ public sealed class GameStateBarrierDelayTests
     [Fact]
     public void Tick_BeforeEnteringABarrier_WaitsForTheBarrier()
     {
-        var state = TestLevels.CorridorGame(enemyStepSeconds: 1.0);
+        var state = TestLevels.CorridorGame(enemyStepSeconds: 1.0, barrierSealSeconds: 0);
         Assert.True(TestLevels.PlaceBarrierAt(state, 0, 4));
         var killer = state.Enemy;
 
@@ -38,7 +45,7 @@ public sealed class GameStateBarrierDelayTests
     [Fact]
     public void Tick_WhenTheBarrierWaitIsOver_StepsOntoIt()
     {
-        var state = TestLevels.CorridorGame(enemyStepSeconds: 1.0);
+        var state = TestLevels.CorridorGame(enemyStepSeconds: 1.0, barrierSealSeconds: 0);
         Assert.True(TestLevels.PlaceBarrierAt(state, 0, 4));
 
         for (var tick = 0; tick < CostSteps; tick++)
@@ -52,7 +59,7 @@ public sealed class GameStateBarrierDelayTests
     [Fact]
     public void Tick_AfterCrossingABarrier_ResumesTheNormalPace()
     {
-        var state = TestLevels.CorridorGame(enemyStepSeconds: 1.0);
+        var state = TestLevels.CorridorGame(enemyStepSeconds: 1.0, barrierSealSeconds: 0);
         Assert.True(TestLevels.PlaceBarrierAt(state, 0, 4));
         for (var tick = 0; tick < CostSteps; tick++)
         {
@@ -68,7 +75,7 @@ public sealed class GameStateBarrierDelayTests
     public void Tick_WithABarrierOnTheRoute_StillCatchesThePlayer()
     {
         // Five ticks for the barriered cell, then one per normal cell.
-        var state = TestLevels.CorridorGame(enemyStepSeconds: 1.0);
+        var state = TestLevels.CorridorGame(enemyStepSeconds: 1.0, barrierSealSeconds: 0);
         Assert.True(TestLevels.PlaceBarrierAt(state, 0, 4));
 
         for (var tick = 0; tick < CostSteps + 4; tick++)
@@ -82,7 +89,7 @@ public sealed class GameStateBarrierDelayTests
     [Fact]
     public void Tick_WithABarrierOnThePlayersCell_DelaysTheFinalStep()
     {
-        var state = TestLevels.CorridorGame(enemyStepSeconds: 1.0);
+        var state = TestLevels.CorridorGame(enemyStepSeconds: 1.0, barrierSealSeconds: 0);
         Assert.True(TestLevels.PlaceBarrierAt(state, 0, 0));
 
         // Four normal cells bring the killer next to the player, then five ticks at the barrier.
@@ -102,7 +109,7 @@ public sealed class GameStateBarrierDelayTests
     [Fact]
     public void Tick_WithoutABarrier_UsesOneStepPerSecond()
     {
-        var state = TestLevels.CorridorGame(enemyStepSeconds: 1.0);
+        var state = TestLevels.CorridorGame(enemyStepSeconds: 1.0, barrierSealSeconds: 0);
 
         state.Tick(1.0);
 
@@ -113,7 +120,7 @@ public sealed class GameStateBarrierDelayTests
     public void Tick_WithAScaledStepTime_ScalesTheBarrierWait()
     {
         // Half-second steps: 5 cost units must take 5 * 0.5 = 2.5 seconds.
-        var state = TestLevels.CorridorGame(enemyStepSeconds: 0.5);
+        var state = TestLevels.CorridorGame(enemyStepSeconds: 0.5, barrierSealSeconds: 0);
         Assert.True(TestLevels.PlaceBarrierAt(state, 0, 4));
 
         for (var tick = 0; tick < CostSteps; tick++)

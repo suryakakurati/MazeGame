@@ -51,11 +51,14 @@ public static class GameCommands
             case GameCommand.BeginAim:
                 state.BeginBarrierPlacement();
                 break;
+            case GameCommand.BeginLureAim:
+                state.BeginLurePlacement();
+                break;
             case GameCommand.ConfirmAim:
-                state.ConfirmBarrierPlacement();
+                state.ConfirmPlacement();
                 break;
             case GameCommand.CancelAim:
-                state.CancelBarrierPlacement();
+                state.CancelPlacement();
                 break;
             case GameCommand.Quit:
                 return false;
@@ -69,9 +72,9 @@ public static class GameCommands
     /// </summary>
     private static void Move(GameState state, Direction direction)
     {
-        if (state.IsPlacingBarrier)
+        if (state.IsAiming)
         {
-            state.MoveBarrierCursor(direction);
+            state.MoveAimCursor(direction);
         }
         else
         {

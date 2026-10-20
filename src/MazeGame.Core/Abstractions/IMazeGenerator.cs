@@ -17,8 +17,10 @@ public interface IMazeGenerator
     /// </summary>
     /// <param name="options">The requested size and seed.</param>
     /// <returns>
-    /// A fully connected grid in which every cell is reachable from every other cell by
-    /// exactly one route (a perfect maze).
+    /// A fully connected grid: every cell is reachable from every other. <see cref="MazeGenerator"/>
+    /// returns a perfect maze (exactly one route between any two cells); decorators may shape it
+    /// afterwards — <see cref="DeadEndBraider"/> opens a second exit at a share of the dead ends
+    /// and <see cref="BraidedMazeGenerator"/> adds loops — but must never disconnect it.
     /// </returns>
     /// <exception cref="System.ArgumentOutOfRangeException">
     /// Thrown when <paramref name="options"/> describes fewer than one row or column.

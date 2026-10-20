@@ -530,3 +530,223 @@ change a rule, and Core must not accumulate per-frame UI state.
 over the same game starts blind (documented in `PROGRESS.md` as a known limitation). Entities
 are only drawn where `IsVisible` is true *now*; remembered cells show walls, floor and the
 player's own barriers, never the killer, keys or exit.
+
+## 2026-10-20 — Braiding is a decorator, not a change to the graded generator
+
+**Decision:** `BraidedMazeGenerator` implements `IMazeGenerator` by running another generator
+and then removing `GameConfig.ExtraLoops` (default 8) random interior walls. `MazeGenerator`
+itself is untouched, and `ExtraLoops = 0` reproduces the perfect maze exactly.
+
+**Reason:** The brief grades the Kruskal/Union-Find generator and its perfect-maze property
+(connected, acyclic, `cellCount - 1` passages), so that code must keep behaving as documented.
+Braiding is a separate, optional step whose only job is to add loops; expressing it as a
+decorator keeps both contracts honest and makes the feature removable by one config value.
+Removing `k` walls from a perfect maze always adds exactly `k` independent cycles, so the maze
+stays fully connected and the loop count is provable, not approximate.
+
+**Consequences:** A barrier can now make the killer take the long way round wherever a loop
+gives it an alternative, which is the missing half of the skill mechanic; elsewhere it still
+costs time. The extra passages are chosen from walls that are still standing and only on
+interior edges (east/south sides are collected so each wall is a candidate once), which keeps
+the outer boundary closed. Asking for more loops than there are interior walls removes every
+remaining interior wall instead of throwing, so an over-tuned debug config is still playable.
+
+## 2026-10-20 — The killer's aura is a visibility rule with a distance gate
+
+**Decision:** `GameState.IsVisible` returns the player's torch range *plus* the cells within
+`EnemyAuraRadius` (2) of the killer, but only when the killer is within `EnemyAuraDistance` (6)
+walking steps of the player. `EnemyGlow` exposes the aura cells separately so a renderer can
+tint them differently.
+
+**Reason:** The request was to see the killer's surroundings even when the route between you is
+dark, and only once it is close. Both halves are about what the player may know, so they belong
+in the same rule as the torch rather than in a renderer: the distance gate is a tactical rule,
+and putting it in the UI would let a second renderer cheat. Reusing the breadth-first walk that
+already computes sight gives the killer's exact walking distance for free, and a second short
+walk from the killer gives its aura.
+
+**Consequences:** Visibility now changes when the killer moves as well as when the player moves,
+so `AdvanceEnemy` recomputes it (one O(cells) walk per killer step — negligible at 15x15). The
+aura ignores the wall between the two of you by design: it is the killer's own light, which is
+exactly why it can be seen around a corner. `EnemyGlow` is presentation data only; nothing in
+the rules branches on it except the renderer's violet halo and the dread lighting.
+
+## 2026-10-20 — The atmosphere is code and palette, not art assets
+
+**Decision:** The look is built from `references/image.png`'s palette (deep navy, blue-grey
+stone, indigo shadow, violet) plus four procedural layers: a night gradient behind the maze, a
+moonlit highlight on wall tops, a warm lantern with a radial glow, and drifting dust inside the
+light. The killer adds a pulsing violet halo, and the lantern's flicker quickens and dims while
+the aura is on screen. No image files are loaded by the game.
+
+**Reason:** The reference is a cold blue-violet night scene with one light source. Reproducing
+that mood with shapes keeps the project dependency-free beyond Raylib, keeps the build
+reproducible on any machine, and lets every value be tuned in one file. Loading the reference
+itself would have meant an asset pipeline, a licence question, and a window that looks like a
+screenshot rather than a game.
+
+**Consequences:** The palette block at the top of `RaylibRenderer` is the single place to change
+the mood; the effects are deterministic functions of time (sines and a hashed index), so they
+never allocate state or produce different results per frame. All of it is visual only: no rule,
+no test and no Core type depends on it, which is also why the fog and aura rules stayed testable
+while the presentation changed.
+
+## 2026-10-20 — Bioluminescent cave art direction (supersedes the moonlit palette)
+
+**Decision:** The whole window is drawn as an underground cave lit by living light: rounded
+stone floor slabs, walls built from thick rounded rock strokes with a green rim, moss and
+glowing lichen, mushrooms in some cells, spore motes, faint background blooms, film grain and a
+vignette. The player is a hooded lantern-bearer, the killer a spindly rim-lit silhouette, keys
+are glowing fungus, the exit is a stone arch and barriers are thorn barricades. The palette is
+green, pink and cyan on near-black teal (replacing the blue-violet night palette).
+
+**Reason:** The previous pass still read as "basic circles on a gradient". Making it feel like a
+finished indie game means every element needs a silhouette and a light source: walls should look
+like rock rather than boxes, collectibles like things growing out of the cave, and characters
+like characters. Drawing it from primitives keeps the project free of an asset pipeline and
+lets the whole look be tuned in one file, while the roundness and per-cell hashes make it feel
+hand-placed rather than generated.
+
+**Consequences:** Cells grew to 40 px (window 656x760) so the figures have room. Walls are drawn
+in two passes — all rock first, then all lit rims/moss/lichen — because a shared wall is drawn
+by both of its cells and the neighbour's dark stroke would otherwise cover the first cell's rim.
+Every detail is derived from a hash of the cell (or the index and clock for motes and grain), so
+there is no random state and the cave is identical between frames. Feeding the drawing calls
+costs **0.7–1.0 ms per frame** on this machine (400 frames at 656x760, measured: 0.71 ms in
+the final run, 1.03 ms before the moss pass), so the CPU-side budget is not a concern; the GPU
+cost could not be measured here because the environment has no usable frame buffer.
+
+## 2026-10-20 — Dead ends are braided by a second decorator, and the share is measured
+
+**Decision:** `DeadEndBraider` wraps the generator and opens one extra wall at
+`GameConfig.DeadEndBraidPercent` (55%) of the maze's dead ends. `BraidedMazeGenerator` still
+runs afterwards for `ExtraLoops` (8) random loops. Both are decorators, so `MazeGenerator`
+keeps its perfect-maze guarantee and either feature can be switched off from the config.
+
+**Reason:** Play-testing found that being cornered was the default outcome, not a mistake.
+Measured over 8 seeds of the 15x15 game, a perfect maze has 64.5 dead ends and the old
+perfect + 8 loops configuration still had 57 — a quarter of the map is a trap. Scattering
+random walls cannot fix that, because random walls do not systematically remove traps. Opening
+one wall per dead end does: removing a wall can never create a new dead end, so the count can
+only fall, and the dead ends that disappear are exactly the corners a chase ends in.
+
+**Consequences:** The shipped maze now has 18.8 dead ends instead of 57, and the share of the
+killer's route cells where a barrier can force a detour rose from 40% to 81%. Two neighbouring
+dead ends can share the wall between them, so one opening braids two of them: the loop counts
+*braided cells* rather than openings, skips a dead end a neighbour already fixed, and stops as
+soon as the requested share is reached, so the maze never gains more holes than asked for. Ends
+of a one-row maze are dead ends whose three walls are all on the boundary; those are skipped
+rather than throwing, so a tiny debug maze degrades to "fewer loops".
+
+## 2026-10-20 — A barrier is a seal first and a speed bump second (supersedes "a barrier only raises the cost")
+
+**Decision:** Placing a barrier starts a `BarrierSealSeconds` (10) seal, recorded in
+`BarrierSeals`. A sealed cell is priced at `SealedBarrierCost` (40) for the killer, so Dijkstra
+routes around it while any alternative exists. When a seal is the only way to the player, the
+killer spends `BarrierBreakSeconds` (3) tearing it apart; the barrier is then destroyed. Once
+the seal lapses on its own, the husk stays on the map and costs `ObstacleCost` (5), exactly as
+before.
+
+**Reason:** The complaint was that barriers "do not flow into the gameplay". The old rule made
+every barrier the same thing — a fixed pause in a corridor, a slightly worse weight in a loop —
+so placement never changed the *shape* of the chase. A seal does: on 81% of the route cells it
+makes the killer commit to another route, and the player can see that decision happen. A truly
+impassable cell was rejected because it would let the player wall the killer in; keeping both
+prices finite preserves the "the killer always has a route" invariant, and the tear-down is what
+turns the rare true cut-off into three seconds of drama instead of a dead game.
+
+**Consequences:** The seal clock runs on wall-clock time from placement (10 s is longer than the
+killer's usual walk, so a seal put on its route is normally still holding when it arrives) and
+freezes while the player is aiming, like every other clock. The tear-down is charged in *seconds*
+rather than in steps, so it does not scale with `EnemyStepSeconds`. A sealed barrier is skipped
+by the renderer's "spent" look: sealed is a breathing green cage, spent is the dim thorn husk, so
+the two states read differently without text. The measured effect is that a detoured seal costs
+the player the extra walk (~2 cells) while a broken one costs 3 s — a corridor seal is therefore
+the stronger play, which is intended but worth a play-test.
+
+## 2026-10-20 — The wisp is a Dijkstra target, not a scripted distraction
+
+**Decision:** The player may carry `LureCount` (2) wisps, each lasting `LureSeconds` (6). Only
+one glows at a time. The killer's target is chosen by comparing two `FindPath` results — to the
+player and to the wisp — by `RouteCost`, with ties going to the player. The wisp is consumed when
+the killer steps onto it, and it expires otherwise. A wisp may not be placed on the player's own
+cell.
+
+**Reason:** The request was a new power-up that "still uses Dijkstra". Reusing the search as the
+targeting rule means there is no new AI state to get wrong: the killer simply takes the cheapest
+route to whichever thing is cheaper, which is also why the wisp behaves sensibly in every
+geometry (a wisp thrown between you and the killer is ignored because the player is closer, and
+one thrown down a side branch pulls it away). A scripted "distracted for N seconds" flag would
+have needed its own edge cases and could not be explained by the algorithm the course grades.
+
+**Consequences:** The wisp is pure redirection: it never blocks, never hides the player and
+cannot affect reachability, so the soft-lock invariants are untouched. It lights its own cell
+and its neighbours through the same visibility rule that already handles the torch and the
+killer's aura, which is why the player can watch it work from across the map. Two Dijkstra runs
+happen only when the route is invalidated (player move, placement, consumption, expiry), not per
+frame. Refusing a placement on the player's own cell avoids silently spending a charge on a
+decoy that can never be cheaper.
+
+## 2026-10-20 — One aiming mode for both placeables
+
+**Decision:** `PlacementMode` (`None`, `Barrier`, `Lure`) plus a single `AimCursor`,
+`MoveAimCursor`, `ConfirmPlacement` and `CancelPlacement` replace the barrier-specific
+`BarrierCursor`/`MoveBarrierCursor`/`ConfirmBarrierPlacement`/`CancelBarrierPlacement`. Only the
+`Begin*Placement` entry points are specific, because what can be afforded differs.
+
+**Reason:** Aiming is a rule (the clock freezes, movement is blocked, the cursor ignores walls)
+and that rule is identical for both items. Two parallel APIs would have duplicated the rule and
+given the frontends two ways to get the freeze wrong; a shared mode also means the footer,
+reticle and console hints switch on one value instead of two booleans that could both be true.
+
+**Consequences:** `IsAiming` is the general check and `IsPlacingBarrier`/`IsPlacingLure` are
+convenience predicates; the reticle is green for a barrier and cyan for a wisp, matching the
+colours those objects glow with. All existing barrier tests were moved onto the shared names, and
+the console and window frontends bind `B`/`Space` to a barrier and `R` to a wisp.
+
+## 2026-10-20 — A `GameFactory` in Core, so "descend again" is a tested rule
+
+**Decision:** `GameFactory(config, Func<IRandom>, IPathfinder)` builds one complete game per
+`Create()` call: its own random source, the shipped maze pipeline (`MazeGenerator` →
+`DeadEndBraider` → `BraidedMazeGenerator`), then `GameState`. The frontends receive
+`Func<GameState>` and start a run by calling it; `Program` composes the factory once.
+
+**Reason:** Until now the maze and the state were assembled once in `Program`, which was fine
+while a session was exactly one game. A replay makes "start a game" a rule that both the window
+and the console need, and duplicating a five-line pipeline in two event loops is how the two
+frontends drift apart. Putting it in Core also makes the contract testable without a window: a
+replay must be a *fresh, independent, fully restored* game, and that is now six assertions
+rather than a manual check. Each call getting a new `IRandom` is what keeps a seeded config
+reproducible and an unseeded one genuinely new.
+
+**Consequences:** `GameConfig.Validate` runs in the factory constructor, so a bad config fails
+before the title screen appears rather than at the first `Create()`. `Create()` is cheap
+(milliseconds), so calling it again on death is a normal path, not a special mode. The factory
+hard-codes the shipped decoration order; anything that changes the maze's shape belongs there
+(and gets a test), not in `Program`. A `Seed` still means "this exact game", so a fixed-seed
+build replays the same cave — documented behaviour, not a bug.
+
+## 2026-10-20 — The title screen is a renderer partial plus a frontend screen, not a game mode
+
+**Decision:** `RaylibRenderer.Title.cs` is a `partial` of `RaylibRenderer` exposing
+`DrawTitle(int selectedItem)`; the menu selection lives in `RaylibFrontend`, which keeps a
+two-state loop (title, game). `ConsoleFrontend` prints an ASCII title and waits for a key, but
+skips the wait when input is redirected. Rendering a game and rendering the title are separate
+calls, and the title is not a `GameState`.
+
+**Reason:** A title screen has no rules: it must not pause, tick, or exist in Core, or every
+rule test would need to know about a menu. Making it a partial of the cave renderer instead of
+its own class means it reuses the palette, the vignette, the grain, `TextCentered` and the
+spore hashing rather than keeping a second copy of the art direction that would drift. The
+console gets its own cheap version because the same "you are about to enter a cave" beat matters
+more than pixel parity.
+
+**Consequences:** The renderer grew a public method that takes an index rather than a state,
+which is the one place it is allowed to draw something other than the game — kept explicit in
+the docs. Raylib's built-in font is ASCII-only, so the wordmark is spaced by hand and the menu
+chevrons are drawn as triangles; do not add decorative glyphs like `·` or `›`, they render as
+boxes. Because `Cell` is a value type, cells from a new maze compare equal to the old cave's
+cells, so every new run calls `RaylibRenderer.Reset()` to clear the explored-cell memory; a
+replay that skipped this would draw the previous cave's walls. The console title needs a key
+that a piped run cannot send, so it is skipped under redirection — the same limitation the
+console input loop already documented.

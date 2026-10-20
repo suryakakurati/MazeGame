@@ -60,9 +60,20 @@ internal static class TestLevels
         int keyCount = 3,
         int barrierBudget = 2,
         double enemyStepSeconds = OneSecondPerStep,
-        int visionRadius = 3) =>
+        int visionRadius = 3,
+        int enemyAuraRadius = 0,
+        int enemyAuraDistance = 0,
+        double barrierSealSeconds = 10.0) =>
         new(
-            CorridorConfig(length, keyCount, barrierBudget, enemyStepSeconds, visionRadius),
+            CorridorConfig(
+                length,
+                keyCount,
+                barrierBudget,
+                enemyStepSeconds,
+                visionRadius,
+                enemyAuraRadius,
+                enemyAuraDistance,
+                barrierSealSeconds),
             Corridor(length),
             new DijkstraPathfinder(),
             new FixedRandom(0));
@@ -70,12 +81,19 @@ internal static class TestLevels
     /// <summary>
     /// The config matching <see cref="Corridor"/>.
     /// </summary>
+    /// <remarks>
+    /// The killer's aura is switched off by default here even though the shipped config turns
+    /// it on: most rule tests want the plain torch behaviour, and the aura has its own tests.
+    /// </remarks>
     public static GameConfig CorridorConfig(
         int length = 6,
         int keyCount = 3,
         int barrierBudget = 2,
         double enemyStepSeconds = OneSecondPerStep,
-        int visionRadius = 3) => new()
+        int visionRadius = 3,
+        int enemyAuraRadius = 0,
+        int enemyAuraDistance = 0,
+        double barrierSealSeconds = 10.0) => new()
         {
             Rows = 1,
             Columns = length,
@@ -83,6 +101,9 @@ internal static class TestLevels
             BarrierBudget = barrierBudget,
             EnemyStepSeconds = enemyStepSeconds,
             VisionRadius = visionRadius,
+            EnemyAuraRadius = enemyAuraRadius,
+            EnemyAuraDistance = enemyAuraDistance,
+            BarrierSealSeconds = barrierSealSeconds,
             Seed = null,
         };
 
@@ -90,26 +111,52 @@ internal static class TestLevels
     /// Aims a barrier at a specific cell (the cursor ignores walls) and confirms it.
     /// </summary>
     /// <returns><see langword="true"/> when the barrier was placed.</returns>
-    public static bool PlaceBarrierAt(GameState state, int row, int column)
+    public static bool PlaceBarrierAt(GameState state, int row, int column) =>
+        PlaceAt(state, row, column, state.BeginBarrierPlacement());
+
+    /// <summary>
+    /// Aims a wisp at a specific cell and confirms it.
+    /// </summary>
+    /// <returns><see langword="true"/> when the wisp was lit.</returns>
+    public static bool PlaceLureAt(GameState state, int row, int column) =>
+        PlaceAt(state, row, column, state.BeginLurePlacement());
+
+    /// <summary>
+    /// Walks the aiming cursor to a cell over the maze (the cursor ignores walls) and confirms
+    /// whatever was aimed.
+    /// </summary>
+    /// <param name="state">The game to place in.</param>
+    /// <param name="row">Target row.</param>
+    /// <param name="column">Target column.</param>
+    /// <param name="aiming">Whether the step before aiming succeeded.</param>
+    /// <returns><see langword="true"/> when the placement was confirmed.</returns>
+    private static bool PlaceAt(GameState state, int row, int column, bool aiming)
     {
-        if (!state.BeginBarrierPlacement())
+        if (!aiming)
         {
             return false;
         }
 
         var target = state.Maze.GetCell(row, column);
 
-        while (state.BarrierCursor != target)
+        while (state.AimCursor != target)
         {
-            if (!state.MoveBarrierCursor(StepToward(state.BarrierCursor, target)))
+            if (!state.MoveAimCursor(StepToward(state.AimCursor, target)))
             {
-                state.CancelBarrierPlacement();
+                state.CancelPlacement();
                 return false;
             }
         }
 
-        return state.ConfirmBarrierPlacement();
+        return state.ConfirmPlacement();
     }
+
+    /// <summary>
+    /// Builds a game over an existing maze with a config of the caller's choosing, for tests
+    /// that need to tune a rule the corridors deliberately leave at their shipped defaults.
+    /// </summary>
+    public static GameState GameOver(Grid maze, GameConfig config) =>
+        new(config, maze, new DijkstraPathfinder(), new FixedRandom(0));
 
     private static Direction StepToward(Cell from, Cell to)
     {

@@ -27,6 +27,8 @@ public sealed class ConsoleRenderer : IRenderer
     private const char PlayerSymbol = '@';
     private const char EnemySymbol = 'K';
     private const char BarrierSymbol = '#';
+    private const char SpentBarrierSymbol = '=';
+    private const char LureSymbol = '*';
     private const char KeySymbol = 'k';
     private const char ExitSymbol = 'E';
     private const char CursorSymbol = 'X';
@@ -66,18 +68,25 @@ public sealed class ConsoleRenderer : IRenderer
             .Append(state.Config.KeyCount)
             .Append("   barriers ")
             .Append(state.BarriersRemaining)
+            .Append("   wisps ")
+            .Append(state.LuresRemaining)
             .Append("   exit ")
             .Append(state.IsExitUnlocked ? "OPEN" : "LOCKED")
             .Append("   ")
             .Append(state.Status)
-            .Append(state.IsPlacingBarrier ? "   AIMING A BARRIER" : string.Empty)
+            .Append(state.AimMode switch
+            {
+                PlacementMode.Barrier => "   AIMING A BARRIER",
+                PlacementMode.Lure => "   AIMING A WISP",
+                _ => string.Empty,
+            })
             .AppendLine();
 
         AppendMaze(frame, state);
 
-        frame.AppendLine(state.IsPlacingBarrier
-            ? "AIMING: WASD / arrows move X    B, Space or Enter: place    Esc: cancel"
-            : "WASD / arrows: move    B or Space: aim a barrier    Q: quit");
+        frame.AppendLine(state.IsAiming
+            ? "AIMING: WASD / arrows move the reticle    Space or Enter: place    Esc: cancel"
+            : "WASD / arrows: move    B: aim a barrier    R: aim a wisp    Q: quit");
 
         return frame.ToString();
     }
@@ -179,6 +188,26 @@ public sealed class ConsoleRenderer : IRenderer
     }
 
     /// <summary>
+    /// Reports whether <paramref name="cell"/> holds a barrier, and which of the two symbols it
+    /// gets: a sealed barrier still reads as a solid wall, a spent one as a broken husk.
+    /// </summary>
+    /// <param name="state">The game to read the barriers from.</param>
+    /// <param name="cell">The cell to test.</param>
+    /// <param name="symbol">The character to draw, or <c>'\0'</c> when there is no barrier.</param>
+    /// <returns><see langword="true"/> when the cell holds a barrier.</returns>
+    private static bool SymbolForBarrier(GameState state, Cell cell, out char symbol)
+    {
+        if (!state.Barriers.Contains(cell))
+        {
+            symbol = default;
+            return false;
+        }
+
+        symbol = state.BarrierSeals.ContainsKey(cell) ? BarrierSymbol : SpentBarrierSymbol;
+        return true;
+    }
+
+    /// <summary>
     /// Chooses the character for a cell the player has seen. The player is drawn on top of
     /// everything, because that is the one thing the player must always be able to find.
     /// </summary>
@@ -186,7 +215,7 @@ public sealed class ConsoleRenderer : IRenderer
     {
         // The aiming cursor outranks everything: while aiming, the player needs to see exactly
         // which cell the barrier will land on, even if that cell is still in the dark.
-        if (state.IsPlacingBarrier && cell == state.BarrierCursor)
+        if (state.IsAiming && cell == state.AimCursor)
         {
             return CursorSymbol;
         }
@@ -200,12 +229,17 @@ public sealed class ConsoleRenderer : IRenderer
         // but not the killer, the keys or the exit: those must be seen to be known.
         if (!state.IsVisible(cell))
         {
-            return state.Barriers.Contains(cell) ? BarrierSymbol : RememberedSymbol;
+            return SymbolForBarrier(state, cell, out var barrier) ? barrier : RememberedSymbol;
         }
 
-        if (state.Barriers.Contains(cell))
+        if (SymbolForBarrier(state, cell, out var visibleBarrier))
         {
-            return BarrierSymbol;
+            return visibleBarrier;
+        }
+
+        if (cell == state.Lure)
+        {
+            return LureSymbol;
         }
 
         if (cell == state.Enemy)

@@ -22,8 +22,12 @@ namespace MazeGame.Core.Game;
 /// <list type="bullet">
 ///   <item><description>The exit can be walked over while locked, so it can never trap the
 ///   player in a corridor. It simply does nothing until every key is collected.</description></item>
-///   <item><description>Barriers raise the killer's cost and make it wait proportionally
-///   longer, but never block a cell, so a route to the player always exists.</description></item>
+///   <item><description>A barrier is sealed for a few seconds, which makes the killer treat
+///   that cell as a wall and look for another way, and afterwards a speed bump that is
+///   expensive but passable. A sealed barrier is never a permanent wall: when it is the only
+///   route the killer tears it apart, so a route always exists.</description></item>
+///   <item><description>A wisp only changes <i>where</i> the killer walks, never whether it
+///   can reach the player, so it cannot affect reachability at all.</description></item>
 ///   <item><description>Keys, the exit and the killer are placed on distinct cells after the
 ///   maze exists, and the maze is connected, so everything is reachable.</description></item>
 ///   <item><description>The killer starts on a dead end. Since a perfect maze is a tree, a
@@ -42,24 +46,32 @@ public sealed class GameState
     private static readonly Direction[] NeighbourDirections =
         [Direction.North, Direction.East, Direction.South, Direction.West];
 
+    /// <summary>How many steps of cave a glowing wisp lights up around itself.</summary>
+    private const int LureGlowRadius = 1;
+
     private readonly GameConfig _config;
     private readonly Grid _maze;
     private readonly IPathfinder _pathfinder;
     private readonly HashSet<Cell> _keys;
     private readonly HashSet<Cell> _barriers = [];
+    private readonly Dictionary<Cell, double> _barrierSeals = [];
     private readonly HashSet<Cell> _visible = [];
+    private readonly HashSet<Cell> _enemyGlow = [];
     private readonly Cell _exit;
 
     private Cell _player;
     private Cell _enemy;
-    private Cell _barrierCursor;
+    private Cell _aimCursor;
+    private Cell? _lure;
+    private double _lureSecondsLeft;
     private int _barriersRemaining;
+    private int _luresRemaining;
     private GameStatus _status = GameStatus.InProgress;
     private double _elapsedSeconds;
-    private bool _placingBarrier;
+    private PlacementMode _aiming;
 
-    // The killer's route to the player, cached so it is only recomputed when something
-    // invalidates it (the player moves, or a barrier is placed).
+    // The killer's route to its chosen target, cached so it is only recomputed when something
+    // invalidates it (the player moves, an item is placed, a seal cracks, or a wisp goes).
     private IReadOnlyList<Cell>? _enemyRoute;
 
     // Index into _enemyRoute of the next cell the killer will step onto. Starts at 1
@@ -105,6 +117,7 @@ public sealed class GameState
         _maze = maze;
         _pathfinder = pathfinder;
         _barriersRemaining = config.BarrierBudget;
+        _luresRemaining = config.LureCount;
 
         // Shuffle every cell once, then take the first unused ones. Because the list holds
         // each cell exactly once, the player, killer, exit and keys are guaranteed to be on
@@ -225,9 +238,45 @@ public sealed class GameState
     public IReadOnlySet<Cell> Keys => _keys;
 
     /// <summary>
-    /// Gets the cells holding a player-placed barrier.
+    /// Gets the cells holding a player-placed barrier, whether it is still sealed or already a
+    /// spent husk.
     /// </summary>
     public IReadOnlySet<Cell> Barriers => _barriers;
+
+    /// <summary>
+    /// Gets the barriers that are still sealed, mapped to the seconds the seal has left.
+    /// </summary>
+    /// <remarks>
+    /// A sealed barrier counts as a wall for the killer, so a renderer draws these differently
+    /// from the cracked ones and can show how much of the seal is left. A cell in
+    /// <see cref="Barriers"/> that is missing here is spent: passable, but expensive.
+    /// </remarks>
+    public IReadOnlyDictionary<Cell, double> BarrierSeals => _barrierSeals;
+
+    /// <summary>
+    /// Gets the cell holding the glowing wisp, or <see langword="null"/> when none is active.
+    /// </summary>
+    /// <remarks>
+    /// The wisp is a decoy, not a trap: while it is the cheaper destination by Dijkstra's
+    /// measure, the killer walks towards it instead of the player. It never blocks anything and
+    /// never hides the player, so the game stays winnable and losable exactly as before.
+    /// </remarks>
+    public Cell? Lure => _lure;
+
+    /// <summary>
+    /// Gets how many seconds the active wisp has left to glow, or 0 when none is active.
+    /// </summary>
+    public double LureSecondsRemaining => _lure is null ? 0.0 : _lureSecondsLeft;
+
+    /// <summary>
+    /// Gets how many wisps the player may still place.
+    /// </summary>
+    public int LuresRemaining => _luresRemaining;
+
+    /// <summary>
+    /// Gets a value indicating whether a wisp is currently glowing.
+    /// </summary>
+    public bool IsLureActive => _lure is not null;
 
     /// <summary>
     /// Gets how many keys are still to be collected.
@@ -256,16 +305,32 @@ public sealed class GameState
     public GameStatus Status => _status;
 
     /// <summary>
-    /// Gets a value indicating whether the player is currently aiming a barrier. While this
-    /// is true the game clock is paused, the player cannot walk, and the directional keys
-    /// move <see cref="BarrierCursor"/> instead.
+    /// Gets what the player is aiming, or <see cref="PlacementMode.None"/> when they are just
+    /// walking.
     /// </summary>
-    public bool IsPlacingBarrier => _placingBarrier;
+    public PlacementMode AimMode => _aiming;
 
     /// <summary>
-    /// Gets the cell the barrier would be placed on, or the player's cell when not aiming.
+    /// Gets a value indicating whether the player is aiming anything. While this is true the
+    /// game clock is paused, the player cannot walk, and the directional keys move
+    /// <see cref="AimCursor"/> instead.
     /// </summary>
-    public Cell BarrierCursor => _barrierCursor;
+    public bool IsAiming => _aiming != PlacementMode.None;
+
+    /// <summary>
+    /// Gets a value indicating whether the player is currently aiming a barrier.
+    /// </summary>
+    public bool IsPlacingBarrier => _aiming == PlacementMode.Barrier;
+
+    /// <summary>
+    /// Gets a value indicating whether the player is currently aiming a wisp.
+    /// </summary>
+    public bool IsPlacingLure => _aiming == PlacementMode.Lure;
+
+    /// <summary>
+    /// Gets the cell the aimed item would be placed on, or the player's cell when not aiming.
+    /// </summary>
+    public Cell AimCursor => _aimCursor;
 
     /// <summary>
     /// Determines whether the player can currently see <paramref name="cell"/>.
@@ -288,8 +353,24 @@ public sealed class GameState
     /// steps of walking, which makes the radius a torch range rather than a circle drawn
     /// through rock.
     /// </para>
+    /// <para>
+    /// The killer carries its own light. Once it is within
+    /// <see cref="GameConfig.EnemyAuraDistance"/> steps, the cells within
+    /// <see cref="GameConfig.EnemyAuraRadius"/> of it also count as visible — even when the
+    /// corridor between the two of you is pitch black — so its approach can be seen coming.
+    /// </para>
     /// </remarks>
     public bool IsVisible(Cell cell) => _visible.Contains(cell);
+
+    /// <summary>
+    /// Gets the cells that are visible only because the killer is lighting them.
+    /// </summary>
+    /// <remarks>
+    /// A renderer uses this to tint the killer's aura differently from the player's own torch;
+    /// the game itself only cares that those cells are visible. The set is empty while the
+    /// killer is further away than <see cref="GameConfig.EnemyAuraDistance"/>.
+    /// </remarks>
+    public IReadOnlySet<Cell> EnemyGlow => _enemyGlow;
 
     /// <summary>
     /// Tries to move the player one cell in <paramref name="direction"/>.
@@ -316,9 +397,9 @@ public sealed class GameState
     /// </exception>
     public bool TryMove(Direction direction)
     {
-        // While aiming a barrier the directional keys move the cursor, not the player, and
-        // the game clock is frozen, so a move here would be ambiguous.
-        if (_status != GameStatus.InProgress || _placingBarrier)
+        // While aiming, the directional keys move the cursor, not the player, and the game
+        // clock is frozen, so a move here would be ambiguous.
+        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None)
         {
             return false;
         }
@@ -369,20 +450,57 @@ public sealed class GameState
     /// nothing, so the killer is frozen and the player can study the map without being
     /// punished for the time spent deciding where to put the trap.
     /// </remarks>
-    public bool BeginBarrierPlacement()
+    public bool BeginBarrierPlacement() => BeginAim(PlacementMode.Barrier);
+
+    /// <summary>
+    /// Starts aiming a wisp. The game clock pauses until the placement is confirmed or
+    /// cancelled, exactly as it does for a barrier.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when aiming started; <see langword="false"/> when no wisp is
+    /// left, one is already glowing, the game is over, or an aim is already in progress.
+    /// </returns>
+    /// <remarks>
+    /// Only one wisp may glow at a time. That is a deliberate limit: two decoys would let the
+    /// player split the killer's attention without ever being chased, whereas one turns into a
+    /// decision about <i>when</i> to spend it.
+    /// </remarks>
+    public bool BeginLurePlacement() => BeginAim(PlacementMode.Lure);
+
+    /// <summary>
+    /// Starts aiming <paramref name="mode"/>, placing the cursor on the player.
+    /// </summary>
+    /// <returns><see langword="true"/> when the aim started.</returns>
+    /// <remarks>
+    /// The single gate for both placeables, so the "game over", "already aiming" and
+    /// "nothing left to spend" rules cannot drift apart.
+    /// </remarks>
+    private bool BeginAim(PlacementMode mode)
     {
-        if (_status != GameStatus.InProgress || _placingBarrier || _barriersRemaining <= 0)
+        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None)
         {
             return false;
         }
 
-        _placingBarrier = true;
-        _barrierCursor = _player;
+        var available = mode switch
+        {
+            PlacementMode.Barrier => _barriersRemaining > 0,
+            PlacementMode.Lure => _luresRemaining > 0 && _lure is null,
+            _ => false,
+        };
+
+        if (!available)
+        {
+            return false;
+        }
+
+        _aiming = mode;
+        _aimCursor = _player;
         return true;
     }
 
     /// <summary>
-    /// Moves the barrier cursor one cell in <paramref name="direction"/>.
+    /// Moves the aiming cursor one cell in <paramref name="direction"/>.
     /// </summary>
     /// <param name="direction">The direction to move the aim in.</param>
     /// <returns>
@@ -390,68 +508,124 @@ public sealed class GameState
     /// leave the maze or no aim is in progress.
     /// </returns>
     /// <remarks>
-    /// The cursor ignores walls: it is a targeting reticle, not the player, so a barrier can
-    /// be dropped anywhere the player has decided to put it.
+    /// The cursor ignores walls: it is a targeting reticle, not the player, so a barrier or a
+    /// wisp can be dropped anywhere the player has decided to put it.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when <paramref name="direction"/> is not one of the four directions.
     /// </exception>
-    public bool MoveBarrierCursor(Direction direction)
+    public bool MoveAimCursor(Direction direction)
     {
-        if (!_placingBarrier)
+        if (_aiming == PlacementMode.None)
         {
             return false;
         }
 
         var (rowDelta, columnDelta) = direction.Delta();
-        var row = _barrierCursor.Row + rowDelta;
-        var column = _barrierCursor.Column + columnDelta;
+        var row = _aimCursor.Row + rowDelta;
+        var column = _aimCursor.Column + columnDelta;
 
         if (row < 0 || row >= _maze.Rows || column < 0 || column >= _maze.Columns)
         {
             return false;
         }
 
-        _barrierCursor = _maze.GetCell(row, column);
+        _aimCursor = _maze.GetCell(row, column);
         return true;
     }
 
     /// <summary>
-    /// Places a barrier on the cell the cursor is on and ends the aim.
+    /// Places whatever is being aimed on the cursor's cell and ends the aim.
+    /// </summary>
+    /// <returns><see langword="true"/> when it was placed; <see langword="false"/> otherwise.</returns>
+    /// <remarks>
+    /// A refusal spends nothing and leaves the aim active, so a player who aims at an
+    /// occupied cell can simply move the cursor and try again.
+    /// </remarks>
+    public bool ConfirmPlacement() => _aiming switch
+    {
+        PlacementMode.Barrier => ConfirmBarrier(),
+        PlacementMode.Lure => ConfirmLure(),
+        _ => false,
+    };
+
+    /// <summary>
+    /// Places a barrier on the cursor's cell at the start of its seal, and ends the aim.
     /// </summary>
     /// <returns>
     /// <see langword="true"/> when the barrier was placed; <see langword="false"/> when no
-    /// aim is in progress or that cell already holds a barrier.
+    /// barrier is being aimed, the budget is gone, or that cell already holds a barrier.
     /// </returns>
     /// <remarks>
     /// A refusal spends nothing and leaves the aim active, so a player who aims at an
     /// occupied cell can simply move the cursor and try again.
     /// </remarks>
-    public bool ConfirmBarrierPlacement()
+    private bool ConfirmBarrier()
     {
-        if (!_placingBarrier || _barriersRemaining <= 0)
+        if (!IsPlacingBarrier || _barriersRemaining <= 0)
         {
             return false;
         }
 
         // Add returns false when the cell already has a barrier; the budget must not be
         // spent twice on the same cell.
-        if (!_barriers.Add(_barrierCursor))
+        if (!_barriers.Add(_aimCursor))
         {
             return false;
         }
 
+        // The seal is what makes a barrier a wall rather than a toll. A configured seal of
+        // zero means "never sealed", so the cell goes straight to its spent price.
+        if (_config.BarrierSealSeconds > 0)
+        {
+            _barrierSeals[_aimCursor] = _config.BarrierSealSeconds;
+        }
+
         _barriersRemaining--;
-        _placingBarrier = false;
+        _aiming = PlacementMode.None;
         InvalidateEnemyRoute();
         return true;
     }
 
     /// <summary>
-    /// Stops aiming without placing anything or spending a barrier.
+    /// Lights a wisp on the cursor's cell and ends the aim.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when the wisp was placed; <see langword="false"/> when no wisp
+    /// is being aimed, one is already glowing, or the cursor is on the player's or the killer's
+    /// own cell.
+    /// </returns>
+    /// <remarks>
+    /// A wisp on the player's own cell would be a decoy at the exact place the killer is
+    /// already heading, so it is refused rather than silently spending a charge for nothing. A
+    /// wisp under the killer's feet is refused for a sharper reason: the killer's route to it
+    /// would be zero steps long, so it would sit still for the wisp's whole lifetime. That is a
+    /// six-second freeze for one charge, which the barrier does not even offer.
+    /// </remarks>
+    private bool ConfirmLure()
+    {
+        if (!IsPlacingLure || _luresRemaining <= 0 || _lure is not null ||
+            _aimCursor == _player || _aimCursor == _enemy)
+        {
+            return false;
+        }
+
+        _lure = _aimCursor;
+        _lureSecondsLeft = _config.LureSeconds;
+        _luresRemaining--;
+        _aiming = PlacementMode.None;
+        InvalidateEnemyRoute();
+
+        // The wisp lights its own cell, so what the player can see changes at once.
+        RecomputeVisibility();
+        return true;
+    }
+
+    /// <summary>
+    /// Stops aiming without placing anything or spending a charge.
     /// </summary>
     /// <remarks>Does nothing when no aim is in progress.</remarks>
-    public void CancelBarrierPlacement() => _placingBarrier = false;
+    public void CancelPlacement() => _aiming = PlacementMode.None;
 
     /// <summary>
     /// Advances the game clock by <paramref name="deltaSeconds"/> and lets the killer move
@@ -467,10 +641,13 @@ public sealed class GameState
     /// the killer across the maze.
     /// </para>
     /// <para>
-    /// Entering a normal cell takes <see cref="GameConfig.EnemyStepSeconds"/>. Entering a
-    /// barriered cell takes that long multiplied by <see cref="GameConfig.ObstacleCost"/>, so
-    /// a barrier is a real delay and not just a different route. While the player is aiming
-    /// a barrier the clock is frozen. After the game is over this method does nothing.
+    /// Entering a normal cell takes <see cref="GameConfig.EnemyStepSeconds"/>. Entering a spent
+    /// barriered cell takes that long multiplied by <see cref="GameConfig.ObstacleCost"/>, and
+    /// tearing a sealed one apart takes <see cref="GameConfig.BarrierBreakSeconds"/> on its own,
+    /// so an obstacle is a real delay and not just a different route. Barrier seals and the
+    /// wisp age in the same wall-clock time (a long frame still ages them fully, even though it
+    /// cannot bank more than one step), and everything is frozen while the player is aiming.
+    /// After the game is over this method does nothing.
     /// </para>
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">
@@ -486,10 +663,14 @@ public sealed class GameState
                 "Elapsed time must be a finite, non-negative number of seconds.");
         }
 
-        if (_status != GameStatus.InProgress || _placingBarrier)
+        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None)
         {
             return;
         }
+
+        // Seals and the wisp age in wall-clock time, so a frame long enough to be clamped below
+        // still counts fully against them.
+        AdvanceTimers(deltaSeconds);
 
         var interval = SecondsUntilNextStep();
 
@@ -504,93 +685,312 @@ public sealed class GameState
     }
 
     /// <summary>
+    /// Ages the seals and the wisp by <paramref name="deltaSeconds"/>, expiring whatever runs
+    /// out, and marks the killer's route stale when a cost changed.
+    /// </summary>
+    /// <remarks>
+    /// A cracked seal and an expired wisp both change what the killer should do, so both
+    /// invalidate the cached route. Only the seal leaves: the barrier itself stays on the map
+    /// as a husk that is passable at <see cref="GameConfig.ObstacleCost"/>.
+    /// </remarks>
+    private void AdvanceTimers(double deltaSeconds)
+    {
+        if (_barrierSeals.Count > 0)
+        {
+            // Snapshot the keys before touching the dictionary: the values are updated in the
+            // loop, and removing an entry while enumerating would invalidate the enumerator.
+            var sealedCells = new List<Cell>(_barrierSeals.Keys);
+            var cracked = false;
+
+            foreach (var cell in sealedCells)
+            {
+                var remaining = _barrierSeals[cell] - deltaSeconds;
+
+                if (remaining > 0)
+                {
+                    _barrierSeals[cell] = remaining;
+                    continue;
+                }
+
+                _barrierSeals.Remove(cell);
+                cracked = true;
+            }
+
+            if (cracked)
+            {
+                InvalidateEnemyRoute();
+            }
+        }
+
+        if (_lure is not null)
+        {
+            _lureSecondsLeft -= deltaSeconds;
+            if (_lureSecondsLeft <= 0)
+            {
+                ClearLure();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes the glowing wisp and marks the killer's route stale.
+    /// </summary>
+    /// <remarks>
+    /// The wisp is spent whether it was reached or timed out, so the killer always falls back
+    /// to the player on the very next route.
+    /// </remarks>
+    private void ClearLure()
+    {
+        if (_lure is null)
+        {
+            return;
+        }
+
+        _lure = null;
+        _lureSecondsLeft = 0;
+        InvalidateEnemyRoute();
+    }
+
+    /// <summary>
     /// Returns how long the killer needs before its next step: one normal step, times the
-    /// cost of the cell it is about to enter.
+    /// cost of the cell it is about to enter, or the full tear-down time when that cell holds
+    /// a sealed barrier.
     /// </summary>
     /// <remarks>
     /// Charging the delay before the move (rather than after) is what makes a barrier read
     /// correctly: the killer stalls at the barrier, then forces its way through, instead of
-    /// appearing to pass it instantly and then idling on the other side.
+    /// appearing to pass it instantly and then idling on the other side. A sealed barrier is
+    /// priced at <see cref="GameConfig.BarrierBreakSeconds"/> rather than a multiple of the step
+    /// time because tearing it apart is a different action from walking.
     /// </remarks>
     private double SecondsUntilNextStep()
     {
-        var route = EnemyRouteToPlayer();
+        var route = EnemyRouteToTarget();
 
         if (route.Count <= _nextStepIndex)
         {
             return _config.EnemyStepSeconds;
         }
 
-        return _config.EnemyStepSeconds * CostOfEntering(route[_nextStepIndex]);
+        var next = route[_nextStepIndex];
+
+        return _barrierSeals.ContainsKey(next)
+            ? _config.BarrierBreakSeconds
+            : _config.EnemyStepSeconds * CostOfEntering(next);
     }
 
     /// <summary>
-    /// Moves the killer one cell along its route to the player, ending the game if that
-    /// brings it onto the player's cell.
+    /// Moves the killer one cell along its route, ending the game if that brings it onto the
+    /// player's cell, or tears apart a sealed barrier that stands in the way.
     /// </summary>
+    /// <remarks>
+    /// Tearing the seal is a step of its own: the barrier shatters, nothing moves, and the next
+    /// route is computed over plain floor. That is what makes a sealed barrier read as an
+    /// obstacle the killer deals with, rather than something it walks through after a pause.
+    /// </remarks>
     private void AdvanceEnemy()
     {
-        var route = EnemyRouteToPlayer();
+        var route = EnemyRouteToTarget();
 
-        // A single-cell route means the killer is already on the player's cell, which has
-        // already ended the game; nothing left to do.
+        // A single-cell route means the killer is already on its destination, which either has
+        // already ended the game or is the wisp it just consumed; nothing left to do.
         if (route.Count <= 1 || _nextStepIndex >= route.Count)
         {
             return;
         }
 
-        _enemy = route[_nextStepIndex];
+        var next = route[_nextStepIndex];
+
+        if (_barrierSeals.ContainsKey(next))
+        {
+            BreakSeal(next);
+            return;
+        }
+
+        _enemy = next;
         _nextStepIndex++;
+
+        // The killer carries its own light, so what the player can see changes as it moves
+        // even when the player stands still.
+        RecomputeVisibility();
 
         // The rest of the cached route is still the best way to a player who has not moved,
         // so it is reused rather than recomputed every step.
         if (_enemy == _player)
         {
             _status = GameStatus.Caught;
+            return;
+        }
+
+        // Reaching the wisp spends it: the decoy has done its job and the chase resumes.
+        if (_enemy == _lure)
+        {
+            ClearLure();
         }
     }
 
     /// <summary>
-    /// Returns the killer's route to the player, recomputing it only when it was invalidated.
+    /// Tears a sealed barrier apart: the seal and the barrier both leave the map, so the cell
+    /// is plain floor from the next step on, and the killer's route is recomputed.
     /// </summary>
-    private IReadOnlyList<Cell> EnemyRouteToPlayer()
+    /// <param name="cell">The sealed cell the killer has just spent its time on.</param>
+    private void BreakSeal(Cell cell)
     {
-        if (_enemyRoute is null)
+        _barrierSeals.Remove(cell);
+        _barriers.Remove(cell);
+        InvalidateEnemyRoute();
+    }
+
+    /// <summary>
+    /// Returns the killer's route to whichever target it currently wants, recomputing it only
+    /// when it was invalidated.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The target is chosen by the same Dijkstra search that does the walking: the killer runs
+    /// to the player, and to the wisp as well when one is glowing, and follows whichever route
+    /// is genuinely cheaper by the current costs. That is why a wisp thrown into a side branch
+    /// <i>works</i> — it is not a scripted "distracted" state, it is the shortest path simply
+    /// pointing somewhere else.
+    /// </para>
+    /// <para>
+    /// Ties go to the player, so a wisp can never make the killer dither between two equal
+    /// options.
+    /// </para>
+    /// </remarks>
+    private IReadOnlyList<Cell> EnemyRouteToTarget()
+    {
+        if (_enemyRoute is not null)
         {
-            _enemyRoute = _pathfinder.FindPath(_maze, _enemy, _player, CostOfEntering);
-            _nextStepIndex = 1;
+            return _enemyRoute;
         }
 
+        _enemyRoute = _pathfinder.FindPath(_maze, _enemy, _player, CostOfEntering);
+
+        // A wisp under the killer's own feet is not a target: its route would be a single
+        // cell, which would stall the hunt instead of redirecting it. Placement refuses that
+        // cell as well; this is the belt-and-braces half of the same rule.
+        if (_lure is { } lure && lure != _enemy)
+        {
+            var toLure = _pathfinder.FindPath(_maze, _enemy, lure, CostOfEntering);
+
+            if (toLure.Count > 0 && RouteCost(toLure) < RouteCost(_enemyRoute))
+            {
+                _enemyRoute = toLure;
+            }
+        }
+
+        _nextStepIndex = 1;
         return _enemyRoute;
     }
 
     /// <summary>
-    /// Rebuilds the set of cells the player can see: a breadth-first walk out from the
-    /// player's cell through open passages, stopping at <see cref="GameConfig.VisionRadius"/>.
+    /// Sums what the killer pays to walk <paramref name="route"/>, which is the cost of every
+    /// cell entered (the cell it starts on is free).
     /// </summary>
     /// <remarks>
-    /// Breadth-first search is the right fit because it visits cells in order of walking
-    /// distance, so the radius is an exact cut-off: every cell reached is visible and no
-    /// cell beyond it is explored. Walls are respected simply by only crossing passages,
-    /// which is what keeps sight from leaking through the maze's walls.
+    /// This is what makes two Dijkstra searches comparable: a route's length in cells says
+    /// nothing when one of those cells is a barriered one.
+    /// </remarks>
+    private int RouteCost(IReadOnlyList<Cell> route)
+    {
+        var total = 0;
+
+        for (var index = 1; index < route.Count; index++)
+        {
+            total += CostOfEntering(route[index]);
+        }
+
+        return total;
+    }
+
+    /// <summary>
+    /// Rebuilds the set of cells the player can see: their own torch range, the light around
+    /// an active wisp, plus the killer's aura once the killer is close enough.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One breadth-first walk out from the player answers both questions at once, because it
+    /// yields walking distances: cells within <see cref="GameConfig.VisionRadius"/> are visible,
+    /// and the killer's own distance is read out of the same map. The walk is done to the
+    /// larger of the two radii so the distance is known even when the killer is outside the
+    /// torch.
+    /// </para>
+    /// <para>
+    /// Walls are respected simply by only crossing passages, which is what keeps sight from
+    /// leaking through them. The killer's aura then walks out from the killer itself, which is
+    /// why its surroundings can be seen even when the route between player and killer is dark:
+    /// it is the killer that is lighting them, not the player.
+    /// </para>
     /// </remarks>
     private void RecomputeVisibility()
     {
         _visible.Clear();
-        _visible.Add(_player);
+        _enemyGlow.Clear();
 
-        if (_config.VisionRadius == 0)
+        var searchRadius = Math.Max(_config.VisionRadius, _config.EnemyAuraDistance);
+        var playerDistances = DistancesFrom(_player, searchRadius);
+
+        foreach (var (cell, distance) in playerDistances)
+        {
+            if (distance <= _config.VisionRadius)
+            {
+                _visible.Add(cell);
+            }
+        }
+
+        // A wisp is a beacon the player placed, so its own pool of light is visible even where
+        // the torch does not reach. It is deliberately not part of EnemyGlow: it reveals the
+        // wisp, nothing about where the killer is.
+        if (_lure is { } lure)
+        {
+            foreach (var cell in DistancesFrom(lure, LureGlowRadius).Keys)
+            {
+                _visible.Add(cell);
+            }
+        }
+
+        // Far away the killer is invisible, and so is the light it carries.
+        if (!playerDistances.TryGetValue(_enemy, out var enemyDistance) ||
+            enemyDistance > _config.EnemyAuraDistance)
         {
             return;
         }
 
-        var frontier = new Queue<(Cell Cell, int Distance)>();
-        frontier.Enqueue((_player, 0));
+        foreach (var cell in DistancesFrom(_enemy, _config.EnemyAuraRadius).Keys)
+        {
+            _enemyGlow.Add(cell);
+            _visible.Add(cell);
+        }
+    }
+
+    /// <summary>
+    /// Walks out from <paramref name="origin"/> through open passages, returning every cell
+    /// reached together with the number of steps needed to reach it.
+    /// </summary>
+    /// <remarks>
+    /// Breadth-first search visits cells in order of walking distance, so cutting the walk at
+    /// <paramref name="radius"/> is exact: nothing beyond the radius is explored, and every
+    /// cell that is reached is genuinely that many steps away.
+    /// </remarks>
+    private Dictionary<Cell, int> DistancesFrom(Cell origin, int radius)
+    {
+        var distances = new Dictionary<Cell, int> { [origin] = 0 };
+
+        if (radius == 0)
+        {
+            return distances;
+        }
+
+        var frontier = new Queue<Cell>();
+        frontier.Enqueue(origin);
 
         while (frontier.Count > 0)
         {
-            var (cell, distance) = frontier.Dequeue();
-            if (distance == _config.VisionRadius)
+            var cell = frontier.Dequeue();
+            var distance = distances[cell];
+
+            if (distance == radius)
             {
                 continue;
             }
@@ -605,23 +1005,39 @@ public sealed class GameState
                 var (rowDelta, columnDelta) = direction.Delta();
                 var neighbour = _maze.GetCell(cell.Row + rowDelta, cell.Column + columnDelta);
 
-                // Add returns false for a cell already found on a shorter or equal route.
-                if (!_visible.Add(neighbour))
+                // Already reached means it was found on a shorter or equal route.
+                if (distances.ContainsKey(neighbour))
                 {
                     continue;
                 }
 
-                frontier.Enqueue((neighbour, distance + 1));
+                distances[neighbour] = distance + 1;
+                frontier.Enqueue(neighbour);
             }
         }
+
+        return distances;
     }
 
     /// <summary>
-    /// The killer's cost to enter a cell: expensive for a barriered cell, normal otherwise.
-    /// The value is always finite, which is what guarantees a route always exists.
+    /// The killer's cost to enter a cell: prohibitive for a sealed barrier, expensive for a
+    /// spent one, normal otherwise. The value is always finite, which is what guarantees a
+    /// route always exists and keeps the maze free of soft-locks.
     /// </summary>
-    private int CostOfEntering(Cell cell) =>
-        _barriers.Contains(cell) ? _config.ObstacleCost : 1;
+    /// <remarks>
+    /// The sealed price is finite on purpose. A truly impassable cell would let the player wall
+    /// the killer in, so a sealed barrier is instead priced so high that any real detour wins —
+    /// and when there is no detour, the killer pays it by tearing the barrier apart.
+    /// </remarks>
+    private int CostOfEntering(Cell cell)
+    {
+        if (_barrierSeals.ContainsKey(cell))
+        {
+            return _config.SealedBarrierCost;
+        }
+
+        return _barriers.Contains(cell) ? _config.ObstacleCost : 1;
+    }
 
     /// <summary>
     /// Marks the cached killer route as out of date; the next step recomputes it.

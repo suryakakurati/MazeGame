@@ -1,7 +1,6 @@
 using System;
 using MazeGame.Core.Abstractions;
 using MazeGame.Core.Game;
-using MazeGame.Core.Maze;
 using MazeGame.Core.Pathfinding;
 using MazeGame.UI.Frontends;
 
@@ -18,14 +17,13 @@ var useConsole = Array.Exists(
 
 var config = new GameConfig();
 
-// One seeded random source feeds both maze generation and entity placement, so the whole
-// game is reproducible from GameConfig.Seed (null means a different game every run).
-var random = new SeededRandom(config.Seed);
-var maze = new MazeGenerator(random)
-    .Generate(new MazeOptions(config.Rows, config.Columns, config.Seed));
-var state = new GameState(config, maze, new DijkstraPathfinder(), random);
+// The factory owns the shipped maze pipeline and builds one complete game per call: a seeded
+// random source feeds both maze generation and entity placement, so a seed reproduces the run
+// and a null seed gives a new cave every time. Because starting a game is a call rather than a
+// mode, "descend again" after death is the same call as the first descent.
+var factory = new GameFactory(config, () => new SeededRandom(config.Seed), new DijkstraPathfinder());
 
-if (useConsole || !RaylibFrontend.TryRun(state))
+if (useConsole || !RaylibFrontend.TryRun(config, factory.Create))
 {
-    ConsoleFrontend.Run(state);
+    ConsoleFrontend.Run(factory.Create);
 }

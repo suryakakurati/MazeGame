@@ -23,7 +23,27 @@ public sealed class GameConfigTests
         Assert.Equal(3, config.BarrierBudget);
         Assert.Equal(0.6, config.EnemyStepSeconds);
         Assert.Equal(3, config.VisionRadius);
+        Assert.Equal(8, config.ExtraLoops);
+        Assert.Equal(55, config.DeadEndBraidPercent);
+        Assert.Equal(10.0, config.BarrierSealSeconds);
+        Assert.Equal(3.0, config.BarrierBreakSeconds);
+        Assert.Equal(40, config.SealedBarrierCost);
+        Assert.Equal(2, config.LureCount);
+        Assert.Equal(6.0, config.LureSeconds);
+        Assert.Equal(2, config.EnemyAuraRadius);
+        Assert.Equal(6, config.EnemyAuraDistance);
         Assert.Null(config.Seed);
+    }
+
+    [Fact]
+    public void DefaultBraid_LeavesRoughlyAFifthOfTheCellsAsDeadEnds()
+    {
+        // The published balance: a 15x15 perfect maze has about 64 dead ends, and the shipped
+        // braid should leave well under half of them. The share is the knob that decides how
+        // often a chase ends in a corner, so it is pinned rather than left to chance.
+        var config = new GameConfig();
+
+        Assert.InRange(config.DeadEndBraidPercent, 40, 70);
     }
 
     [Theory]
@@ -99,6 +119,94 @@ public sealed class GameConfigTests
     public void Validate_WithNegativeVisionRadius_Throws()
     {
         var config = new GameConfig { VisionRadius = -1 };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Fact]
+    public void Validate_WithNegativeExtraLoops_Throws()
+    {
+        var config = new GameConfig { ExtraLoops = -1 };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Fact]
+    public void Validate_WithNegativeEnemyAuraRadius_Throws()
+    {
+        var config = new GameConfig { EnemyAuraRadius = -1 };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Fact]
+    public void Validate_WithNegativeEnemyAuraDistance_Throws()
+    {
+        var config = new GameConfig { EnemyAuraDistance = -1 };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(101)]
+    public void Validate_WithBraidPercentOutsideZeroToHundred_Throws(int percent)
+    {
+        var config = new GameConfig { DeadEndBraidPercent = percent };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Validate_WithInvalidSealTime_Throws(double seconds)
+    {
+        var config = new GameConfig { BarrierSealSeconds = seconds };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Validate_WithInvalidBreakTime_Throws(double seconds)
+    {
+        // If tearing a seal took no time at all, a sealed barrier would be a free pass.
+        var config = new GameConfig { BarrierBreakSeconds = seconds };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void Validate_WithSealedBarrierCostBelowOne_Throws(int cost)
+    {
+        var config = new GameConfig { SealedBarrierCost = cost };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Fact]
+    public void Validate_WithNegativeLureCount_Throws()
+    {
+        var config = new GameConfig { LureCount = -1 };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Validate_WithInvalidLureLifetime_Throws(double seconds)
+    {
+        var config = new GameConfig { LureSeconds = seconds };
 
         Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
     }

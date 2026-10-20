@@ -20,7 +20,7 @@ public sealed class GameStateBarrierTests
         Assert.True(state.BeginBarrierPlacement());
 
         Assert.True(state.IsPlacingBarrier);
-        Assert.Equal(state.Player, state.BarrierCursor);
+        Assert.Equal(state.Player, state.AimCursor);
     }
 
     [Fact]
@@ -55,38 +55,38 @@ public sealed class GameStateBarrierTests
     }
 
     [Fact]
-    public void MoveBarrierCursor_MovesOneCell()
+    public void MoveAimCursor_MovesOneCell()
     {
         var state = TestLevels.CorridorGame();
         state.BeginBarrierPlacement();
 
-        Assert.True(state.MoveBarrierCursor(Direction.East));
+        Assert.True(state.MoveAimCursor(Direction.East));
 
-        Assert.Equal(state.Maze.GetCell(0, 1), state.BarrierCursor);
+        Assert.Equal(state.Maze.GetCell(0, 1), state.AimCursor);
     }
 
     [Fact]
-    public void MoveBarrierCursor_AtTheEdge_ReturnsFalseAndStaysPut()
+    public void MoveAimCursor_AtTheEdge_ReturnsFalseAndStaysPut()
     {
         var state = TestLevels.CorridorGame();
         state.BeginBarrierPlacement();
 
-        Assert.False(state.MoveBarrierCursor(Direction.West));
-        Assert.False(state.MoveBarrierCursor(Direction.North));
+        Assert.False(state.MoveAimCursor(Direction.West));
+        Assert.False(state.MoveAimCursor(Direction.North));
 
-        Assert.Equal(state.Player, state.BarrierCursor);
+        Assert.Equal(state.Player, state.AimCursor);
     }
 
     [Fact]
-    public void MoveBarrierCursor_WhenNotAiming_ReturnsFalse()
+    public void MoveAimCursor_WhenNotAiming_ReturnsFalse()
     {
         var state = TestLevels.CorridorGame();
 
-        Assert.False(state.MoveBarrierCursor(Direction.East));
+        Assert.False(state.MoveAimCursor(Direction.East));
     }
 
     [Fact]
-    public void MoveBarrierCursor_IgnoresWalls()
+    public void MoveAimCursor_IgnoresWalls()
     {
         // The cursor is a targeting reticle: it can cross a wall to reach any cell.
         var config = new GameConfig { Rows = 2, Columns = 2, KeyCount = 0, EnemyStepSeconds = 1.0 };
@@ -95,43 +95,43 @@ public sealed class GameStateBarrierTests
         state.BeginBarrierPlacement();
 
         Assert.True(maze.HasWall(0, 0, Direction.East));
-        Assert.True(state.MoveBarrierCursor(Direction.East));
-        Assert.Equal(maze.GetCell(0, 1), state.BarrierCursor);
+        Assert.True(state.MoveAimCursor(Direction.East));
+        Assert.Equal(maze.GetCell(0, 1), state.AimCursor);
     }
 
     [Fact]
-    public void ConfirmBarrierPlacement_PlacesOnTheCursorCellAndSpendsOne()
+    public void ConfirmPlacement_PlacesOnTheCursorCellAndSpendsOne()
     {
         var state = TestLevels.CorridorGame(barrierBudget: 2);
         state.BeginBarrierPlacement();
-        state.MoveBarrierCursor(Direction.East);
-        state.MoveBarrierCursor(Direction.East);
+        state.MoveAimCursor(Direction.East);
+        state.MoveAimCursor(Direction.East);
 
-        Assert.True(state.ConfirmBarrierPlacement());
+        Assert.True(state.ConfirmPlacement());
 
         Assert.Contains(state.Maze.GetCell(0, 2), state.Barriers);
         Assert.Equal(1, state.BarriersRemaining);
     }
 
     [Fact]
-    public void ConfirmBarrierPlacement_StopsAiming()
+    public void ConfirmPlacement_StopsAiming()
     {
         var state = TestLevels.CorridorGame();
         state.BeginBarrierPlacement();
 
-        Assert.True(state.ConfirmBarrierPlacement());
+        Assert.True(state.ConfirmPlacement());
 
         Assert.False(state.IsPlacingBarrier);
     }
 
     [Fact]
-    public void ConfirmBarrierPlacement_OnAnOccupiedCell_RefusesAndKeepsAiming()
+    public void ConfirmPlacement_OnAnOccupiedCell_RefusesAndKeepsAiming()
     {
         var state = TestLevels.CorridorGame(barrierBudget: 2);
         Assert.True(TestLevels.PlaceBarrierAt(state, 0, 0));
 
         Assert.True(state.BeginBarrierPlacement());
-        Assert.False(state.ConfirmBarrierPlacement());
+        Assert.False(state.ConfirmPlacement());
 
         Assert.True(state.IsPlacingBarrier);
         Assert.Equal(1, state.BarriersRemaining);
@@ -139,21 +139,21 @@ public sealed class GameStateBarrierTests
     }
 
     [Fact]
-    public void ConfirmBarrierPlacement_WhenNotAiming_ReturnsFalse()
+    public void ConfirmPlacement_WhenNotAiming_ReturnsFalse()
     {
         var state = TestLevels.CorridorGame();
 
-        Assert.False(state.ConfirmBarrierPlacement());
+        Assert.False(state.ConfirmPlacement());
         Assert.Empty(state.Barriers);
     }
 
     [Fact]
-    public void CancelBarrierPlacement_LeavesAimingWithoutPlacing()
+    public void CancelPlacement_LeavesAimingWithoutPlacing()
     {
         var state = TestLevels.CorridorGame(barrierBudget: 2);
         state.BeginBarrierPlacement();
 
-        state.CancelBarrierPlacement();
+        state.CancelPlacement();
 
         Assert.False(state.IsPlacingBarrier);
         Assert.Empty(state.Barriers);
@@ -161,11 +161,11 @@ public sealed class GameStateBarrierTests
     }
 
     [Fact]
-    public void CancelBarrierPlacement_WhenNotAiming_DoesNothing()
+    public void CancelPlacement_WhenNotAiming_DoesNothing()
     {
         var state = TestLevels.CorridorGame();
 
-        state.CancelBarrierPlacement();
+        state.CancelPlacement();
 
         Assert.False(state.IsPlacingBarrier);
         Assert.Equal(2, state.BarriersRemaining);
@@ -218,7 +218,7 @@ public sealed class GameStateBarrierTests
         state.BeginBarrierPlacement();
         state.Tick(5.0);
 
-        state.CancelBarrierPlacement();
+        state.CancelPlacement();
         state.Tick(1.0);
 
         Assert.NotEqual(killer, state.Enemy);

@@ -101,6 +101,29 @@ second implementation exists. When you add one (a torch, a fuse, a medkit):
 5. Draw it in both renderers (`RaylibRenderer` shape, `ConsoleRenderer` symbol); the UI must
    not change the rules.
 
+### Add a third placeable (the barrier/wisp pattern)
+
+Barriers and wisps both go through one aiming mode, one cursor and one clock freeze. A new
+placeable (a decoy, a smoke bomb, a trap) should reuse all three:
+
+1. Add a value to `PlacementMode` and a `BeginXPlacement()` that calls the shared
+   `BeginAim(mode)` — that is where "game over", "already aiming" and "nothing left to
+   spend" live, so a new item cannot forget one of them.
+2. Add the budget and, if it is temporary, the lifetime to `GameConfig`, and validate them
+   like `LureCount` / `LureSeconds`.
+3. Handle it in `ConfirmPlacement` (the dispatch), spending the charge only on success and
+   refusing with a rule that is worth explaining in a doc comment (the wisp refuses the
+   player's own cell because it could never be cheaper).
+4. If it changes **where** the killer walks, do it through `EnemyRouteToTarget`'s comparison
+   of two `FindPath` costs and invalidate the cached route whenever it appears, expires or is
+   consumed. If it changes **what a cell costs**, put it in `CostOfEntering` and keep the
+   weight finite — that is the no-soft-lock invariant.
+5. Expose it read-only on `GameState` (a cell, a set, a remaining time) and draw it in both
+   renderers plus a HUD pill; the UI must not branch on anything else.
+6. Add the same three tests every placeable has: the budget is spent exactly once, the effect
+   happens (and stops) at the documented time, and a long random-play game still ends with the
+   killer able to reach the player.
+
 ### Add a new enemy type
 
 The killer is a single timed Dijkstra chase inside `GameState` (`AdvanceEnemy`, plus the
@@ -159,7 +182,11 @@ Prim, rooms-and-corridors) is a new class, not an edit to the existing one:
 5. Keep the result a *perfect* maze: connected, acyclic, `cellCount - 1` passages. Add
    the generator to the invariant tests over 50 seeds (connectivity by BFS, passage
    count, closed outer boundary, seed reproducibility).
-6. Swap the one construction line in the composition root, and note the change in
+6. If you want loops or different topology, do **not** change the generator: wrap it in a
+   decorator like `BraidedMazeGenerator` (removes standing interior walls, adding loops) or
+   `DeadEndBraider` (opens one wall at a share of the dead ends). Both only remove walls after
+   generation, so the perfect-maze guarantee stays intact and a config value turns each off.
+7. Swap the one construction line in the composition root, and note the change in
    `DECISIONS.md`.
 
 ### Add another renderer or frontend
@@ -177,13 +204,30 @@ a third (a replay viewer, another engine, a web canvas):
    lives. Adding a control there gives it to every frontend at once.
 4. Either add a frontend that owns its loop and calls `GameState.Tick(measuredDeltaSeconds)`
    plus `renderer.Draw(state)`, or wire the renderer into an existing frontend. Never derive
-   elapsed time from an assumed frame length.
+   elapsed time from an assumed frame length. Start each run with the injected
+   `Func<GameState>` (in production, `GameFactory.Create`) so a replay keeps working.
 5. Bracket drawing the way the engine demands it (Raylib needs `BeginDrawing`/`EndDrawing`,
    which the frontend supplies; the renderer only fills in a frame).
 6. Keep the console frontend working: it is the fallback when no window can be opened, and
    `Program` relies on that.
 7. Update `ARCHITECTURE.md` (dependency table, package version) and `DECISIONS.md` (why the
    framework changed).
+
+### Add a screen (title, pause, settings)
+
+The window already has two screens — title and game — with the state owned by
+`RaylibFrontend`. A new screen follows the same shape:
+
+1. Draw it from the renderer as its own method that takes only what it needs to draw (like
+   `DrawTitle(int)`); a screen that needs no rules must not take a `GameState`.
+2. Keep the selection and the transitions in the frontend, not in the renderer and never in
+   Core: a menu is not a game rule, and tests should not have to know it exists.
+3. If it starts a run, call the injected game factory and `RaylibRenderer.Reset()`; if it
+   returns to a running game, leave the state untouched.
+4. Give the console a minimal version if it fits (a printed heading and a key prompt), and
+   skip key prompts when `Console.IsInputRedirected` — a piped run can never answer one.
+5. Verify by driving the renderer directly for a few frames in both states, as `PROGRESS.md`
+   describes; this environment cannot show pixels to the agent.
 
 ### Add or change a tunable
 

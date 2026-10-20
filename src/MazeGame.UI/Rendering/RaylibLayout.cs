@@ -12,26 +12,26 @@ namespace MazeGame.UI.Rendering;
 /// </remarks>
 internal static class RaylibLayout
 {
-    /// <summary>Side of one maze cell in pixels.</summary>
-    public const int CellSize = 36;
+    /// <summary>Side of one maze cell in pixels. Large enough to draw a small figure in.</summary>
+    public const int CellSize = 40;
 
     /// <summary>Thickness of a maze wall in pixels.</summary>
-    public const int WallThickness = 3;
+    public const int WallThickness = 6;
 
     /// <summary>Margin around the maze, in pixels.</summary>
-    public const int Margin = 24;
+    public const int Margin = 28;
 
     /// <summary>Height of the status strip above the maze, in pixels.</summary>
-    public const int HudHeight = 56;
+    public const int HudHeight = 60;
 
     /// <summary>Height of the control-hint strip below the maze, in pixels.</summary>
-    public const int FooterHeight = 40;
+    public const int FooterHeight = 44;
 
     /// <summary>Target frame rate; the game clock uses measured time, so this is only smoothness.</summary>
     public const int TargetFps = 60;
 
-    /// <summary>Window title.</summary>
-    public const string Title = "MazeGame";
+    /// <summary>Window title, matching the title screen rather than the repository name.</summary>
+    public const string Title = "Bioluminescent Depths";
 
     /// <summary>Left edge of the maze inside the window.</summary>
     public const int OriginX = Margin;

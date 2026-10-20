@@ -51,16 +51,34 @@ public sealed class GameStateInvariantTests
                 {
                     for (var aimStep = random.NextInt(4); aimStep > 0; aimStep--)
                     {
-                        state.MoveBarrierCursor((Direction)(1 << random.NextInt(4)));
+                        state.MoveAimCursor((Direction)(1 << random.NextInt(4)));
                     }
 
                     if (random.NextInt(3) == 0)
                     {
-                        state.CancelBarrierPlacement();
+                        state.CancelPlacement();
                     }
                     else
                     {
-                        state.ConfirmBarrierPlacement();
+                        state.ConfirmPlacement();
+                    }
+                }
+
+                // The wisp gets the same treatment, including giving up on the aim.
+                if (random.NextInt(7) == 0 && state.BeginLurePlacement())
+                {
+                    for (var aimStep = random.NextInt(4); aimStep > 0; aimStep--)
+                    {
+                        state.MoveAimCursor((Direction)(1 << random.NextInt(4)));
+                    }
+
+                    if (random.NextInt(4) == 0)
+                    {
+                        state.CancelPlacement();
+                    }
+                    else
+                    {
+                        state.ConfirmPlacement();
                     }
                 }
 
@@ -69,8 +87,20 @@ public sealed class GameStateInvariantTests
                 Assert.InRange(state.KeysRemaining, 0, config.KeyCount);
                 Assert.Equal(config.KeyCount - state.KeysRemaining, state.KeysCollected);
                 Assert.InRange(state.BarriersRemaining, 0, config.BarrierBudget);
+                Assert.InRange(state.LuresRemaining, 0, config.LureCount);
                 Assert.Equal(state.KeysRemaining == 0, state.IsExitUnlocked);
                 Assert.True(state.Barriers.Count <= config.BarrierBudget);
+                Assert.True(state.BarrierSeals.Count <= state.Barriers.Count);
+
+                // A wisp is either gone or still has time on it: it can never become a
+                // permanent decoy, however the player places and walks over it.
+                if (state.Lure is not null)
+                {
+                    Assert.True(state.LureSecondsRemaining > 0);
+                    Assert.True(state.LureSecondsRemaining <= config.LureSeconds);
+                }
+
+                Assert.Equal(state.Lure is not null, state.IsLureActive);
 
                 // The killer must always have a way to the player, whatever the player does.
                 if (state.Status == GameStatus.InProgress)
@@ -79,7 +109,9 @@ public sealed class GameStateInvariantTests
                         state.Maze,
                         state.Enemy,
                         state.Player,
-                        cell => state.Barriers.Contains(cell) ? config.ObstacleCost : 1);
+                        cell => state.BarrierSeals.ContainsKey(cell)
+                            ? config.SealedBarrierCost
+                            : state.Barriers.Contains(cell) ? config.ObstacleCost : 1);
 
                     Assert.NotEmpty(route);
                 }
@@ -113,6 +145,36 @@ public sealed class GameStateInvariantTests
 
         Assert.Equal(GameStatus.Won, state.Status);
         Assert.Equal(3, state.KeysCollected);
+    }
+
+    [Fact]
+    public void AWholeGame_CanBeWonOnABraidedMaze()
+    {
+        // The braid adds loops to the maze the UI actually plays on; the objective rules must
+        // not care. Same parked killer as the perfect-maze version of this test.
+        var random = new SeededRandom(91);
+        var config = new GameConfig
+        {
+            Rows = MazeSize,
+            Columns = MazeSize,
+            KeyCount = 3,
+            ExtraLoops = 10,
+            EnemyStepSeconds = 1000.0,
+            Seed = 91,
+        };
+        var generator = new BraidedMazeGenerator(new MazeGenerator(random), random, config.ExtraLoops);
+        var maze = generator.Generate(new MazeOptions(MazeSize, MazeSize, 91));
+        var state = new GameState(config, maze, new DijkstraPathfinder(), random);
+
+        while (state.KeysRemaining > 0)
+        {
+            WalkTo(state, state.Keys.First());
+        }
+
+        WalkTo(state, state.Exit);
+
+        Assert.Equal(GameStatus.Won, state.Status);
+        Assert.Equal((MazeSize * MazeSize) - 1 + config.ExtraLoops, maze.CountPassages());
     }
 
     [Fact]
@@ -179,8 +241,8 @@ public sealed class GameStateInvariantTests
             state.Tick(1.0);
             state.TryMove(Direction.North);
             state.BeginBarrierPlacement();
-            state.ConfirmBarrierPlacement();
-            state.CancelBarrierPlacement();
+            state.ConfirmPlacement();
+            state.CancelPlacement();
 
             Assert.Equal(status, state.Status);
             Assert.Equal(player, state.Player);

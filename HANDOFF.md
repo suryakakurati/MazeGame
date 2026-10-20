@@ -31,19 +31,36 @@ union by size; `MinHeap<T>` with sift-up/sift-down), the maze pipeline (`IRandom
 a **playable game** in a Raylib window: `GameConfig`, `GameStatus`, `GameState` (placement,
 movement, keys, locked exit, barriers, timed killer AI, visibility/fog, win/lose),
 `IRenderer` with `RaylibRenderer` and `ConsoleRenderer`, the `Frontends/` + `Input/` split,
-and `Program` as the composition root.
+`GameFactory` (builds each run), and `Program` as the composition root. The window opens on a
+title screen and the end card offers `R / ENTER: DESCEND AGAIN`, which builds a fresh cave and
+game in the same window; the console has the same title and `[R] descend again` prompt.
 
-198 tests pass, including perfect-maze invariants over 50 seeds, shortest-path optimality
-against an independent BFS, all Phase 5 rules, the barrier delay, the aiming pause, the fog
-rule, and a long random-play invariant test.
-Verified this session: build 0 warnings/0 errors, 198/198 tests, the console view renders a
-correct fogged frame, the Raylib renderer ran 408 frames through every visual state without
-an exception, and the window build stayed alive with an empty log. The window's pixels could
-not be captured on this machine (no GUI framebuffer available to the agent), so one human
-look at the window is still owed (see `PROGRESS.md` → Known Issues).
+The maze the UI plays is shaped by two decorators over the graded perfect generator:
+`DeadEndBraider` opens one wall at 55% of the dead ends (57 → 18.8 per 15x15 map, so a chase
+rarely ends in a corner) and `BraidedMazeGenerator` removes `ExtraLoops` (8) more interior
+walls, so a barrier can redirect the killer rather than only stall it. A barrier now **seals**
+its cell for 10 s (the killer routes around it, and tears it down in 3 s only when it is the
+only way), and a wisp **lure** (2 charges, 6 s) makes the killer chase whichever of the player
+and the wisp is cheaper by Dijkstra. The killer carries a distance-gated aura (visible within 6
+steps, radius 2), and the window is drawn as a bioluminescent cave in green/pink/cyan, with the
+team's reference art in `references/image.png` as the mood board.
 
-Phase 7 (difficulty tuning, optional audio, polish) is next; `PROGRESS.md` → **Next Steps**
-has the ordering.
+279 tests pass, including perfect-maze invariants over 50 seeds, shortest-path optimality
+against an independent BFS, all Phase 5 rules, the seal and tear-down rules, the wisp's target
+choice and lifetime, the dead-end braid, the fog and aura rules, the replay contract in
+`GameFactory`, and a long random-play invariant test that now places both placeables and still
+proves the killer always has a route.
+Verified this session: build 0 warnings/0 errors, 279/279 tests, the wall-clock and detour
+measurements in `PROGRESS.md`, 321 title/replay frames through the real renderer (both menu
+states, a run played to `Caught`, then a fresh game drawn) with no exception at 1.76 ms/frame
+for the title, and the window staying alive on the title with an empty log. Earlier: 136
+gameplay frames with seals and a wisp (0.70–1.04 ms/frame draw submission, 2.3–3.5 ms including
+the frame swap) and 482 console frames. The window's pixels could not be
+captured on this machine (no GUI framebuffer available to the agent), so one human look at the
+window is still owed (see `PROGRESS.md` → Known Issues).
+
+Phase 7 (play-test tuning, optional audio, polish) is next; `PROGRESS.md` → **Next Steps** has
+the ordering.
 
 ## Conventions in use
 
@@ -79,17 +96,31 @@ has the ordering.
 - **The window loop owns `BeginDrawing`/`EndDrawing`.** `RaylibRenderer.Draw` only fills in a
   frame; calling Raylib drawing outside a bracket crashes. Anything that must run per frame
   belongs in `RaylibFrontend.RunLoop`, not in the renderer.
+- **The art is one palette block plus procedural drawing.** Colours and the drawing helpers live
+  in `RaylibRenderer`; the look is a bioluminescent cave (green/pink/cyan on near-black teal,
+  rounded stone, glowing lichen, hooded explorer, spindly killer). Every detail comes from a
+  hash of the cell (or of the mote/grain index and clock), so do not introduce `Random` or
+  per-frame state for it, and do not load textures — the project has no asset pipeline.
+- **Walls are drawn in two passes.** `DrawCellBase` paints floors and the dark rock of every
+  wall; `DrawCellDetails` then paints the lit rim, moss and lichen. A wall is drawn by both cells
+  that share it, so a single pass would let the neighbour's dark stroke cover the first cell's
+  rim. Keep that split if you add wall decoration.
+- **Cells are 40 px and the window is 656x760 for 15x15.** `RaylibLayout` owns this, and the
+  characters are sized against it; changing `CellSize` means re-checking the figure sizes in
+  `RaylibRenderer`.
 - **Fog of war is a rule, not a drawing effect.** `GameState.IsVisible(cell)` is the only
   source of truth (own cell + `VisionRadius` steps through passages, cached, recomputed on
   movement). Renderers may decide how to darken, and each keeps its own explored-cell memory;
   never let a renderer invent visibility, and never put its memory in Core.
 - **Game rules live in `GameState`, not in `Program`.** The loop only maps keys to
-  `TryMove` / the barrier-aiming commands / `Tick` and draws. If you are tempted to add a
+  `TryMove` / the aiming commands / `Tick` and draws. If you are tempted to add a
   rule to the renderer, add it to Core plus a test instead.
-- **Aiming a barrier is a Core mode, not a UI mode.** `BeginBarrierPlacement` freezes the
+- **Aiming is a Core mode, not a UI mode.** `PlacementMode` (barrier or wisp) freezes the
   clock (`Tick` returns early) and `TryMove` is refused until the aim is confirmed or
-  cancelled, so the pause cannot be bypassed by a different renderer. `TryPlaceBarrier`
-  no longer exists; the flow is begin → move cursor → confirm/cancel.
+  cancelled, so the pause cannot be bypassed by a different renderer. Both placeables share
+  `AimCursor` / `MoveAimCursor` / `ConfirmPlacement` / `CancelPlacement`; only the
+  `Begin*Placement` entry points differ, because what can be afforded differs. Do not add a
+  second cursor or a second freeze for a third placeable.
 - **A locked exit is walkable on purpose.** Blocking it could wall the player off in a
   corridor. Win = standing on the exit with zero keys left.
 - **The killer starts on the furthest dead end.** A perfect maze is a tree, so a killer in
@@ -101,14 +132,38 @@ has the ordering.
 - **Both frontends share one key mapping.** Keys are translated into `GameCommand` values and
   applied by `GameCommands`; add a new control there once, and both the window and the
   terminal get it. Escape cancels while aiming and quits otherwise, in both frontends.
-- **A barrier buys time: `ObstacleCost * EnemyStepSeconds` = 3 s by default**
-  (`5 * 0.6`). The delay is charged before the killer steps into the cell, which is why it
-  appears to stall at the barrier. It still never blocks. If a barrier seems to do nothing,
-  check `GameState.SecondsUntilNextStep` and `GameStateBarrierDelayTests` first.
-- **Barriers do not create detours in a generated maze** — a perfect maze has one route
-  between any two cells, so they add delay rather than a redirect. The steering logic is
-  real and tested; it needs a looped maze (hand-built in tests, or an optional braided
-  generator). See the last entries in `DECISIONS.md`.
+- **A barrier has two prices.** While sealed it is worth `SealedBarrierCost` (40) to the
+  killer, so it detours; when only that cell connects the two of you it spends
+  `BarrierBreakSeconds` (3) tearing the barrier apart, and the barrier is destroyed. Once the
+  seal lapses the husk costs `ObstacleCost * EnemyStepSeconds` = 3 s (`5 * 0.6`). Every price
+  is finite on purpose: that is the no-soft-lock invariant. If a barrier seems inert, check
+  `GameState.CostOfEntering`, `SecondsUntilNextStep` and `GameStateSealTests` first.
+- **Tearing a seal is a step of its own.** `AdvanceEnemy` calls `BreakSeal` instead of moving
+  when the next cell is sealed, so the tear-down is visible as a pause followed by the barrier
+  vanishing, rather than a slow walk through it.
+- **Starting a run is `GameFactory.Create()`.** The factory owns the maze pipeline and gives
+  each game its own random source, so a restart is the same call as the first descent. Do not
+  assemble a maze in a frontend, and do not add restart state to a loop; call the factory.
+- **The title screen is a renderer partial, and the frontend owns the menu.** `DrawTitle` takes
+  the selected index and draws no game state; `RaylibFrontend` holds the selection and the
+  screen state. Raylib's built-in font is ASCII only, so no decorative glyphs.
+- **Reset the renderer between runs.** `RaylibRenderer` remembers explored cells and `Cell` is a
+  value type, so cells of a new maze compare equal to the old ones: a run that starts without
+  `renderer.Reset()` draws the previous cave's walls.
+- **Shaping the maze is decorators, not an edit to `MazeGenerator`.** `MazeGenerator` must
+  keep producing a perfect maze for the graded requirement; `DeadEndBraider` and
+  `BraidedMazeGenerator` wrap it. The braid is tested by counting **dead ends** (it removes
+  traps and can never create one), the loop decorator by counting passages
+  (`cellCount - 1 + loops`). Do not move either into the Kruskal class.
+- **The killer's aura is part of `IsVisible`, not the renderer.** Within `EnemyAuraDistance`
+  (6) steps its `EnemyAuraRadius` (2) surroundings are visible, and `EnemyGlow` says which
+  cells came from that light. Because the aura follows the killer, `AdvanceEnemy` recomputes
+  visibility — if you add another moving light source, it needs the same treatment.
+- **The wisp is a target, not a status effect.** The killer's target is chosen by comparing
+  the cost of two `FindPath` results (`RouteCost`), ties to the player. Anything that changes
+  where the killer walks must go through that comparison, and `ClearLure`/`BreakSeal` must
+  invalidate the cached route — otherwise the killer keeps walking to a wisp that no longer
+  exists.
 - **The UI must not contain game rules.** If the UI needs data, add a read-only
   member to `GameState`; do not reach into maze internals.
 - **Walls are changed only through `Grid`.** `Cell` is an immutable value type with no

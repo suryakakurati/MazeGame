@@ -48,9 +48,10 @@ and Tests never point at UI.
 MazeGame.sln
 Directory.Build.props          shared compiler settings for all projects
 .editorconfig                  style + naming rules
+references/                    team reference art used for the palette (not loaded by the game)
 src/MazeGame.Core/
   Abstractions/                interfaces and the seeded random source
-  Maze/                        disjoint set, grid/cell model, maze generator
+  Maze/                        disjoint set, grid/cell model, maze generators (perfect + braid)
   Pathfinding/                 binary min-heap and Dijkstra (the enemy AI lives in GameState)
   Game/                        GameConfig, GameStatus, GameState (rules, enemy AI)
 src/MazeGame.UI/
@@ -79,39 +80,49 @@ tests/MazeGame.Tests/
 | `Cell` | Core / Maze | Immutable `readonly record struct`: row, column and one byte of wall bits. No public constructor; walls change only through `Grid`. | done (Phase 3) |
 | `Grid` | Core / Maze | Fixed-size rectangle of `Cell`s. Validates every coordinate, converts positions to indices, removes a wall from both sides, and reports `CountPassages` for invariant checks. | done (Phase 3) |
 | `MazeOptions` | Core / Maze | Plain request value: rows, columns, nullable seed. No logic, so it can come from a config file, CLI argument or test. | done (Phase 3) |
-| `IMazeGenerator` | Core / Abstractions | `Grid Generate(MazeOptions options)`; lets tests and future maze styles swap strategies. | done (Phase 3) |
+| `IMazeGenerator` | Core / Abstractions | `Grid Generate(MazeOptions options)`; returns a fully connected grid. `MazeGenerator` gives a perfect maze; decorators may add loops. Lets tests and future maze styles swap strategies. | done (Phase 3–6) |
 | `MazeGenerator` | Core / Maze | Randomized Kruskal: shuffle candidate walls, remove a wall only when `DisjointSet.Union` succeeds. Produces a perfect maze from a seed. | done (Phase 3) |
+| `DeadEndBraider` | Core / Maze | Decorator that opens one extra wall at `Percent` of the maze's dead ends. Removing a wall can never create a dead end, so it only removes traps (57 → 18.8 per 15x15 map at the shipped 55%); shared walls count as braiding both cells, corridor ends with no interior wall are skipped, and the boundary is never touched. | done (Phase 6) |
+| `BraidedMazeGenerator` | Core / Maze | Decorator over another generator: after it runs, removes `ExtraPassages` standing interior walls (east/south candidates only, shuffled), adding that many loops without ever opening the boundary. Clamps when asked for more walls than exist. | done (Phase 6) |
 | `MinHeap<T>` | Core / Pathfinding | Hand-written binary min-heap over a flat list with sift-up/sift-down; injected `IComparer<T>` decides order. `Peek` O(1), `Insert`/`ExtractMin` O(log n). No library priority queue. | done (Phase 4) |
 | `IPathfinder` | Core / Abstractions | `FindPath(grid, start, goal, Func<Cell,int> cost)` returning the cells in travel order, or an empty list when unreachable. Knows nothing about obstacles — only weights. | done (Phase 4) |
 | `DijkstraPathfinder` | Core / Pathfinding | Dijkstra: cached per-cell best distance, predecessor links for rebuilding the route, stale-entry deletion instead of decrease-key, early exit when the goal is settled. Weights come from the caller (obstacle cost is a Phase 5 concern). | done (Phase 4) |
-| `GameConfig` | Core / Game | Every tunable number (size, key count, obstacle cost 5, barrier budget, enemy step time, vision radius 3, seed), init-only, with `Validate` enforcing the "maze is big enough for player + killer + exit + keys" rule. | done (Phase 5) |
+| `GameConfig` | Core / Game | Every tunable number (size, key count, obstacle cost 5, barrier budget 3, seal 10 s, tear-down 3 s, sealed cost 40, wisp count 2 / lifetime 6 s, enemy step time, vision radius 3, dead-end braid 55%, extra loops 8, killer aura radius 2 / distance 6, seed), init-only, with `Validate` enforcing the "maze is big enough for player + killer + exit + keys" rule. | done (Phase 5–6) |
 | `GameStatus` | Core / Game | `InProgress` / `Won` / `Caught`; a game leaves `InProgress` once and never returns. | done (Phase 5) |
-| `GameState` | Core / Game | The single public entry point for the UI. Owns maze, player, killer, exit, uncollected keys, barriers, the visible-cell set and status. Commands: `TryMove`, `Tick`, and the aiming set `BeginBarrierPlacement` / `MoveBarrierCursor` / `ConfirmBarrierPlacement` / `CancelBarrierPlacement`; `IsVisible(Cell)` answers fog. Contains the enemy AI (cached Dijkstra route, invalidated when the player moves or a barrier is placed, step time scaled by cell cost) and the win/lose rules. | done (Phase 5–6) |
+| `GameState` | Core / Game | The single public entry point for the UI. Owns maze, player, killer, exit, uncollected keys, barriers and their seals, the wisp, the visible-cell set, the killer's aura cells and status. Commands: `TryMove`, `Tick`, and the aiming set `BeginBarrierPlacement` / `BeginLurePlacement` / `MoveAimCursor` / `ConfirmPlacement` / `CancelPlacement`; `BarrierSeals`, `Lure` and `IsVisible(Cell)` feed the renderers, `EnemyGlow` says which cells are lit by the killer. Contains the enemy AI (two cached Dijkstra routes compared to pick the player or the wisp, step time scaled by cell cost, seal tear-down as its own action) and the win/lose rules. | done (Phase 5–6) |
+| `GameFactory` | Core / Game | Builds one complete game per `Create()`: a new random source, the shipped maze pipeline (`MazeGenerator` → `DeadEndBraider` → `BraidedMazeGenerator`) and a `GameState`. Validates its config in the constructor. Starting (or restarting) a run is this one call. | done (Phase 6) |
 | `IRenderer` | UI / Rendering | `Draw(GameState)`; draws a frame and never changes the game. | done (Phase 5) |
-| `ConsoleRenderer` | UI / Rendering | ASCII view: maze walls, `@` player, `K` killer, `k` key, `E` exit, `#` barrier, plus a HUD line. Fog-aware: unseen cells are blank, remembered ones are `.`; entities only while visible. | done (Phase 6) |
-| `RaylibRenderer` | UI / Rendering | Graphical window: dark floor, shapes for entities, fog (black unseen, dim remembered), torch falloff by distance, slow flicker, HUD, aim reticle and end banner. Reads visibility from Core. | done (Phase 6) |
-| `RaylibLayout` | UI / Rendering | Window geometry shared by the frontend and the renderer: cell size, margins, HUD/footer strips, `WindowSize(config)`, `CellX`/`CellY`. | done (Phase 6) |
-| `GameCommand` | UI / Input | Backend-independent player intentions (`MoveNorth`…`BeginAim`, `ConfirmAim`, `CancelAim`, `Quit`). | done (Phase 6) |
+| `ConsoleRenderer` | UI / Rendering | ASCII view: maze walls, `@` player, `K` killer, `k` key, `E` exit, `#` sealed barrier, `=` spent barrier, `*` wisp, plus a HUD line. Fog-aware: unseen cells are blank, remembered ones are `.`; entities only while visible. | done (Phase 6) |
+| `RaylibRenderer` | UI / Rendering | Graphical window drawn as a bioluminescent cave: rounded stone floors, rock walls in two passes (dark rock, then lit rim/moss/lichen), glowing mushrooms, a hooded lantern-bearer, a spindly killer, fungus keys, an arch exit, thorn barriers (a breathing green cage while sealed, a dim husk once spent), a cyan wisp with orbiting sparks, green/pink/cyan spores, background blooms, grain, vignette, glass HUD pills (keys, barriers, wisps, exit), a mode-coloured aim reticle and end card. Also draws the title screen (`DrawTitle`, in the `RaylibRenderer.Title.cs` partial) and `Reset()` clears its explored-cell memory between runs. Reads visibility from Core. | done (Phase 6) |
+| `RaylibLayout` | UI / Rendering | Window geometry shared by the frontend and the renderer: 40 px cells, margins, HUD/footer strips, `WindowSize(config)`, `CellX`/`CellY`, window title. | done (Phase 6) |
+| `GameCommand` | UI / Input | Backend-independent player intentions (`MoveNorth`…`BeginAim`, `BeginLureAim`, `ConfirmAim`, `CancelAim`, `Quit`). | done (Phase 6) |
 | `GameCommands` | UI / Input | Applies a command to `GameState`; the one place that knows direction keys move the aim cursor instead of the player while aiming. | done (Phase 6) |
-| `RaylibFrontend` | UI / Frontends | Opens the window, owns the frame loop (measured frame time), maps keys, brackets drawing, keeps the last frame on screen after the game ends. Returns `false` when no window is available. | done (Phase 6) |
-| `ConsoleFrontend` | UI / Frontends | Terminal loop with the same command mapping and `--console`/fallback role. | done (Phase 6) |
+| `RaylibFrontend` | UI / Frontends | Opens the window, owns the two-screen loop (title with its menu, then the game), maps keys, brackets drawing, and restarts a run by calling the injected game factory. Keeps the last frame on screen under the end card. Returns `false` when no window is available. | done (Phase 6) |
+| `ConsoleFrontend` | UI / Frontends | Terminal loop with the same command mapping, an ASCII title (skipped when input is redirected) and `[R] descend again`, plus the `--console`/fallback role. | done (Phase 6) |
 
 ## Data flow of one frame (as implemented)
 
-1. `Program` builds the config, random source, maze and `GameState`, then runs
-   `RaylibFrontend.TryRun(state)` — or `ConsoleFrontend.Run(state)` when `--console` was
-   passed or no window could be opened.
-2. The frontend reads its own keyboard API and translates a press into one `GameCommand`.
+1. `Program` builds the config and a `GameFactory`, then runs
+   `RaylibFrontend.TryRun(config, factory.Create)` — or `ConsoleFrontend.Run(factory.Create)`
+   when `--console` was passed or no window could be opened. Each run starts with
+   `factory.Create()`, so a replay is the same call as the first descent.
+2. The window opens on the title screen (`RaylibRenderer.DrawTitle`). The frontend owns the
+   selection; confirming `DESCEND` calls the factory, resets the renderer's explored cells and
+   switches to the game screen. `LEAVE` or Esc closes the window.
+3. The frontend reads its own keyboard API and translates a press into one `GameCommand`.
    `GameCommands.Apply` performs it: normally `TryMove(direction)` or
-   `BeginBarrierPlacement()`; while `IsPlacingBarrier` is true the same direction keys go to
-   `MoveBarrierCursor`, B/Space/Enter confirm and Esc cancels. No game rules live in the UI.
-3. The frontend measures real elapsed time and calls `GameState.Tick(deltaSeconds)`, which
+   `BeginBarrierPlacement()` / `BeginLurePlacement()`; while `IsAiming` is true the same
+   direction keys go to `MoveAimCursor`, B/Space/Enter confirm and Esc cancels. No game rules
+   live in the UI.
+4. The frontend measures real elapsed time and calls `GameState.Tick(deltaSeconds)`, which
    advances the killer at most one step.
-4. `RaylibRenderer.Draw(state)` fills in the frame (the frontend brackets it with
-   `BeginDrawing`/`EndDrawing`); `ConsoleRenderer.Draw(state)` rebuilds the ASCII frame and
-   writes it. Both ask `GameState.IsVisible` what they may show and keep their own memory of
-   explored cells.
-5. The window runs at `Raylib.SetTargetFPS(60)`; the console loop sleeps 8 ms per frame. The
+5. When the run ends, the end card is drawn over the last frame; R or Enter calls the factory
+   again for a fresh game. Quitting returns the last game so the outcome can be printed.
+6. `RaylibRenderer.Draw(state)` fills in the frame (the frontend brackets it with
+   `BeginDrawing`/`EndDrawing`): night gradient, cells, killer halo, dust, HUD. `ConsoleRenderer.Draw(state)`
+   rebuilds the ASCII frame and writes it. Both ask `GameState.IsVisible` what they may show,
+   use `EnemyGlow` to mark the killer's light, and keep their own memory of explored cells.
+7. The window runs at `Raylib.SetTargetFPS(60)`; the console loop sleeps 8 ms per frame. The
    game clock never comes from the frame rate — always from measured time passed to `Tick`.
 
 ## Game rules (Phase 5–6)
@@ -123,13 +134,27 @@ tests/MazeGame.Tests/
   killer loses; stepping onto the exit wins only with zero keys left; a locked exit can be
   walked over (blocking it could soft-lock a corridor).
 - **Barriers.** Aimed anywhere with a cursor while the clock is paused, then placed;
-  one per cell, limited by `BarrierBudget`. Entering a barriered cell costs the killer
-  `ObstacleCost` (5) *normal steps of time*, and is never impossible.
-- **Enemy.** Dijkstra route to the player, cached and invalidated on player movement or
-  barrier placement. It waits `EnemyStepSeconds * cost(next cell)` before each step
-  (0.6 s normally, 3 s into a barrier), at most one step per `Tick`.
+  one per cell, limited by `BarrierBudget`. A fresh barrier is sealed for
+  `BarrierSealSeconds`, which prices the cell at `SealedBarrierCost` (40) — more than any
+  detour — so the killer routes around it. If the seal is the only route it spends
+  `BarrierBreakSeconds` tearing the barrier apart. Once the seal lapses, the husk costs
+  `ObstacleCost` (5) normal steps. Nothing is ever impossible.
+- **Wisps.** Aimed with the same cursor, one at a time, limited by `LureCount`. For
+  `LureSeconds` the killer targets whichever of the player and the wisp has the cheaper
+  Dijkstra route (ties to the player); reaching or outlasting the wisp removes it. It never
+  blocks and never hides anything, so it cannot affect reachability.
+- **Enemy.** Dijkstra route to the chosen target, cached and invalidated on player movement,
+  placement, seal expiry, wisp consumption or wisp expiry. It waits
+  `EnemyStepSeconds * cost(next cell)` before each step (0.6 s normally, 3 s into a spent
+  barrier), or `BarrierBreakSeconds` before tearing a seal apart, at most one step per `Tick`.
+- **Maze shape.** The graded Kruskal generator builds a perfect maze; `DeadEndBraider` opens a
+  second exit at 55% of its dead ends (so a chase rarely ends in a corner) and
+  `BraidedMazeGenerator` removes `ExtraLoops` further walls (so a barrier can redirect the
+  killer, not merely stall it).
 - **Visibility.** `IsVisible(cell)` = the player's own cell plus every cell within
-  `VisionRadius` steps through open passages, so walls block sight. Recomputed on movement;
+  `VisionRadius` steps through open passages, so walls block sight. Once the killer is within
+  `EnemyAuraDistance` steps, the cells within `EnemyAuraRadius` of it are visible too (the
+  killer's own light, `EnemyGlow`). Recomputed when the player *or the killer* moves;
   renderers only darken what it reports.
 - **End.** `Won` or `Caught`; after that every command and tick is a no-op.
 
@@ -160,6 +185,12 @@ fixed seeds, that:
 
 Together, (1) and (2) mean the maze is connected and acyclic, so there is exactly one
 route between any two cells — which is what the enemy's Dijkstra will later exploit.
+`BraidedMazeGenerator` is tested separately and has the opposite expectation: still fully
+connected, still closed at the boundary, but with exactly `cellCount - 1 + ExtraPassages`
+passages, so the extra loops are counted rather than assumed. `DeadEndBraider` is tested by
+counting dead ends rather than walls: zero left at 100%, fewer at a higher share, a perfect
+maze at 0%, and at most one new passage per dead end (two neighbouring dead ends can share the
+wall that braids both).
 
 ## Pathfinding notes (for the presentation)
 

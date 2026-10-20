@@ -25,10 +25,13 @@ public enum GameCommand
     /// <summary>Start aiming a barrier, which also pauses the game clock.</summary>
     BeginAim,
 
-    /// <summary>Place the barrier on the aiming cursor's cell.</summary>
+    /// <summary>Start aiming a wisp, which pauses the clock in exactly the same way.</summary>
+    BeginLureAim,
+
+    /// <summary>Place the aimed barrier or wisp on the aiming cursor's cell.</summary>
     ConfirmAim,
 
-    /// <summary>Stop aiming without spending a barrier.</summary>
+    /// <summary>Stop aiming without spending a barrier or a wisp.</summary>
     CancelAim,
 
     /// <summary>Leave the game.</summary>
