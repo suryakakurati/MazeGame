@@ -26,6 +26,8 @@ public sealed class GameFactoryTests
         Assert.Equal(3, state.KeysRemaining);
         Assert.Equal(3, state.BarriersRemaining);
         Assert.Equal(2, state.LuresRemaining);
+        Assert.Equal(3, state.Hearts);
+        Assert.Equal(3, state.MaxHearts);
         Assert.False(state.IsExitUnlocked);
         Assert.NotEqual(state.Player, state.Enemy);
         Assert.DoesNotContain(state.Player, state.Keys);
@@ -49,7 +51,7 @@ public sealed class GameFactoryTests
     {
         var factory = new GameFactory(
             new GameConfig { Seed = Seed, DeadEndBraidPercent = 0, ExtraLoops = 0 },
-            () => new SeededRandom(Seed),
+            _ => new SeededRandom(Seed),
             new DijkstraPathfinder());
 
         var state = factory.Create();
@@ -83,7 +85,7 @@ public sealed class GameFactoryTests
         // A replay should be a new cave, not the same one again.
         var factory = new GameFactory(
             new GameConfig { Seed = null },
-            () => new SeededRandom(null),
+            _ => new SeededRandom(null),
             new DijkstraPathfinder());
 
         var openings = new HashSet<(Cell Player, Cell Enemy, Cell Exit)>();
@@ -110,10 +112,12 @@ public sealed class GameFactoryTests
         }
 
         Assert.Equal(GameStatus.Caught, state.Status);
+        Assert.Equal(0, state.Hearts);
 
         var replay = Factory().Create();
 
         Assert.Equal(GameStatus.InProgress, replay.Status);
+        Assert.Equal(3, replay.Hearts);
         Assert.Equal(3, replay.KeysRemaining);
         Assert.Equal(3, replay.BarriersRemaining);
         Assert.Equal(2, replay.LuresRemaining);
@@ -131,7 +135,7 @@ public sealed class GameFactoryTests
         var calls = 0;
         var factory = new GameFactory(
             new GameConfig { Seed = Seed },
-            () =>
+            _ =>
             {
                 calls++;
                 return new SeededRandom(Seed);
@@ -148,7 +152,7 @@ public sealed class GameFactoryTests
     public void Constructor_WithAnInvalidConfig_Throws()
     {
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => new GameFactory(new GameConfig { Rows = 0 }, () => new SeededRandom(Seed), new DijkstraPathfinder()));
+            () => new GameFactory(new GameConfig { Rows = 0 }, _ => new SeededRandom(Seed), new DijkstraPathfinder()));
     }
 
     [Fact]
@@ -157,9 +161,9 @@ public sealed class GameFactoryTests
         var random = new SeededRandom(Seed);
         var pathfinder = new DijkstraPathfinder();
 
-        Assert.Throws<ArgumentNullException>(() => new GameFactory(null!, () => random, pathfinder));
+        Assert.Throws<ArgumentNullException>(() => new GameFactory(null!, _ => random, pathfinder));
         Assert.Throws<ArgumentNullException>(() => new GameFactory(new GameConfig(), null!, pathfinder));
-        Assert.Throws<ArgumentNullException>(() => new GameFactory(new GameConfig(), () => random, null!));
+        Assert.Throws<ArgumentNullException>(() => new GameFactory(new GameConfig(), _ => random, null!));
     }
 
     [Fact]
@@ -167,10 +171,94 @@ public sealed class GameFactoryTests
     {
         var factory = new GameFactory(
             new GameConfig { Seed = Seed },
-            () => null!,
+            _ => null!,
             new DijkstraPathfinder());
 
         Assert.Throws<InvalidOperationException>(() => factory.Create());
+    }
+
+    [Fact]
+    public void CreateCampaign_StartsOnFloorOneWithFullHearts()
+    {
+        var campaign = Factory().CreateCampaign();
+
+        Assert.Equal(1, campaign.FloorNumber);
+        Assert.Equal(FloorCatalog.ShippedFloorCount, campaign.FloorCount);
+        Assert.Equal("The Shallows", campaign.CurrentFloor.Name);
+        Assert.Equal(3, campaign.Hearts);
+        Assert.Equal(CampaignStatus.InProgress, campaign.Status);
+        Assert.Equal(3, campaign.Floor.Config.KeyCount);
+    }
+
+    [Fact]
+    public void CreateFloor_UsesTheFloorsOwnRules()
+    {
+        var floor = FloorCatalog.ByNumber(3);
+
+        var state = Factory().CreateFloor(floor, startingHearts: 2);
+
+        Assert.Equal(floor.Rows, state.Maze.Rows);
+        Assert.Equal(floor.Columns, state.Maze.Columns);
+        Assert.Equal(floor.KeyCount, state.Config.KeyCount);
+        Assert.Equal(floor.KeyCount, state.KeysRemaining);
+        Assert.Equal(floor.EnemyStepSeconds, state.Config.EnemyStepSeconds);
+        Assert.Equal(2, state.Hearts);
+        Assert.Equal(floor.MaxHearts, state.MaxHearts);
+    }
+
+    [Fact]
+    public void CreateFloor_WithOneHeartLeft_StartsWithOneHeart()
+    {
+        var state = Factory().CreateFloor(FloorCatalog.ByNumber(1), startingHearts: 1);
+
+        Assert.Equal(1, state.Hearts);
+        Assert.Equal(3, state.MaxHearts);
+    }
+
+    [Fact]
+    public void CreateFloor_WithMoreHeartsThanTheFloorAllows_Throws()
+    {
+        var floor = FloorCatalog.ByNumber(1);
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => Factory().CreateFloor(floor, startingHearts: floor.MaxHearts + 1));
+    }
+
+    [Fact]
+    public void CreateFloor_WithTheSameSeed_ProducesTheSameFloor()
+    {
+        var floor = FloorCatalog.ByNumber(2);
+        var first = Factory().CreateFloor(floor, startingHearts: 3);
+        var second = Factory().CreateFloor(floor, startingHearts: 3);
+
+        Assert.Equal(first.Player, second.Player);
+        Assert.Equal(first.Enemy, second.Enemy);
+        Assert.Equal(first.Exit, second.Exit);
+        Assert.Equal(MazeSignature(first), MazeSignature(second));
+    }
+
+    [Fact]
+    public void CreateFloor_DifferentFloorsOfASeededRun_GetDifferentMazes()
+    {
+        var first = Factory().CreateFloor(FloorCatalog.ByNumber(1), startingHearts: 3);
+        var second = Factory().CreateFloor(FloorCatalog.ByNumber(2), startingHearts: 3);
+
+        Assert.NotEqual(MazeSignature(first), MazeSignature(second));
+    }
+
+    [Fact]
+    public void CreateCampaign_Twice_StartsTwoFreshRuns()
+    {
+        var factory = Factory();
+
+        var first = factory.CreateCampaign();
+        var second = factory.CreateCampaign();
+
+        Assert.Equal(1, first.FloorNumber);
+        Assert.Equal(1, second.FloorNumber);
+        Assert.Equal(3, first.Hearts);
+        Assert.Equal(3, second.Hearts);
+        Assert.NotSame(first.Floor, second.Floor);
     }
 
     /// <summary>
@@ -179,6 +267,34 @@ public sealed class GameFactoryTests
     private static GameFactory Factory(int? seed = Seed) =>
         new(
             new GameConfig { Seed = seed },
-            () => new SeededRandom(seed),
+            // Mirrors Program: the factory supplies the per-floor seed, and a fixed run seed
+            // still reproduces the same campaign.
+            givenSeed => new SeededRandom(givenSeed ?? seed),
             new DijkstraPathfinder());
+
+    /// <summary>
+    /// Encodes every cell's walls so two mazes can be compared as one value.
+    /// </summary>
+    private static string MazeSignature(GameState state)
+    {
+        var signature = new System.Text.StringBuilder();
+
+        for (var row = 0; row < state.Maze.Rows; row++)
+        {
+            for (var column = 0; column < state.Maze.Columns; column++)
+            {
+                var cell = state.Maze.GetCell(row, column);
+                signature
+                    .Append(cell.HasWall(Direction.North) ? '1' : '0')
+                    .Append(cell.HasWall(Direction.East) ? '1' : '0')
+                    .Append(cell.HasWall(Direction.South) ? '1' : '0')
+                    .Append(cell.HasWall(Direction.West) ? '1' : '0')
+                    .Append(':');
+            }
+
+            signature.Append('/');
+        }
+
+        return signature.ToString();
+    }
 }

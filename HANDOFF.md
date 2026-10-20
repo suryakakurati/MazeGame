@@ -35,6 +35,25 @@ movement, keys, locked exit, barriers, timed killer AI, visibility/fog, win/lose
 title screen and the end card offers `R / ENTER: DESCEND AGAIN`, which builds a fresh cave and
 game in the same window; the console has the same title and `[R] descend again` prompt.
 
+**Roguelike Phase 1 (hearts) is also in:** the player has three hearts, a catch spends one and
+throws the killer to the furthest reachable cell (dead ends preferred) where it is stunned for
+1.5 s, while the player gets 1.5 s of invulnerability; keys, barriers, the wisp and the layout
+are kept, and only the third catch ends the run. The window shows the hearts in the footer with
+a red damage flash, and the console header prints `hearts n/n`. `FUTURE.md` holds the nine-phase
+plan for the rest of the roguelike (campaign, cards, movement, generated pixel art, synthesised
+audio, themes); `PROGRESS.md` says which phase is next. The canvas has one hard-won rendering
+rule: the lantern falloff is **lighting**, painted before the cell contents, never after — drawing
+it last made keys invisible even though the rules said they were in view.
+
+**Phase 2 (floors and campaign) is in too:** `Campaign` sequences the shipped three-floor
+`FloorCatalog` (The Shallows, Rootbound, Drowned Halls — 3/3/4 keys, killer 0.60/0.54/0.48 s),
+owns the current one-floor `GameState`, and carries hearts between floors via each floor's
+`StartingHearts`. `GameStatus.Won` means "this floor's exit"; the run's result is
+`CampaignStatus` (`InProgress`/`Won`/`Lost`), and `TryAdvanceFloor` is the only way forward. The
+window has floor intro/cleared/summary cards and the console prints floor headings; both
+frontends take `Func<Campaign>`. `GameFactory.CreateFloor` derives a floor's seed as
+`seed + (number - 1) * 7919`, so a seeded run reproduces exactly with different caves per floor.
+
 The maze the UI plays is shaped by two decorators over the graded perfect generator:
 `DeadEndBraider` opens one wall at 55% of the dead ends (57 → 18.8 per 15x15 map, so a chase
 rarely ends in a corner) and `BraidedMazeGenerator` removes `ExtraLoops` (8) more interior
@@ -45,22 +64,23 @@ and the wisp is cheaper by Dijkstra. The killer carries a distance-gated aura (v
 steps, radius 2), and the window is drawn as a bioluminescent cave in green/pink/cyan, with the
 team's reference art in `references/image.png` as the mood board.
 
-279 tests pass, including perfect-maze invariants over 50 seeds, shortest-path optimality
+331 tests pass, including perfect-maze invariants over 50 seeds, shortest-path optimality
 against an independent BFS, all Phase 5 rules, the seal and tear-down rules, the wisp's target
 choice and lifetime, the dead-end braid, the fog and aura rules, the replay contract in
-`GameFactory`, and a long random-play invariant test that now places both placeables and still
-proves the killer always has a route.
-Verified this session: build 0 warnings/0 errors, 279/279 tests, the wall-clock and detour
-measurements in `PROGRESS.md`, 321 title/replay frames through the real renderer (both menu
-states, a run played to `Caught`, then a fresh game drawn) with no exception at 1.76 ms/frame
-for the title, and the window staying alive on the title with an empty log. Earlier: 136
-gameplay frames with seals and a wisp (0.70–1.04 ms/frame draw submission, 2.3–3.5 ms including
-the frame swap) and 482 console frames. The window's pixels could not be
-captured on this machine (no GUI framebuffer available to the agent), so one human look at the
-window is still owed (see `PROGRESS.md` → Known Issues).
+`GameFactory`, the heart/catch/respawn rules in `GameStateHeartTests`, the campaign's floor
+sequence and carried hearts, the floor catalog's difficulty arc, and a long random-play invariant
+test that places both placeables and still proves the killer always has a route.
+Verified this session: build 0 warnings/0 errors, **331/331** tests, a full three-floor campaign
+drawn through the real renderer (title, three intros, three clears and the summary: 160 frames,
+`CAMPAIGN_OK`, 2.09 ms/frame), 3,753 console frames with the floor heading and loss summary,
+and the window alive for 8 s with an empty log. Earlier: 1,264 frames through three hearts
+(`HEARTS_OK`, 1.87 ms/frame), 4,496 console frames ending at 0/3, and 100 frames collecting a
+key (`KEYS_RENDERED`, 2.27 ms/frame). The window's pixels could not be captured on this machine
+(no GUI framebuffer available to the agent), so one human look at the window is still owed (see
+`PROGRESS.md` → Known Issues).
 
-Phase 7 (play-test tuning, optional audio, polish) is next; `PROGRESS.md` → **Next Steps** has
-the ordering.
+**Roguelike Phase 3 (the card draft) is next;** `PROGRESS.md` → **Next Steps** has the ordering,
+and `FUTURE.md` §11 has the phase gates.
 
 ## Conventions in use
 

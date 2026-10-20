@@ -62,7 +62,11 @@ public sealed class ConsoleRenderer : IRenderer
     {
         var frame = new StringBuilder();
 
-        frame.Append("keys ")
+        frame.Append("hearts ")
+            .Append(state.Hearts)
+            .Append('/')
+            .Append(state.MaxHearts)
+            .Append("   keys ")
             .Append(state.KeysCollected)
             .Append('/')
             .Append(state.Config.KeyCount)

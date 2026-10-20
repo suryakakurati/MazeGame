@@ -32,6 +32,11 @@ public sealed class GameConfigTests
         Assert.Equal(6.0, config.LureSeconds);
         Assert.Equal(2, config.EnemyAuraRadius);
         Assert.Equal(6, config.EnemyAuraDistance);
+        Assert.Equal(3, config.StartingHearts);
+        Assert.Equal(3, config.MaxHearts);
+        Assert.Equal(1.5, config.InvulnerabilitySeconds);
+        Assert.Equal(8, config.RespawnDistance);
+        Assert.Equal(1.5, config.RespawnStunSeconds);
         Assert.Null(config.Seed);
     }
 
@@ -143,6 +148,58 @@ public sealed class GameConfigTests
     public void Validate_WithNegativeEnemyAuraDistance_Throws()
     {
         var config = new GameConfig { EnemyAuraDistance = -1 };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Validate_WithNoStartingHearts_Throws(int hearts)
+    {
+        // A floor with no hearts is a run that is already over.
+        var config = new GameConfig { StartingHearts = hearts, MaxHearts = Math.Max(hearts, 3) };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Fact]
+    public void Validate_WithTheHeartCeilingBelowTheStartingHearts_Throws()
+    {
+        var config = new GameConfig { StartingHearts = 4, MaxHearts = 3 };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Validate_WithInvalidInvulnerabilityWindow_Throws(double seconds)
+    {
+        var config = new GameConfig { InvulnerabilitySeconds = seconds };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-3)]
+    public void Validate_WithRespawnDistanceBelowOne_Throws(int distance)
+    {
+        // A zero-step respawn would put the killer on the player's cell and deal a second hit.
+        var config = new GameConfig { RespawnDistance = distance };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Validate_WithInvalidRespawnStun_Throws(double seconds)
+    {
+        var config = new GameConfig { RespawnStunSeconds = seconds };
 
         Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
     }

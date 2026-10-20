@@ -20,6 +20,9 @@ public enum GameStatus
     /// </summary>
     Won,
 
-    /// <summary>The killer reached the player.</summary>
+    /// <summary>
+    /// The killer took the player's last heart. Earlier catches only cost a heart and reset the
+    /// chase, so this status always means the run is over.
+    /// </summary>
     Caught,
 }

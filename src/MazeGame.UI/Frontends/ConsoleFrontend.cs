@@ -8,33 +8,35 @@ using MazeGame.UI.Rendering;
 namespace MazeGame.UI.Frontends;
 
 /// <summary>
-/// Plays the game in the terminal: reads keys, forwards measured frame time, draws the ASCII view
-/// and offers another descent once a run ends.
+/// Plays a whole campaign in the terminal: each floor in ASCII, with a floor heading, a
+/// floor-cleared beat and the run summary.
 /// </summary>
 /// <remarks>
 /// <para>
 /// This is the fallback frontend — used with <c>--console</c>, and automatically when no window
-/// can be opened. It plays by exactly the same rules as the window, including fog of war and
-/// replay; only the drawing differs.
+/// can be opened. It plays by exactly the same rules as the window, including hearts and the
+/// multi-floor run; only the drawing differs.
 /// </para>
 /// <para>
-/// The console cannot read keys when its input is redirected, so a piped run skips the title
-/// prompt, watches one game to its end and exits. That keeps smoke tests and logging possible
-/// without a keyboard.
+/// The console cannot read keys when its input is redirected, so a piped run skips the title and
+/// the "press any key" beats, watches one campaign to its end and exits. That keeps smoke tests
+/// and logging possible without a keyboard.
 /// </para>
 /// </remarks>
 internal static class ConsoleFrontend
 {
     /// <summary>
-    /// Runs games until the player quits, printing the outcome of each run.
+    /// Runs campaigns until the player quits, printing the outcome of each run.
     /// </summary>
-    /// <param name="createGame">
-    /// Builds a fresh, playable game. Called once per run, so a replay starts from scratch.
+    /// <param name="createCampaign">
+    /// Builds a fresh, playable run from floor 1. Called once per run, so a replay starts over.
     /// </param>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="createGame"/> is null.</exception>
-    public static void Run(Func<GameState> createGame)
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="createCampaign"/> is null.
+    /// </exception>
+    public static void Run(Func<Campaign> createCampaign)
     {
-        ArgumentNullException.ThrowIfNull(createGame);
+        ArgumentNullException.ThrowIfNull(createCampaign);
 
         // The title needs a keypress to leave, which a redirected run can never provide.
         if (!Console.IsInputRedirected)
@@ -44,15 +46,26 @@ internal static class ConsoleFrontend
 
         while (true)
         {
-            var state = createGame();
-            Play(state);
+            var campaign = createCampaign();
+            var quit = PlayCampaign(campaign);
 
-            if (state.Status == GameStatus.InProgress)
+            if (quit)
             {
                 return; // the player quit mid-run, so there is no outcome to report
             }
 
-            Console.WriteLine(DescribeEnding(state.Status));
+            if (campaign.Status == CampaignStatus.Won)
+            {
+                Console.WriteLine(
+                    $"You escaped the depths: {campaign.FloorCount} floors, {campaign.Hearts} heart(s) left.");
+            }
+            else
+            {
+                Console.WriteLine(DescribeEnding(GameStatus.Caught));
+                Console.WriteLine(
+                    $"Floor {campaign.FloorNumber} of {campaign.FloorCount}, " +
+                    $"{campaign.FloorsCleared} cleared.");
+            }
 
             if (Console.IsInputRedirected || !WantsAnotherDescent())
             {
@@ -62,9 +75,71 @@ internal static class ConsoleFrontend
     }
 
     /// <summary>
-    /// Plays one game until it ends or the player quits, drawing a frame per iteration.
+    /// Plays every floor of one run until it ends or the player quits.
     /// </summary>
-    /// <param name="state">The game to play. It is left in whatever state the run ended in.</param>
+    /// <param name="campaign">The run to play.</param>
+    /// <returns>
+    /// <see langword="true"/> when the player quit mid-run; <see langword="false"/> when the run
+    /// ended by winning or losing.
+    /// </returns>
+    private static bool PlayCampaign(Campaign campaign)
+    {
+        while (true)
+        {
+            Console.WriteLine();
+            Console.WriteLine(
+                $"FLOOR {campaign.FloorNumber}/{campaign.FloorCount} — " +
+                $"{campaign.CurrentFloor.Name.ToUpperInvariant()}");
+
+            PauseForDescent();
+
+            Play(campaign.Floor);
+
+            if (campaign.Floor.Status == GameStatus.InProgress)
+            {
+                return true;
+            }
+
+            if (campaign.Status == CampaignStatus.Lost)
+            {
+                return false;
+            }
+
+            // The floor is cleared: either the run continues or this was the last one.
+            var cleared = campaign.FloorNumber;
+            if (!campaign.TryAdvanceFloor())
+            {
+                return false;
+            }
+
+            Console.WriteLine(
+                $"Floor {cleared} cleared — carrying {campaign.Hearts} heart(s) to floor " +
+                $"{campaign.FloorNumber}.");
+        }
+    }
+
+    /// <summary>
+    /// Waits for a key before a floor starts, unless the input is a pipe.
+    /// </summary>
+    /// <remarks>
+    /// The line is printed even when input is redirected, so a log still shows the floor order
+    /// and the run's pacing.
+    /// </remarks>
+    private static void PauseForDescent()
+    {
+        if (Console.IsInputRedirected)
+        {
+            return;
+        }
+
+        Console.WriteLine("press any key to descend...");
+        Console.ReadKey(intercept: true);
+    }
+
+    /// <summary>
+    /// Plays one floor until it ends or the player quits, drawing a frame per iteration.
+    /// </summary>
+    /// <param name="state">The floor to play. It is left in whatever state the run ended in.</param>
     private static void Play(GameState state)
     {
         var renderer = new ConsoleRenderer();
@@ -165,11 +240,11 @@ internal static class ConsoleFrontend
         _ => null,
     };
 
-    /// <summary>Returns the sentence printed when a game ends.</summary>
+    /// <summary>Returns the sentence printed when a run is lost.</summary>
     internal static string DescribeEnding(GameStatus status) => status switch
     {
         GameStatus.Won => "You escaped. For now.",
-        GameStatus.Caught => "The killer found you in the dark.",
+        GameStatus.Caught => "The killer took your last heart.",
         _ => "You slip back into the dark.",
     };
 }

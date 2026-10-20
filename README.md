@@ -9,13 +9,15 @@ This is a course project, so the graded data structures and algorithms
 min-heap for the enemy) are implemented from scratch in this repository. No
 graph/pathfinding libraries are used.
 
-> **Status (2026-10-20):** Phases 1–6 complete — the game is **playable in a Raylib
-> window**: a braided maze drawn as a bioluminescent cave, fog of war, glowing flora, and a
-> killer that carries its own light. Three keys and an exit are placed, and the killer hunts
-> you with Dijkstra while you collect the keys, seal barriers behind you and throw wisps to
-> misdirect it. It opens on a title screen and you can descend again the moment you die (279
-> unit tests). Sound and final polish are Phase 7; see [`PROGRESS.md`](PROGRESS.md) for the
-> current state.
+> **Status (2026-10-20):** Course Phases 1–6 complete, and roguelike **Phases 1–2** are in — the
+> game is **playable in a Raylib window** as a **three-floor campaign**. Each floor is a braided
+> maze drawn as a bioluminescent cave, with fog of war, glowing flora and a killer that carries
+> its own light: collect the keys, open the arch, and descend. **You have three hearts**: a catch
+> costs one, throws the killer to a distant dead end and stuns it, and **hearts carry between
+> floors**, so only the third catch on the whole run ends it. Floors differ in name, accent, key
+> count and killer pace (The Shallows → Rootbound → Drowned Halls), with an intro card, a
+> floor-cleared card and a run summary (331 unit tests). The phased plan to a full roguelike is
+> in [`FUTURE.md`](FUTURE.md); current state in [`PROGRESS.md`](PROGRESS.md).
 
 ## Requirements
 
@@ -34,12 +36,12 @@ dotnet run --project src/MazeGame.UI              # Raylib window
 dotnet run --project src/MazeGame.UI -- --console # terminal version
 ```
 
-`dotnet run --project src/MazeGame.UI` opens the title screen; `--console` plays the same game
-in the terminal, and the console view is also used automatically when no window can be
-opened (over SSH, for example). The default maze is 15x15 with three keys, three barriers, two
-wisps, a vision radius of 3 cells and a killer that moves every 0.6 seconds; all of that is
-tunable in `GameConfig`. Every run generates a new cave (`Seed = null`); set a seed to replay
-the exact same one.
+`dotnet run --project src/MazeGame.UI` opens the title screen; `--console` plays the same
+campaign in the terminal, and the console view is also used automatically when no window can be
+opened (over SSH, for example). A run is three floors of 15x15, with three barriers, two wisps,
+a vision radius of 3 cells and a key count per floor; the killer starts at 0.6 s per step and
+speeds up each floor. All of that is tunable in `GameConfig` and `FloorCatalog`. Every run
+generates new caves (`Seed = null`); set a seed to replay the exact same campaign.
 
 The first restore downloads the Raylib native library for your platform (see
 `ARCHITECTURE.md` for the exact package version).
@@ -62,18 +64,29 @@ The first restore downloads the Raylib native library for your platform (see
 ## How to play
 
 The game opens on a title screen over the cave: `BIOLUMINESCENT / DEPTHS`, with `DESCEND` and
-`LEAVE`. Starting a run (or pressing R on the end card) builds a brand-new game — new maze,
-full keys, barriers and wisps — so you never have to close and reopen the window to try again.
+`LEAVE`. Starting a run (or pressing R after a run ends) builds a brand-new campaign: floor 1,
+three hearts, every budget full. A floor intro card names the floor (The Shallows, Rootbound,
+Drowned Halls) before play begins.
+
+A run is three floors. Clearing a floor's arch shows a floor-cleared card; Enter descends with
+the hearts you have left. The third arch wins the run and shows a summary. Losing all three
+hearts ends the run whichever floor you are on.
 
 The window is an underground cave lit by living light. You are a small hooded figure carrying
 a lantern; the killer is a tall, spindly silhouette with pink rim light and two pale eyes; keys
-are clusters of glowing fungus; the exit is a stone arch (cyan once open); barriers are thorny
+are magenta beacons — a pool of light on the floor, a shaft rising out of the cell, a pulsing
+ring and glowing fungus at the core, so they read at the edge of the torch; the exit is a stone
+arch (cyan once open); barriers are thorny
 barricades of cave moss. Mushrooms, lichen and spore motes glow green, pink and cyan in the
 dark. The terminal view uses `@` for you, `K` for the killer, `k` for a key, `E` for the exit,
 `#` for a sealed barrier, `=` for a spent one, `*` for a wisp and `X` for the aiming cursor.
 
 1. Collect all three keys — the exit stays `LOCKED` until the last one is picked up.
-2. Reach the exit without stepping onto the killer.
+2. Reach the exit. You start with three hearts, shown beside the control hints at the bottom:
+   a catch costs one heart, throws the killer to a far dead end, stuns it for 1.5 seconds and
+   gives you 1.5 seconds of grace, and **keeps your keys and barriers**. Only the third catch
+   ends the run, so a mistake costs time rather than progress. The screen washes red when you
+   lose a heart, and the last heart pulses.
 3. When the killer gets close, press B to aim, move the cursor anywhere on the map (`X` in
    the terminal) and confirm. A fresh barrier is **sealed**: the killer treats it as a wall,
    so it takes another route when one exists, and only tears it apart (3 seconds) when the
@@ -106,7 +119,8 @@ src/MazeGame.Core/           all game logic, no UI references
   Abstractions/              IRandom, IMazeGenerator, IPathfinder, ...
   Maze/                      DisjointSet, Grid/Cell, MazeGenerator, DeadEndBraider, BraidedMazeGenerator
   Pathfinding/               MinHeap, DijkstraPathfinder
-  Game/                      GameConfig, GameStatus, GameState (rules + enemy AI), GameFactory (builds a run)
+  Game/                      GameConfig, GameStatus, GameState (rules + enemy AI), GameFactory,
+                             FloorDefinition/FloorCatalog, Campaign (run sequence, carried hearts)
 src/MazeGame.UI/             window/console frontends, input mapping, rendering, frame loop
 tests/MazeGame.Tests/        xUnit tests for Core
 references/                 team reference art (palette source; not loaded by the game)
@@ -221,7 +235,8 @@ grit and cracks, walls made of thick rounded rock strokes with a green rim, moss
 lichen, mushrooms that grow in some cells, and spores drifting only inside the lantern light.
 Characters have silhouettes rather than marker dots — a hooded explorer with a warm lantern, a
 spindly killer with a pink rim and eyes — and the HUD is a row of glass pills with a pink
-warning when the killer is close. Walls are drawn in two passes (all rock, then all lit edges)
+warning when the killer is close, and the heart row sits in the footer next to the hints. Walls
+are drawn in two passes (all rock, then all lit edges)
 so a shared wall keeps the rim on both sides. The renderers only decide how to express all
 this; they never decide what may be seen. Each keeps its own set of explored cells, so the map
 does not blink in and out as you walk, and `ConsoleRenderer` follows the same visibility rule
@@ -239,6 +254,10 @@ in ASCII, which keeps the terminal fallback a fair way to play rather than a map
 | 6 | Raylib-cs UI: maze rendering, input, fog of war, vignette — **done** |
 | 7 | Skill-expression mechanic and polish (audio, flicker, difficulty) |
 | 8 | Final cleanup, README screenshots, presentation notes |
+
+Beyond the course scope, [`FUTURE.md`](FUTURE.md) lays out the roguelike conversion in nine
+phases — hearts and a three-floor campaign (both done), a card draft, smooth timed movement, a
+generated pixel-art renderer, synthesised audio, twenty themes, and polish.
 
 ## Contributing
 

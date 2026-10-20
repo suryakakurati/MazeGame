@@ -55,6 +55,18 @@ internal static class TestLevels
     /// <summary>
     /// A 1x6 corridor game: player (0,0), exit (0,1), keys (0,2)-(0,4), killer (0,5).
     /// </summary>
+    /// <param name="length">Number of cells in the corridor.</param>
+    /// <param name="keyCount">How many keys the floor needs.</param>
+    /// <param name="barrierBudget">Barriers the player may place.</param>
+    /// <param name="enemyStepSeconds">Seconds per killer step.</param>
+    /// <param name="visionRadius">The player's torch range.</param>
+    /// <param name="enemyAuraRadius">Radius of the killer's own light.</param>
+    /// <param name="enemyAuraDistance">How close the killer must be for its light to show.</param>
+    /// <param name="barrierSealSeconds">How long a fresh seal holds.</param>
+    /// <param name="startingHearts">
+    /// Hearts the player starts with. One by default, so these chase tests keep their original
+    /// "caught means over" meaning; the heart economy has its own tests and its own levels.
+    /// </param>
     public static GameState CorridorGame(
         int length = 6,
         int keyCount = 3,
@@ -63,7 +75,8 @@ internal static class TestLevels
         int visionRadius = 3,
         int enemyAuraRadius = 0,
         int enemyAuraDistance = 0,
-        double barrierSealSeconds = 10.0) =>
+        double barrierSealSeconds = 10.0,
+        int startingHearts = 1) =>
         new(
             CorridorConfig(
                 length,
@@ -73,7 +86,8 @@ internal static class TestLevels
                 visionRadius,
                 enemyAuraRadius,
                 enemyAuraDistance,
-                barrierSealSeconds),
+                barrierSealSeconds,
+                startingHearts),
             Corridor(length),
             new DijkstraPathfinder(),
             new FixedRandom(0));
@@ -93,7 +107,8 @@ internal static class TestLevels
         int visionRadius = 3,
         int enemyAuraRadius = 0,
         int enemyAuraDistance = 0,
-        double barrierSealSeconds = 10.0) => new()
+        double barrierSealSeconds = 10.0,
+        int startingHearts = 1) => new()
         {
             Rows = 1,
             Columns = length,
@@ -104,6 +119,8 @@ internal static class TestLevels
             EnemyAuraRadius = enemyAuraRadius,
             EnemyAuraDistance = enemyAuraDistance,
             BarrierSealSeconds = barrierSealSeconds,
+            StartingHearts = startingHearts,
+            MaxHearts = startingHearts,
             Seed = null,
         };
 
@@ -176,7 +193,7 @@ internal static class TestLevels
     /// <summary>
     /// A two-route game: player (0,0), exit (0,1), one key at (0,2), killer (1,2).
     /// </summary>
-    public static GameState TwoRouteGame(int keyCount = 1, int barrierBudget = 2) =>
+    public static GameState TwoRouteGame(int keyCount = 1, int barrierBudget = 2, int startingHearts = 1) =>
         new(
             new GameConfig
             {
@@ -185,6 +202,8 @@ internal static class TestLevels
                 KeyCount = keyCount,
                 BarrierBudget = barrierBudget,
                 EnemyStepSeconds = OneSecondPerStep,
+                StartingHearts = startingHearts,
+                MaxHearts = startingHearts,
                 Seed = null,
             },
             TwoRoutes(),

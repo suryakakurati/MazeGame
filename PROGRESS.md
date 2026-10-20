@@ -3,19 +3,92 @@
 Single source of truth for the state of the project. Update this file at the end of
 every work session (see the handoff protocol in `HANDOFF.md`).
 
-Last updated: 2026-10-20 (Title screen, replay after death, and a tested game factory)
+Last updated: 2026-10-20 (Roguelike Phase 2: floors and the campaign)
 
 ## Current Status
 
-The solution builds with zero warnings, `dotnet test` is green (279 tests), and the game runs
-**in a Raylib window**: it opens on a title screen, then plays a seeded 15x15 maze drawn as a
-bioluminescent cave, with fog of war, braided dead ends, three keys, an exit, sealed barriers,
-wisps, and a killer that hunts the player one step every 0.6 s using Dijkstra. When a run ends,
-the end card offers another descent, which builds a fresh cave and game without reopening the
-window. The terminal view offered by `--console` (and used automatically when no window can be
-opened) has the same title and replay, in ASCII.
+The solution builds with zero warnings, `dotnet test` is green (331 tests), and the game runs
+**in a Raylib window** as a **three-floor campaign**: the title leads to a floor intro card, then
+a seeded 15x15 maze drawn as a bioluminescent cave — fog of war, braided dead ends, keys, an exit,
+sealed barriers, wisps, and a killer that hunts the player with Dijkstra. **The player has three
+hearts**: a catch costs one, throws the killer to a distant cell and stuns it, and keeps every key
+and barrier; hearts carry from floor to floor, so the run is lost only when the last heart is. A
+cleared arch opens the floor-cleared card and the next floor, and the third arch wins the run.
+The terminal view offered by `--console` (and used automatically when no window can be opened)
+plays the same campaign in ASCII.
 
-What changed in this session:
+What changed in this session (roguelike Phase 2: floors and campaign):
+
+- **A run object in Core.** `Campaign` owns the floor list, the current `GameState`, the hearts
+  carried between floors and the run outcome. `CampaignStatus` (InProgress / Won / Lost) keeps the
+  run separate from `GameStatus.Won`, which now means "this floor's exit was reached". A floor's
+  `Caught` ends the run immediately; a clear is progress, and the run is won only after the last
+  floor.
+- **Three floors as data.** `FloorDefinition` + `FloorCatalog`: The Shallows (3 keys, 0.60 s per
+  killer step), Rootbound (3 keys, 0.54 s), Drowned Halls (4 keys, 0.48 s). Each carries a name
+  and a theme id that the renderer maps to an accent colour; hearts start each floor at the count
+  left on the previous one, out of that floor's ceiling.
+- **Per-floor seeds.** `GameFactory.CreateCampaign()` and `CreateFloor(floor, hearts)` replace the
+  single-game assembly for the frontends. The random factory is now `Func<int?, IRandom>`, and
+  floor n uses `seed + (n - 1) * 7919`, so a seeded campaign reproduces exactly while its floors
+  are genuinely different caves. `Create()` still builds one game from the base config for tests.
+- **Frontends.** Window: title → floor intro (1.6 s, or Enter/Space) → play → floor-cleared card
+  (Enter) → next intro → … → run summary; a lost run uses the existing end card. Console: a floor
+  heading, the carried-hearts line, auto-advance when input is piped, and a run summary. Both now
+  take `Func<Campaign>`.
+- **The window says where you are.** The title bar becomes
+  `Bioluminescent Depths — Floor n/3`, and the intro/cleared cards use the floor's accent.
+
+Verified for this pass:
+
+- `dotnet build` → 0 warnings, 0 errors. `dotnet test` → **331/331 passing** (30 new cases across
+  campaign progression, the floor catalog, and factory floor/campaign building).
+- Real renderer through a whole campaign — title, three intros, three floors cleared by walking,
+  three cleared cards and the run summary: **160 frames**, `CAMPAIGN_OK status=Won floor=3
+  cleared=3 hearts=3`, **2.09 ms/frame**.
+- Redirected `--console` run: **3,753 frames**, heading `FLOOR 1/3 — THE SHALLOWS`, ended with the
+  loss summary "Floor 1 of 3, 0 cleared.", exit 0.
+- Window build stayed alive for 8 s with an empty log (stopped by the harness).
+
+## Previous pass: roguelike Phase 1 (hearts and damage)
+
+What changed in that pass:
+
+- **Three hearts, one mistake at a time.** `GameConfig` gained `StartingHearts` (3),
+  `MaxHearts` (3), `InvulnerabilitySeconds` (1.5), `RespawnDistance` (8) and
+  `RespawnStunSeconds` (1.5), all validated. A catch spends a heart and the floor continues;
+  only the last heart produces `GameStatus.Caught`.
+- **The catch is a respawn, not a restart.** `TakeHit` throws the killer to the furthest
+  reachable cell, preferring a dead end and avoiding keys, the exit, an active wisp and existing
+  barriers (a second pass drops that preference so a tiny floor still resolves). Walking into the
+  killer during the grace window is refused instead of overlapping, and the killer waits beside
+  the player rather than sharing their cell. Keys, barriers and the layout survive.
+- **Presentation.** Hearts (filled/dim, pulsing on the last one) sit in the footer beside the
+  hints so the HUD keeps its "IT IS CLOSE" warning; a 0.35 s red wash marks the loss; the
+  console header prints `hearts 2/3`; the ending line is "The killer took your last heart."
+- **Key visibility fixed (play-test bug).** The lantern falloff was painted *after* the cell's
+  contents, so a key at the edge of the torch was multiplied down to a few percent of its own
+  glow — rule-visible, but effectively invisible. The falloff now goes on before the contents,
+  and the key itself is a beacon: a magenta pool on the floor, a six-band shaft of light that
+  spills past the cell, a pulsing ring, a bobbing bright core with a white highlight, and two
+  orbiting sparks. Verified by walking the player next to a key in a real window and drawing 100
+  frames (`KEYS_RENDERED`, key visible and present, 2.27 ms/frame).
+- **Stun is real time, not a delayed step.** While stunned the killer neither moves nor banks
+  progress toward its next step, so the 1.5 s window is usable.
+
+Verified for that pass:
+
+- `dotnet build` → 0 warnings, 0 errors. `dotnet test` → **301/301 passing** at the time (22 new
+  cases: 11 heart-rule tests and 11 config validation cases across 5 test groups, plus updated
+  chase, lure, invariant and factory expectations).
+- Real renderer, **1,264 frames** through three catches with seed 7: hearts `[2,1,0]`,
+  `InProgress → InProgress → Caught`, invulnerable and stunned after catches 1–2, no shared cell
+  until the final catch (`HEARTS_OK`), average draw **1.87 ms/frame**.
+- Redirected `--console` run: **4,496 frames**, header `hearts 3/3` → `hearts 0/3`, ended with
+  "The killer took your last heart.", exit 0.
+- Window build stayed alive for 7 s with an empty log (stopped by the harness).
+
+## Previous pass: title screen, replay and the game factory
 
 - **A title screen.** `RaylibRenderer.DrawTitle` (a partial of the cave renderer, so it shares
 the palette, vignette, grain and text helpers) draws the same cave seen from further away:
@@ -35,7 +108,7 @@ source per run, the shipped maze pipeline (perfect Kruskal → `DeadEndBraider` 
 rule rather than glue in two event loops. A seeded config replays the identical cave; the
 shipped `Seed = null` gives a new one every time.
 
-Verified for this pass:
+Verified for that pass:
 
 - `dotnet build` → 0 warnings, 0 errors. `dotnet test` → **279/279 passing** (10 new factory
   tests: fresh playable game, both maze shapers wired, perfect maze with both off, seed
@@ -115,33 +188,31 @@ Core contains:
 
 ## Current Task
 
-None in flight. Cornering, the seal, the wisp, the title screen and the replay are implemented,
-tested and verified; the next session starts with a human play-test of the title screen and the
-chase.
+None in flight. Roguelike **Phase 2 (floors and the campaign)** is implemented, tested and
+verified: a three-floor run with a floor intro, carried hearts, floor-cleared cards and a run
+summary. The next phase is **Phase 3: the card draft** — three offers after each floor, nine
+cards with honest drawbacks, and a skip-to-heal option.
 
 ## Next Steps
 
-1. **Play the window build and judge the title screen.** It is the first thing anyone sees, and
-   it is drawn from primitives with no asset: the wordmark, the breathing light and the menu
-   need one human look to say whether it reads as intentional indie design or as debug text.
-   `RaylibRenderer.Title.cs` is the whole thing, and the layout numbers are at the top of
-   `DrawTitle`.
-2. **Play the window build and judge the chase.** The numbers say the cornering is gone (19 dead
-   ends instead of 57) and that 81% of seals buy a detour, but only a person can say whether the
-   seal *feels* like a wall, whether the wisp is worth a key binding and whether the tear-down
-   animation (currently: the barrier simply vanishes) reads as the killer breaking it.
-3. **Tune the seal.** `BarrierSealSeconds` (10) is deliberately longer than the walk from the
-   killer's usual distance, and `BarrierBreakSeconds` (3) equals the old stall, so a seal in a
-   corridor is never *worse* than the old barrier. If barriers now feel too strong, lower the
-   seal; if detours feel too cheap, raise `ExtraLoops` or `DeadEndBraidPercent`.
-4. **Watch the wisp in real play.** `LureSeconds` (6) is about ten killer steps. It may be too
-   generous if the killer is pulled off a route twice per chase; `LureCount` (2) is the knob for
-   frequency, `LureSeconds` for the size of the escape.
-5. **Decide on audio** (Open Question 6) before Phase 7's polish, because Raylib audio adds a
-   device dependency.
-6. **A short "the thing is close" cue** that is not just the light dimming, and a line of
-   story on the title screen. The title screen itself now exists, including the controls hint.
-7. Re-run `dotnet build`, `dotnet test` and a window play session; update all tracking files.
+1. **Play the campaign and judge the arc.** The three floors differ in name, accent, key count
+   and killer pace (0.60/0.54/0.48 s), and hearts carry. Only a play session can say whether
+   three floors is the right first act or whether the second floor already needs a rest beat.
+   The numbers are all in `FloorCatalog`.
+2. **Phase 3: the draft.** `Card` + `CardCatalog` (9 cards), `RunModifiers` composing over
+   `GameConfig.ForFloor`, a draft screen after `TryAdvanceFloor`, and skip-to-heal. Keep the
+   composition clamped and tested for both halves of every card, as `FUTURE.md` §4 specifies.
+3. **Give the draft a home in the run object.** `Campaign` should own the offers and the held
+   cards (seeded by run seed + floor), so the frontends only draw the choice and forward it.
+4. **Then Phase 4: movement feel.** Timed steps, one buffered input, render interpolation and
+   sprint; the rules stay grid-based, so the card and floor tests keep meaning what they meant.
+5. **Theme palettes are still Phase 8.** The floor's theme currently only picks an accent colour
+   and a name; the per-floor cave look arrives with the generated pixel art, so do not add
+   per-floor renderer hacks in the meantime.
+6. **Keep the seam clean.** `GameFactory.CreateFloor` remains the only place a floor is built,
+   and `Campaign` the only place hearts and floors are sequenced.
+7. Re-run `dotnet build`, `dotnet test`, the renderer harness and a window session after every
+   phase; update `PROGRESS.md` and the phase table in `FUTURE.md`.
 
 ## Completed
 
@@ -235,9 +306,60 @@ chase.
       null random source. Verified: 279/279 tests, 321 title/replay frames through the real
       renderer (`RENDER_OK`), 1.76 ms/frame title drawing, window alive on the title with an
       empty log, console run unaffected (title skipped when input is redirected).
+- [x] 2026-10-20 — Roguelike Phase 1: hearts and damage. `GameConfig.StartingHearts` (3),
+      `MaxHearts` (3), `InvulnerabilitySeconds` (1.5), `RespawnDistance` (8) and
+      `RespawnStunSeconds` (1.5), all validated; `GameState` spends one heart per catch,
+      teleports the killer to the furthest reachable non-objective cell (dead ends preferred),
+      stuns it, and refuses a second hit while the grace window is open. Only the last heart
+      sets `GameStatus.Caught`. The window shows hearts in the footer (dim when spent, pulsing
+      on the last one) with a 0.35 s red damage wash; the console header prints `hearts n/n`
+      and the ending says "The killer took your last heart." 22 new tests (301 total); 1,264
+      renderer frames through three catches (`HEARTS_OK`, 1.87 ms/frame), 4,496 console frames
+      ending at 0/3, window alive for 7 s.
+- [x] 2026-10-20 — `FUTURE.md` reopened as a phased plan: nine phases, each ending in a
+      playable build, with Phase 1 (hearts) marked done and the remaining phases (campaign,
+      cards, movement, sprite compiler, pixel renderer, synth audio, themes, polish) listed with
+      their gate checks.
+- [x] 2026-10-20 — Play-test fix: keys were effectively invisible. `DrawCellDetails` painted the
+      lantern falloff over the cell contents, so a key at the torch edge lost ~65% of an already
+      faint glow; the falloff now goes on first and the contents (keys, exit, wisp, killer,
+      player) are drawn above it. `DrawKey` was rebuilt as a beacon (floor pool, light shaft past
+      the cell edge, pulsing ring, bobbing fungus with a white core, orbiting sparks). Verified
+      with a window harness that walked to a key and drew 100 frames: `KEYS_RENDERED`, key
+      visible, 2.27 ms/frame; 301/301 tests still green (no rule changed).
+- [x] 2026-10-20 — Roguelike Phase 2: floors and campaign. `FloorDefinition` + `FloorCatalog`
+      (The Shallows 3 keys / 0.60 s, Rootbound 3 / 0.54 s, Drowned Halls 4 / 0.48 s, each with a
+      theme id), `CampaignStatus` and `Campaign` (floor sequence, carried hearts, `TryAdvanceFloor`,
+      `Status` mapping a cleared floor to progress and a caught floor to `Lost`).
+      `GameConfig.ForFloor` composes a floor over the run's shared rules; `GameFactory` gained
+      `CreateCampaign`/`CreateFloor` and a `Func<int?, IRandom>` random factory so floor n uses
+      `seed + (n-1)*7919`. Window: floor intro card, floor-cleared card, run summary, floor in the
+      title bar, and a campaign loop; console: floor headings, carried hearts and run summary;
+      both frontends take `Func<Campaign>`. 30 new tests (331 total); full-campaign renderer
+      harness `CAMPAIGN_OK` (160 frames, 2.09 ms/frame), 3,753 console frames with the correct
+      floor heading and loss summary, window alive for 8 s.
 
 ## Known Issues / Bugs
 
+- **The campaign has no save yet.** Quitting mid-run throws the run away; the save file is
+  Phase 8 because it depends on the final floor/card data. A run is currently short enough
+  (three floors) that this is tolerable, but it must not survive into the twenty-floor build.
+- **Floor "themes" are names and accent colours only.** The Shallows/Rootbound/Drowned Halls
+  differ in text, accent, key count and killer pace, not yet in maze look or ambience. That is
+  deliberate: the per-floor cave look needs the sprite compiler (Phase 6) and the palette work
+  (Phase 8), so the current themes are a placeholder that must not be mistaken for done.
+- **The key beacon cannot be judged from here.** Its draw path, visibility and cost are verified,
+  but whether the shaft and ring read as "collect me" rather than as decoration needs a human
+  look. The whole look is `RaylibRenderer.DrawKey`; the palette and radius are local constants.
+- **Heart balance is unproven.** With three hearts, a 1.5 s grace window, a 1.5 s stun and a
+  killer thrown eight steps away, a stationary player was caught every ~20 s in the harness
+  (18.6 s, 20.0 s, 20.1 s). That is the intended "a mistake costs tempo" feel, but it may read
+  as too generous for a horror game; the knobs are the five heart values in `GameConfig`, not
+  code, and a play-test should decide.
+- **Damage feedback is inferred, not emitted.** The renderer notices a drop in
+  `GameState.Hearts` between frames and flashes for 0.35 s; there is still no `GameEvent`
+  stream, so audio and particles would each have to reconstruct events for now. The event queue
+  is scheduled with the audio phase.
 - **The window's pixels could not be checked on this machine.** Window creation and the frame
   loop are verified (hundreds of renderer frames across every state, including the title screen
   and a replay, process stays alive), but reading the framebuffer back returns black because
@@ -304,7 +426,7 @@ Run these from the repository root (the folder containing `MazeGame.sln`):
 
 ```bash
 dotnet build                      # must report 0 Warning(s), 0 Error(s)
-dotnet test                       # currently 279/279 passing
+dotnet test                       # currently 331/331 passing
 dotnet run --project src/MazeGame.UI              # Raylib window
 dotnet run --project src/MazeGame.UI -- --console # terminal fallback
 ```

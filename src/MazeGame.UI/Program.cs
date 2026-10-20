@@ -17,13 +17,13 @@ var useConsole = Array.Exists(
 
 var config = new GameConfig();
 
-// The factory owns the shipped maze pipeline and builds one complete game per call: a seeded
-// random source feeds both maze generation and entity placement, so a seed reproduces the run
-// and a null seed gives a new cave every time. Because starting a game is a call rather than a
-// mode, "descend again" after death is the same call as the first descent.
-var factory = new GameFactory(config, () => new SeededRandom(config.Seed), new DijkstraPathfinder());
+// The factory owns the shipped maze pipeline and builds one complete floor per call. Each floor
+// gets its own random source, derived from the run seed and the floor number, so a seeded run is
+// reproducible and its floors are still different caves. Starting a run is a call rather than a
+// mode, so "descend again" after a lost run is the same call as the first descent.
+var factory = new GameFactory(config, seed => new SeededRandom(seed), new DijkstraPathfinder());
 
-if (useConsole || !RaylibFrontend.TryRun(config, factory.Create))
+if (useConsole || !RaylibFrontend.TryRun(config, factory.CreateCampaign))
 {
-    ConsoleFrontend.Run(factory.Create);
+    ConsoleFrontend.Run(factory.CreateCampaign);
 }

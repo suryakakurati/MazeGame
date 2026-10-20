@@ -35,6 +35,8 @@ public sealed class GameStateInvariantTests
                 KeyCount = 3,
                 BarrierBudget = 3,
                 EnemyStepSeconds = 0.05,
+                StartingHearts = 1,
+                MaxHearts = 1,
                 Seed = seed,
             };
             var maze = new MazeGenerator(random).Generate(new MazeOptions(MazeSize, MazeSize, seed));
@@ -190,6 +192,10 @@ public sealed class GameStateInvariantTests
             Columns = MazeSize,
             KeyCount = 3,
             EnemyStepSeconds = 1.0,
+            // One heart keeps this test about the chase running out, not about the heart
+            // economy; the three-heart version is covered in GameStateHeartTests.
+            StartingHearts = 1,
+            MaxHearts = 1,
             Seed = 5,
         };
         var maze = new MazeGenerator(random).Generate(new MazeOptions(MazeSize, MazeSize, 5));
@@ -218,6 +224,8 @@ public sealed class GameStateInvariantTests
                 KeyCount = 3,
                 BarrierBudget = 3,
                 EnemyStepSeconds = 0.05,
+                StartingHearts = 1,
+                MaxHearts = 1,
                 Seed = seed,
             };
             var maze = new MazeGenerator(random).Generate(new MazeOptions(MazeSize, MazeSize, seed));

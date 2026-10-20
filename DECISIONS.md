@@ -750,3 +750,88 @@ cells, so every new run calls `RaylibRenderer.Reset()` to clear the explored-cel
 replay that skipped this would draw the previous cave's walls. The console title needs a key
 that a piped run cannot send, so it is skipped under redirection — the same limitation the
 console input loop already documented.
+
+## 2026-10-20 — A catch costs a heart and resets the chase (roguelike Phase 1)
+
+**Decision:** The player enters a floor with `StartingHearts` (3) out of `MaxHearts` (3). A catch
+spends one heart; the killer is teleported to the furthest reachable cell (dead ends preferred,
+keys/exit/wisp/barriers avoided while a legal alternative exists), stunned for
+`RespawnStunSeconds` (1.5), and the player is invulnerable for `InvulnerabilitySeconds` (1.5).
+Keys, barriers, the wisp and the layout are untouched. `GameStatus.Caught` now means "the last
+heart was spent" and still ends the run; a catch with hearts left stays `InProgress`.
+
+**Reason:** The request was a roguelike where a mistake is survivable, so damage has to cost
+tempo rather than progress. Three discrete hearts are readable in a small HUD and make each
+loss a story, unlike a hidden health number. The respawn is what makes one mistake cost
+exactly one heart: without the teleport, a killer standing on the player would deal three hits
+in three consecutive steps. Keeping the player's cell and their keys is what stops hearts from
+feeling like a checkpoint restart.
+
+**Consequences:** `GameState` gained `Hearts`, `MaxHearts`, `IsInvulnerable`,
+`InvulnerabilitySecondsRemaining`, `IsEnemyStunned` and `EnemyStunSecondsRemaining`, and
+`TakeHit` is the single place a heart is spent. Two small rules protect the fiction: the killer
+waits beside the player while the grace window is open instead of sharing the cell, and walking
+into it during that window is refused instead of moving through it. The stun is charged in real
+time and freezes the step accumulator, so it is a usable window rather than a delayed step.
+
+The existing chase tests were given one heart through `TestLevels` (and the lure helper) so they
+keep testing "caught ends the game"; the three-heart economy has its own `GameStateHeartTests`.
+The renderer infers the damage flash from a one-frame drop in `Hearts` because there is no event
+stream yet — that is a known, documented shortcut until audio brings `GameEvent`. The numbers
+are untuned guesses; a stationary player was caught every ~20 s in the measurements, which is
+the intended pressure but needs a human play-test.
+
+## 2026-10-20 — Lighting is painted under contents, not over them (key visibility bug)
+
+**Decision:** `DrawCellDetails` now draws the lantern falloff after the walls and flora but
+*before* the cell's contents, so keys, the exit, a wisp, the killer and the player are never
+dimmed by the lightmap. The key was also rebuilt as a beacon: a magenta pool on the floor, a
+six-band vertical shaft that spills past the cell edge, a pulsing ring, a bobbing bright core
+with a white highlight, and two orbiting sparks.
+
+**Reason:** A play-test reported keys as invisible. They were being drawn correctly and then
+covered by a `Rgba(2, 8, 9, alpha)` rounded rectangle whose alpha reaches ~170 at the edge of
+the torch, so a 7 px pink cap with a 50-alpha glow was multiplied down to a handful of levels
+above a near-black floor. The falloff is a *lighting* layer, not a foreground layer: applying
+it to entities means the game hides exactly the things the player must be able to react to. The
+beacon addresses the second half of the problem — even undimmed, a 7 px mushroom is easy to
+mistake for the ambient flora that grows in the same colours.
+
+**Consequences:** Contents now render on top of the darkness, which also makes the killer and
+exit readable at the edge of the torch; that is intentional (the killer is only drawn when the
+aura rule already makes it visible). Ambient flora stays under the falloff so it still dims with
+distance. The new beacon is presentation only — no rule, no test and no Core type changed, and
+the 301 tests stay green. When the pixel renderer replaces this one (FUTURE.md Phase 6), the
+same ordering rule applies: lightmap first, then sprites, then the HUD.
+
+## 2026-10-20 — A `Campaign` above the floor, and floors as data (Phase 2)
+
+**Decision:** A run is a `Campaign` that owns an ordered, snapshotted list of `FloorDefinition`
+records, the current one-floor `GameState`, and the hearts carried between floors. `GameState`
+is unchanged as a unit — it still knows nothing about floors. A floor's `GameStatus.Won` now
+means "this floor's exit was reached", and the run's result lives in `CampaignStatus`
+(`InProgress` / `Won` / `Lost`). `Campaign.TryAdvanceFloor()` builds the next floor with
+`StartingHearts` equal to the hearts left and `MaxHearts` from the floor. The shipped catalog is
+three floors (The Shallows, Rootbound, Drowned Halls) with 3/3/4 keys and killer steps
+0.60/0.54/0.48 s. Frontends now take `Func<Campaign>`.
+
+**Reason:** The alternative — teaching `GameState` about floor numbers — would have put the run's
+state inside the object that 331 tests treat as "one floor", and every rule test would have had
+to know about a campaign. A separate layer keeps the tested rules exactly as they were: the
+campaign only sequences `GameState` instances and moves hearts between them. `GameStatus.Won`
+also could not keep meaning "the run is over" and "this floor is done" at the same time; splitting
+the enums makes the frontend's transitions explicit instead of inferred from a flag.
+
+**Consequences:** `GameConfig.ForFloor` composes a floor over the run's shared rules, so the
+per-floor knobs are only size, keys, killer pace and heart ceiling while vision, barriers, wisps,
+braiding, aura and the seed are inherited. `GameFactory` gained `CreateCampaign()` and
+`CreateFloor(floor, hearts)`, and its random factory changed from `Func<IRandom>` to
+`Func<int?, IRandom>` (a public API change): each floor uses `seed + (number - 1) * 7919`, so a
+seeded campaign is reproducible while its floors are different layouts. `Create()` remains for
+tests and tools and builds a single game from the base config. The campaign list is snapshotted
+and its floor numbers must increase, so a mutable list or a bad catalog fails at construction.
+There is no save file yet — it is Phase 8, because it depends on the final floor and card data;
+a three-floor run is short enough to finish in one sitting in the meantime. Floor themes are
+names, accent colours, key counts and killer pace only; the per-floor cave look is deliberately
+deferred to the sprite compiler (Phase 6) and palette work (Phase 8), so no renderer hacks should
+be added for it now.

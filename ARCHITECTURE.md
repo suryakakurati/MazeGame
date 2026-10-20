@@ -53,11 +53,13 @@ src/MazeGame.Core/
   Abstractions/                interfaces and the seeded random source
   Maze/                        disjoint set, grid/cell model, maze generators (perfect + braid)
   Pathfinding/                 binary min-heap and Dijkstra (the enemy AI lives in GameState)
-  Game/                        GameConfig, GameStatus, GameState (rules, enemy AI)
+  Game/                        GameConfig, GameStatus, GameState (rules, enemy AI),
+                               FloorDefinition/FloorCatalog, Campaign (run sequence, hearts)
 src/MazeGame.UI/
   Frontends/                   RaylibFrontend (window loop) + ConsoleFrontend (fallback loop)
   Input/                       GameCommand + GameCommands (one key-to-rule mapping)
-  Rendering/                   IRenderer, RaylibRenderer (fog, vignette, HUD), ConsoleRenderer
+  Rendering/                   IRenderer, RaylibRenderer (fog, vignette, HUD; campaign cards in
+                               RaylibRenderer.Campaign.cs), ConsoleRenderer
   Program.cs                   composition root: builds the game, picks a frontend
 tests/MazeGame.Tests/
   Abstractions/  Maze/         one test class per Core class, mirroring Core folders
@@ -87,28 +89,34 @@ tests/MazeGame.Tests/
 | `MinHeap<T>` | Core / Pathfinding | Hand-written binary min-heap over a flat list with sift-up/sift-down; injected `IComparer<T>` decides order. `Peek` O(1), `Insert`/`ExtractMin` O(log n). No library priority queue. | done (Phase 4) |
 | `IPathfinder` | Core / Abstractions | `FindPath(grid, start, goal, Func<Cell,int> cost)` returning the cells in travel order, or an empty list when unreachable. Knows nothing about obstacles — only weights. | done (Phase 4) |
 | `DijkstraPathfinder` | Core / Pathfinding | Dijkstra: cached per-cell best distance, predecessor links for rebuilding the route, stale-entry deletion instead of decrease-key, early exit when the goal is settled. Weights come from the caller (obstacle cost is a Phase 5 concern). | done (Phase 4) |
-| `GameConfig` | Core / Game | Every tunable number (size, key count, obstacle cost 5, barrier budget 3, seal 10 s, tear-down 3 s, sealed cost 40, wisp count 2 / lifetime 6 s, enemy step time, vision radius 3, dead-end braid 55%, extra loops 8, killer aura radius 2 / distance 6, seed), init-only, with `Validate` enforcing the "maze is big enough for player + killer + exit + keys" rule. | done (Phase 5–6) |
-| `GameStatus` | Core / Game | `InProgress` / `Won` / `Caught`; a game leaves `InProgress` once and never returns. | done (Phase 5) |
-| `GameState` | Core / Game | The single public entry point for the UI. Owns maze, player, killer, exit, uncollected keys, barriers and their seals, the wisp, the visible-cell set, the killer's aura cells and status. Commands: `TryMove`, `Tick`, and the aiming set `BeginBarrierPlacement` / `BeginLurePlacement` / `MoveAimCursor` / `ConfirmPlacement` / `CancelPlacement`; `BarrierSeals`, `Lure` and `IsVisible(Cell)` feed the renderers, `EnemyGlow` says which cells are lit by the killer. Contains the enemy AI (two cached Dijkstra routes compared to pick the player or the wisp, step time scaled by cell cost, seal tear-down as its own action) and the win/lose rules. | done (Phase 5–6) |
-| `GameFactory` | Core / Game | Builds one complete game per `Create()`: a new random source, the shipped maze pipeline (`MazeGenerator` → `DeadEndBraider` → `BraidedMazeGenerator`) and a `GameState`. Validates its config in the constructor. Starting (or restarting) a run is this one call. | done (Phase 6) |
+| `GameConfig` | Core / Game | Every tunable number (size, key count, obstacle cost 5, barrier budget 3, seal 10 s, tear-down 3 s, sealed cost 40, wisp count 2 / lifetime 6 s, enemy step time, vision radius 3, dead-end braid 55%, extra loops 8, killer aura radius 2 / distance 6, starting hearts 3 / ceiling 3, invulnerability 1.5 s, respawn distance 8, respawn stun 1.5 s, seed), init-only, with `Validate` enforcing the "maze is big enough for player + killer + exit + keys" rule and the heart ranges. | done (Phase 5–7) |
+| `GameStatus` | Core / Game | `InProgress` / `Won` / `Caught`. On one floor, `Won` means its exit was reached (in a campaign that is progress, not victory); `Caught` means the last heart was spent and ends the run. A game leaves `InProgress` once and never returns. | done (Phase 5–8) |
+| `FloorDefinition` | Core / Game | One floor's data: number, display name, theme id, maze size, key count, killer step time and heart ceiling, with `Validate`. Everything needed to build a floor; no drawing knowledge (the theme id is a string). | done (Phase 8) |
+| `FloorCatalog` | Core / Game | The shipped three floors, in order, as a read-only snapshot; `ByNumber` looks one up. The content seam: a fourth floor is a new record here, not a new code path. | done (Phase 8) |
+| `CampaignStatus` | Core / Game | `InProgress` / `Won` / `Lost` for the whole run, so `GameStatus.Won` can keep meaning "this floor" without overloading one enum. | done (Phase 8) |
+| `Campaign` | Core / Game | One run: the floor list (snapshotted and validated), the current `GameState`, and the hearts carried between floors. `TryAdvanceFloor` builds the next floor with the hearts left (out of its own ceiling); `Status` maps a caught floor to `Lost` at once and a cleared final floor to `Won`; `FloorsCleared`, `IsOnLastFloor`, `IsFloorCleared` feed the UI. | done (Phase 8) |
+| `GameState` | Core / Game | The single public entry point for the UI. Owns maze, player, killer, exit, uncollected keys, barriers and their seals, the wisp, the visible-cell set, the killer's aura cells, the player's hearts, invulnerability and the killer's stun, and status. Commands: `TryMove`, `Tick`, and the aiming set `BeginBarrierPlacement` / `BeginLurePlacement` / `MoveAimCursor` / `ConfirmPlacement` / `CancelPlacement`; `BarrierSeals`, `Lure`, `IsVisible(Cell)`, `Hearts`/`MaxHearts`, `IsInvulnerable`, `IsEnemyStunned` feed the renderers, `EnemyGlow` says which cells are lit by the killer. Contains the enemy AI (two cached Dijkstra routes compared to pick the player or the wisp, step time scaled by cell cost, seal tear-down as its own action), the catch rule (`TakeHit`: one heart, respawn at the furthest reachable non-objective cell, stun, grace window) and the win/lose rules. | done (Phase 5–7) |
+| `GameFactory` | Core / Game | Builds floors and runs: `CreateCampaign()` for the shipped three floors, `CreateFloor(floor, hearts)` for one floor, and `Create()` for a single game from the base config (used by tests/tools). Each floor gets a random source seeded from the run seed plus its number (`Func<int?, IRandom>`), goes through the shipped maze pipeline (`MazeGenerator` → `DeadEndBraider` → `BraidedMazeGenerator`), and is built with `GameConfig.ForFloor`. Validates its config in the constructor. Starting or restarting a run is one call. | done (Phase 6–8) |
 | `IRenderer` | UI / Rendering | `Draw(GameState)`; draws a frame and never changes the game. | done (Phase 5) |
-| `ConsoleRenderer` | UI / Rendering | ASCII view: maze walls, `@` player, `K` killer, `k` key, `E` exit, `#` sealed barrier, `=` spent barrier, `*` wisp, plus a HUD line. Fog-aware: unseen cells are blank, remembered ones are `.`; entities only while visible. | done (Phase 6) |
-| `RaylibRenderer` | UI / Rendering | Graphical window drawn as a bioluminescent cave: rounded stone floors, rock walls in two passes (dark rock, then lit rim/moss/lichen), glowing mushrooms, a hooded lantern-bearer, a spindly killer, fungus keys, an arch exit, thorn barriers (a breathing green cage while sealed, a dim husk once spent), a cyan wisp with orbiting sparks, green/pink/cyan spores, background blooms, grain, vignette, glass HUD pills (keys, barriers, wisps, exit), a mode-coloured aim reticle and end card. Also draws the title screen (`DrawTitle`, in the `RaylibRenderer.Title.cs` partial) and `Reset()` clears its explored-cell memory between runs. Reads visibility from Core. | done (Phase 6) |
+| `ConsoleRenderer` | UI / Rendering | ASCII view: maze walls, `@` player, `K` killer, `k` key, `E` exit, `#` sealed barrier, `=` spent barrier, `*` wisp, plus a HUD line starting with `hearts n/n`. Fog-aware: unseen cells are blank, remembered ones are `.`; entities only while visible. | done (Phase 6–7) |
+| `RaylibRenderer` | UI / Rendering | Hearts (filled, dim, pulsing on the last) in the footer beside the hints, and a 0.35 s red wash when one is lost (`TrackDamage` compares the rule value each frame; no event stream yet). Keys are drawn as beacons (floor pool, light shaft, ring, bobbing core, orbiting sparks) **after** the lantern falloff, because a lighting pass over contents hides exactly the things the player must see. The rest of the window is drawn as a bioluminescent cave: rounded stone floors, rock walls in two passes (dark rock, then lit rim/moss/lichen), glowing mushrooms, a hooded lantern-bearer, a spindly killer, fungus keys, an arch exit, thorn barriers (a breathing green cage while sealed, a dim husk once spent), a cyan wisp with orbiting sparks, green/pink/cyan spores, background blooms, grain, vignette, glass HUD pills (keys, barriers, wisps, exit), a mode-coloured aim reticle and end card. Also draws the title screen (`DrawTitle`), the campaign's floor intro, floor-cleared and run-summary cards (`RaylibRenderer.Campaign.cs`), and `Reset()` clears its explored-cell memory between floors. Reads visibility from Core. | done (Phase 6–8) |
 | `RaylibLayout` | UI / Rendering | Window geometry shared by the frontend and the renderer: 40 px cells, margins, HUD/footer strips, `WindowSize(config)`, `CellX`/`CellY`, window title. | done (Phase 6) |
 | `GameCommand` | UI / Input | Backend-independent player intentions (`MoveNorth`…`BeginAim`, `BeginLureAim`, `ConfirmAim`, `CancelAim`, `Quit`). | done (Phase 6) |
 | `GameCommands` | UI / Input | Applies a command to `GameState`; the one place that knows direction keys move the aim cursor instead of the player while aiming. | done (Phase 6) |
-| `RaylibFrontend` | UI / Frontends | Opens the window, owns the two-screen loop (title with its menu, then the game), maps keys, brackets drawing, and restarts a run by calling the injected game factory. Keeps the last frame on screen under the end card. Returns `false` when no window is available. | done (Phase 6) |
-| `ConsoleFrontend` | UI / Frontends | Terminal loop with the same command mapping, an ASCII title (skipped when input is redirected) and `[R] descend again`, plus the `--console`/fallback role. | done (Phase 6) |
+| `RaylibFrontend` | UI / Frontends | Opens the window, owns the screen flow (title → floor intro → play → floor-cleared → next floor → run summary / lost card), maps keys, brackets drawing, and starts a run by calling the injected `Func<Campaign>`. Advances floors on Enter after a clear, restarts on R/Enter after a run ends, puts the floor number in the window title, and returns `false` when no window is available. | done (Phase 6–8) |
+| `ConsoleFrontend` | UI / Frontends | Terminal campaign loop with the same command mapping, an ASCII title, a floor heading, carried-hearts line, auto-advance when input is redirected, and a run summary, plus the `--console`/fallback role. | done (Phase 6–8) |
 
 ## Data flow of one frame (as implemented)
 
 1. `Program` builds the config and a `GameFactory`, then runs
-   `RaylibFrontend.TryRun(config, factory.Create)` — or `ConsoleFrontend.Run(factory.Create)`
-   when `--console` was passed or no window could be opened. Each run starts with
-   `factory.Create()`, so a replay is the same call as the first descent.
+   `RaylibFrontend.TryRun(config, factory.CreateCampaign)` — or
+   `ConsoleFrontend.Run(factory.CreateCampaign)` when `--console` was passed or no window could
+   be opened. Each run starts with a fresh campaign, so a replay is the same call as the first
+   descent and always starts on floor 1 with full hearts.
 2. The window opens on the title screen (`RaylibRenderer.DrawTitle`). The frontend owns the
-   selection; confirming `DESCEND` calls the factory, resets the renderer's explored cells and
-   switches to the game screen. `LEAVE` or Esc closes the window.
+   selection; confirming `DESCEND` calls the factory, resets the renderer's explored cells, shows
+   the floor intro card for 1.6 s (Enter/Space skips it) and switches to the game screen. `LEAVE`
+   or Esc closes the window.
 3. The frontend reads its own keyboard API and translates a press into one `GameCommand`.
    `GameCommands.Apply` performs it: normally `TryMove(direction)` or
    `BeginBarrierPlacement()` / `BeginLurePlacement()`; while `IsAiming` is true the same
@@ -116,8 +124,11 @@ tests/MazeGame.Tests/
    live in the UI.
 4. The frontend measures real elapsed time and calls `GameState.Tick(deltaSeconds)`, which
    advances the killer at most one step.
-5. When the run ends, the end card is drawn over the last frame; R or Enter calls the factory
-   again for a fresh game. Quitting returns the last game so the outcome can be printed.
+5. When a floor's exit is reached, `GameStatus.Won` makes the frontend show the floor-cleared
+   card; Enter calls `Campaign.TryAdvanceFloor()`, which builds the next floor with the hearts
+   left. On the last floor the run summary card appears instead. A lost run shows the end card
+   over the last frame; R or Enter starts a fresh campaign. Quitting returns the run so the
+   outcome can be printed.
 6. `RaylibRenderer.Draw(state)` fills in the frame (the frontend brackets it with
    `BeginDrawing`/`EndDrawing`): night gradient, cells, killer halo, dust, HUD. `ConsoleRenderer.Draw(state)`
    rebuilds the ASCII frame and writes it. Both ask `GameState.IsVisible` what they may show,
@@ -156,7 +167,22 @@ tests/MazeGame.Tests/
   `EnemyAuraDistance` steps, the cells within `EnemyAuraRadius` of it are visible too (the
   killer's own light, `EnemyGlow`). Recomputed when the player *or the killer* moves;
   renderers only darken what it reports.
-- **End.** `Won` or `Caught`; after that every command and tick is a no-op.
+- **Hearts.** The player starts each floor with `StartingHearts` (3) out of `MaxHearts` (3). A
+  catch (the killer steps onto the player, or the player walks onto the killer) spends one heart
+  and does **not** end the floor: the killer is teleported to the furthest reachable cell, dead
+  ends preferred and keys/exit/wisp/barriers avoided while possible, then stunned for
+  `RespawnStunSeconds`; the player is invulnerable for `InvulnerabilitySeconds` (the killer waits
+  beside their cell instead of sharing it, and a step into it is refused). Keys, barriers, the
+  wisp and the layout survive, so damage costs tempo rather than progress. At zero hearts
+  `GameStatus.Caught` ends the run.
+- **Floors and the run.** A run is the ordered `FloorCatalog` sequence. Clearing a floor's exit
+  sets `GameStatus.Won` for that floor only; `Campaign.TryAdvanceFloor` then builds the next
+  floor with `StartingHearts` equal to the hearts left and `MaxHearts` from the floor, so damage
+  is remembered across the run. The run is `CampaignStatus.Won` only after the final floor's
+  exit, and `CampaignStatus.Lost` as soon as any floor is `Caught`. Seeded floors use
+  `seed + (number - 1) * 7919`, so a seeded run reproduces exactly while its layouts differ.
+- **End.** For one floor, `Won` or `Caught` (last heart); after that every command and tick is a
+  no-op. A campaign maps those to progress or a run ending as above.
 
 ## Dependencies
 

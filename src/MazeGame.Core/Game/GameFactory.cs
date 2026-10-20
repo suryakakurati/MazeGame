@@ -5,42 +5,50 @@ using MazeGame.Core.Maze;
 namespace MazeGame.Core.Game;
 
 /// <summary>
-/// Builds complete, playable games from one <see cref="GameConfig"/>: the shipped maze pipeline
-/// plus a fresh <see cref="GameState"/>.
+/// Builds complete, playable games: one floor from a definition, a whole campaign, or a single
+/// game from the base config.
 /// </summary>
 /// <remarks>
 /// <para>
-/// A game is more than a config: it needs a generated maze, a seeded random source shared by
-/// generation and placement, and a pathfinder. Doing that in the frontends would have meant the
-/// "start a new run" rule living in two event loops, so it lives here instead: the UI asks for a
-/// game, and a restart is simply another <see cref="Create"/> call.
+/// Nothing about mazes, placement or decoration belongs in an event loop. The frontends ask this
+/// factory for a campaign, and a replay is simply another <see cref="CreateCampaign"/> call — so
+/// "start a run" is a tested rule rather than glue duplicated in two frontends.
 /// </para>
 /// <para>
-/// Each call builds its own <see cref="IRandom"/>, so a seeded config replays exactly and a
-/// <see langword="null"/> seed gives a genuinely different maze every run. The maze is shaped by
-/// the two decorators the game ships with — <see cref="DeadEndBraider"/> for the dead ends and
-/// <see cref="BraidedMazeGenerator"/> for the extra loops — over the untouched graded
-/// <see cref="MazeGenerator"/>.
+/// Each floor gets its own <see cref="IRandom"/> derived from the run seed and the floor number,
+/// so a seeded campaign is reproducible while its floors are genuinely different layouts. An
+/// unseeded run passes <see langword="null"/> and gets a new cave on every floor.
+/// </para>
+/// <para>
+/// Floors are shaped by the two decorators the game ships with — <see cref="DeadEndBraider"/> for
+/// the dead ends and <see cref="BraidedMazeGenerator"/> for the extra loops — over the untouched
+/// graded <see cref="MazeGenerator"/>.
 /// </para>
 /// </remarks>
 public sealed class GameFactory
 {
+    /// <summary>
+    /// Distance between consecutive floors' seeds. A prime large enough that neighbouring floors
+    /// do not share a random stream prefix; it only has to be stable, not special.
+    /// </summary>
+    private const int FloorSeedStride = 7919;
+
     private readonly GameConfig _config;
-    private readonly Func<IRandom> _createRandom;
+    private readonly Func<int?, IRandom> _createRandom;
     private readonly IPathfinder _pathfinder;
 
     /// <summary>
     /// Creates a factory for <paramref name="config"/>.
     /// </summary>
-    /// <param name="config">The tuning values every game from this factory uses.</param>
+    /// <param name="config">The shared rules every floor of this factory uses.</param>
     /// <param name="createRandom">
-    /// Makes the random source for one game. It is called once per <see cref="Create"/>, which is
-    /// what keeps a seeded game reproducible and an unseeded one fresh.
+    /// Makes the random source for one game from a seed, or from <see langword="null"/> for a
+    /// fresh one. Called once per floor, which is what keeps a seeded run reproducible.
     /// </param>
     /// <param name="pathfinder">The search the killer uses to chase.</param>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="config"/> is invalid.</exception>
-    public GameFactory(GameConfig config, Func<IRandom> createRandom, IPathfinder pathfinder)
+    public GameFactory(GameConfig config, Func<int?, IRandom> createRandom, IPathfinder pathfinder)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(createRandom);
@@ -60,20 +68,70 @@ public sealed class GameFactory
     public GameConfig Config => _config;
 
     /// <summary>
-    /// Builds a new game: a freshly generated, braided maze with the player, killer, exit and keys
-    /// placed on distinct cells.
+    /// Builds the shipped campaign: three floors, in order, starting with full hearts.
+    /// </summary>
+    /// <returns>A run that starts on floor 1.</returns>
+    /// <remarks>
+    /// This is what the frontends call on the title screen and on "descend again", so a new run
+    /// is always a fresh campaign with fresh floors.
+    /// </remarks>
+    public Campaign CreateCampaign() => new(FloorCatalog.Shipped, CreateFloor);
+
+    /// <summary>
+    /// Builds one floor of a run from its definition and the hearts the player brings.
+    /// </summary>
+    /// <param name="floor">The floor's data.</param>
+    /// <param name="startingHearts">
+    /// Hearts the player has left. They become the floor's <see cref="GameConfig.StartingHearts"/>,
+    /// which is how damage carries between floors.
+    /// </param>
+    /// <returns>A playable floor that starts <see cref="GameStatus.InProgress"/>.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="floor"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when the floor is invalid, the carried hearts do not fit its ceiling, or the seeded
+    /// random source is missing.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// Thrown when the floor's maze is too small for its player, killer, exit and keys.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the random factory returns <see langword="null"/>.
+    /// </exception>
+    public GameState CreateFloor(FloorDefinition floor, int startingHearts)
+    {
+        ArgumentNullException.ThrowIfNull(floor);
+
+        var config = _config.ForFloor(floor, startingHearts);
+        var seed = FloorSeed(floor);
+        var random = _createRandom(seed)
+            ?? throw new InvalidOperationException("The random factory returned null.");
+
+        var generator = new BraidedMazeGenerator(
+            new DeadEndBraider(new MazeGenerator(random), random, config.DeadEndBraidPercent),
+            random,
+            config.ExtraLoops);
+
+        var maze = generator.Generate(new MazeOptions(config.Rows, config.Columns, seed));
+
+        // The same random source drives placement, so one seed reproduces the whole floor.
+        return new GameState(config, maze, _pathfinder, random);
+    }
+
+    /// <summary>
+    /// Builds a single game from the base config, without a campaign.
     /// </summary>
     /// <returns>A game that starts <see cref="GameStatus.InProgress"/>.</returns>
     /// <remarks>
-    /// Calling this again after a game has ended gives a completely independent game, which is
-    /// what makes replaying a single call rather than a special mode.
+    /// Kept as the plain "one game" seam for tests and tools; the shipped frontends use
+    /// <see cref="CreateCampaign"/>. Calling this again after a game has ended gives a completely
+    /// independent game, which is what makes replaying a single call rather than a special mode.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// Thrown when the random factory returns <see langword="null"/>.
     /// </exception>
     public GameState Create()
     {
-        var random = _createRandom()
+        var random = _createRandom(_config.Seed)
             ?? throw new InvalidOperationException("The random factory returned null.");
 
         var generator = new BraidedMazeGenerator(
@@ -86,4 +144,16 @@ public sealed class GameFactory
         // The same random source drives placement, so one seed reproduces the whole game.
         return new GameState(_config, maze, _pathfinder, random);
     }
+
+    /// <summary>
+    /// Returns the seed for <paramref name="floor"/>, offset from the run seed by its number.
+    /// </summary>
+    /// <param name="floor">The floor being built.</param>
+    /// <returns>The floor's seed, or <see langword="null"/> for an unseeded run.</returns>
+    /// <remarks>
+    /// Floor 1 uses the run seed unchanged, so a fixed seed keeps reproducing the same first
+    /// floor it always did; each later floor shifts by <see cref="FloorSeedStride"/>.
+    /// </remarks>
+    private int? FloorSeed(FloorDefinition floor) =>
+        _config.Seed is { } seed ? seed + ((floor.Number - 1) * FloorSeedStride) : null;
 }

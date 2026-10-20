@@ -153,6 +153,58 @@ public sealed class GameConfig
     public int EnemyAuraDistance { get; init; } = 6;
 
     /// <summary>
+    /// Gets how many hearts the player enters the floor with. Defaults to 3.
+    /// </summary>
+    /// <remarks>
+    /// A catch costs exactly one heart and does not end the floor. Carrying damage between
+    /// floors is just a smaller <c>StartingHearts</c> on the next floor's config, so the run's
+    /// health lives in one number rather than in a second parallel object.
+    /// </remarks>
+    public int StartingHearts { get; init; } = 3;
+
+    /// <summary>
+    /// Gets the most hearts the player can hold on this floor. Defaults to 3.
+    /// </summary>
+    /// <remarks>
+    /// This is the cap cards may raise, and it must be at least <see cref="StartingHearts"/>
+    /// so a floor cannot start above its own ceiling. It is separate from
+    /// <see cref="StartingHearts"/> because a run can arrive on a floor wounded.
+    /// </remarks>
+    public int MaxHearts { get; init; } = 3;
+
+    /// <summary>
+    /// Gets how many seconds the player cannot lose another heart after a catch. Defaults to
+    /// 1.5. Must be finite and not negative.
+    /// </summary>
+    /// <remarks>
+    /// This is what makes a single mistake cost one heart instead of emptying the bar while the
+    /// killer stands on top of the player. During the window the killer waits at the player's
+    /// cell instead of sharing it, so the pause is visible rather than invisible.
+    /// </remarks>
+    public double InvulnerabilitySeconds { get; init; } = 1.5;
+
+    /// <summary>
+    /// Gets how many walking steps away the killer is placed after a catch. Defaults to 8.
+    /// Must be at least 1.
+    /// </summary>
+    /// <remarks>
+    /// Placement prefers a reachable dead end at least this far away, so the player gets a real
+    /// head start; when the whole floor is smaller than that, it uses the furthest reachable
+    /// cell instead. Damage therefore costs tempo, never the run's progress.
+    /// </remarks>
+    public int RespawnDistance { get; init; } = 8;
+
+    /// <summary>
+    /// Gets how many seconds the killer is stunned after a catch. Defaults to 1.5. Must be
+    /// finite and not negative.
+    /// </summary>
+    /// <remarks>
+    /// While stunned the killer neither moves nor builds up its next step, so the stun is a real
+    /// window for the player to walk away rather than a delayed first step.
+    /// </remarks>
+    public double RespawnStunSeconds { get; init; } = 1.5;
+
+    /// <summary>
     /// Gets the seed for maze generation and entity placement, or <see langword="null"/>
     /// for a different game on every run. The same seed always produces the same game.
     /// </summary>
@@ -255,6 +307,47 @@ public sealed class GameConfig
                 "The braided share must be a percentage between 0 and 100.");
         }
 
+        if (StartingHearts < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(StartingHearts),
+                StartingHearts,
+                "A floor must start with at least one heart; a run with none is already over.");
+        }
+
+        if (MaxHearts < StartingHearts)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxHearts),
+                MaxHearts,
+                "The heart ceiling cannot be below the hearts the floor starts with.");
+        }
+
+        // Written as "not greater than or equal to zero" so NaN is rejected as well as negatives.
+        if (!(InvulnerabilitySeconds >= 0) || double.IsInfinity(InvulnerabilitySeconds))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(InvulnerabilitySeconds),
+                InvulnerabilitySeconds,
+                "The invulnerability window must be a finite, non-negative number of seconds.");
+        }
+
+        if (RespawnDistance < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(RespawnDistance),
+                RespawnDistance,
+                "After a catch the killer must be placed at least one step away.");
+        }
+
+        if (!(RespawnStunSeconds >= 0) || double.IsInfinity(RespawnStunSeconds))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(RespawnStunSeconds),
+                RespawnStunSeconds,
+                "The killer's stun after a catch must be a finite, non-negative number of seconds.");
+        }
+
         // Written as "not greater than zero" so NaN is rejected as well as 0 and negatives.
         if (!(EnemyStepSeconds > 0) || double.IsInfinity(EnemyStepSeconds))
         {
@@ -305,5 +398,58 @@ public sealed class GameConfig
                 $"{KeyCount} key(s) need {requiredCells} different cells.",
                 nameof(KeyCount));
         }
+    }
+
+    /// <summary>
+    /// Returns the settings for one floor of a run: this config's shared rules (vision, barriers,
+    /// wisps, braiding, aura, seed) with the floor's size, key count, killer pace and hearts.
+    /// </summary>
+    /// <param name="floor">The floor to derive settings for.</param>
+    /// <param name="startingHearts">
+    /// Hearts the player brings to the floor. Must be between 1 and <see cref="FloorDefinition.MaxHearts"/>.
+    /// </param>
+    /// <returns>A new config; this instance is unchanged.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="floor"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when the floor is invalid or the carried hearts do not fit the floor's ceiling.
+    /// </exception>
+    public GameConfig ForFloor(FloorDefinition floor, int startingHearts)
+    {
+        ArgumentNullException.ThrowIfNull(floor);
+        floor.Validate();
+
+        var floorConfig = new GameConfig
+        {
+            // Per-floor overrides.
+            Rows = floor.Rows,
+            Columns = floor.Columns,
+            KeyCount = floor.KeyCount,
+            EnemyStepSeconds = floor.EnemyStepSeconds,
+            StartingHearts = startingHearts,
+            MaxHearts = floor.MaxHearts,
+
+            // Shared rules: everything the run tunes once and every floor inherits.
+            ObstacleCost = ObstacleCost,
+            BarrierBudget = BarrierBudget,
+            BarrierSealSeconds = BarrierSealSeconds,
+            BarrierBreakSeconds = BarrierBreakSeconds,
+            SealedBarrierCost = SealedBarrierCost,
+            LureCount = LureCount,
+            LureSeconds = LureSeconds,
+            VisionRadius = VisionRadius,
+            ExtraLoops = ExtraLoops,
+            DeadEndBraidPercent = DeadEndBraidPercent,
+            EnemyAuraRadius = EnemyAuraRadius,
+            EnemyAuraDistance = EnemyAuraDistance,
+            InvulnerabilitySeconds = InvulnerabilitySeconds,
+            RespawnDistance = RespawnDistance,
+            RespawnStunSeconds = RespawnStunSeconds,
+            Seed = Seed,
+        };
+
+        // Fail here rather than at the first catch: a floor whose carried hearts exceed its
+        // ceiling, or a maze too small for its keys, is a content bug.
+        floorConfig.Validate();
+        return floorConfig;
     }
 }

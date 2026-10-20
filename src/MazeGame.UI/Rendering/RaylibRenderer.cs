@@ -71,6 +71,12 @@ public sealed partial class RaylibRenderer : IRenderer
     private const int MoteCount = 70;
     private const int GrainCount = 110;
 
+    /// <summary>How long the red flash lasts after a heart is lost, in seconds.</summary>
+    private const double DamageFlashSeconds = 0.35;
+
+    /// <summary>Left edge of the heart row in the footer, in pixels.</summary>
+    private const float OriginHeartX = 26f;
+
     /// <summary>
     /// The four wall sides of a cell, with the hash salt that gives each side its own lichen.
     /// Stored once so the wall passes never allocate a direction array.
@@ -85,6 +91,11 @@ public sealed partial class RaylibRenderer : IRenderer
 
     private readonly HashSet<Cell> _explored = [];
     private readonly Font _font;
+
+    // Presentation memory for the damage flash: the hearts drawn last frame and when the count
+    // dropped. -1 means "nothing seen yet", so opening a game never flashes.
+    private int _heartsSeen = -1;
+    private double _lastHitTime = double.NegativeInfinity;
 
     /// <summary>
     /// Creates the renderer. Must be constructed <b>after</b> the window exists, because the
@@ -111,12 +122,18 @@ public sealed partial class RaylibRenderer : IRenderer
     /// old one at the same position. Without this reset a replay would start with the previous
     /// cave already drawn in, which would read as a bug in the maze rather than as UI memory.
     /// </remarks>
-    public void Reset() => _explored.Clear();
+    public void Reset()
+    {
+        _explored.Clear();
+        _heartsSeen = -1;
+        _lastHitTime = double.NegativeInfinity;
+    }
 
     /// <inheritdoc />
     public void Draw(GameState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        TrackDamage(state);
 
         // The killer's aura is the cue that something is close, so it drives the dread version
         // of the light: a little dimmer, a little faster, and colder at the edges.
@@ -151,6 +168,7 @@ public sealed partial class RaylibRenderer : IRenderer
         // The vignette darkens the cave, not the interface: it goes on before the HUD so the
         // status pills and hints keep their contrast.
         DrawVignette(danger);
+        DrawDamageFlash();
         DrawHud(state);
         DrawHints(state);
         DrawEndBanner(state);
@@ -233,8 +251,12 @@ public sealed partial class RaylibRenderer : IRenderer
 
         DrawWallDetails(cell, x, y);
         DrawFlora(cell, x, y);
-        DrawContents(state, cell, x, y);
+
+        // The lantern falloff goes on before anything the player must be able to read. It used
+        // to be painted last, which dimmed the keys to a few percent of their own glow at the
+        // edge of the torch; that is a rule-legal cell the player simply could not see.
         DrawTorchFalloff(state, cell, x, y, light);
+        DrawContents(state, cell, x, y);
     }
 
     /// <summary>Builds the inset rectangle of a floor tile.</summary>
@@ -441,7 +463,7 @@ public sealed partial class RaylibRenderer : IRenderer
 
         if (state.Keys.Contains(cell))
         {
-            DrawKey(centerX, centerY);
+            DrawKey(cell, centerX, centerY);
         }
 
         if (cell == state.Lure)
@@ -540,22 +562,79 @@ public sealed partial class RaylibRenderer : IRenderer
     }
 
     /// <summary>
-    /// Draws a key as a small cluster of glowing cave fungus: a stalk, one bright cap and a
-    /// scattering of spores. Pink, so it is never confused with the cyan exit.
+    /// Draws a key as a beacon rather than as scenery: a magenta pool on the floor, a shaft of
+    /// light rising out of the cell, a pulsing ring, and the glowing fungus itself bobbing in the
+    /// middle. Pink, so it is never confused with the cyan exit.
     /// </summary>
-    private static void DrawKey(int centerX, int centerY)
+    /// <remarks>
+    /// A collectible has to be findable at the edge of the lantern, where the torch falloff is at
+    /// its strongest, so the beacon deliberately spills past the cell edge and the bright core is
+    /// drawn last. The bob and the orbit are functions of time only, so nothing is stored per key.
+    /// </remarks>
+    /// <param name="cell">The key's cell, used to desynchronise neighbouring keys' animation.</param>
+    /// <param name="centerX">Pixel x of the cell centre.</param>
+    /// <param name="centerY">Pixel y of the cell centre.</param>
+    private static void DrawKey(Cell cell, int centerX, int centerY)
     {
         var time = Raylib.GetTime();
-        var pulse = 0.8 + (Math.Sin((time * 3.0) + centerX) * 0.2);
+        var phase = (cell.Row * 1.7) + (cell.Column * 0.9);
+        var pulse = 0.75 + (Math.Sin((time * 3.2) + phase) * 0.25);
+        var bob = (float)(Math.Sin((time * 2.1) + (cell.Column * 1.3)) * 1.8);
+
+        // The pool of light on the floor: what makes the cell itself read as occupied.
+        Raylib.DrawCircleGradient(
+            new Vector2(centerX, centerY),
+            32,
+            Rgba(GlowPink.R, GlowPink.G, GlowPink.B, (byte)(44 + (pulse * 30))),
+            Transparent);
+
+        // The shaft: six stacked bands fading upwards, so a key is visible over a wall edge and
+        // across a dark cell rather than being a dark blob on dark floor.
+        for (var step = 0; step < 6; step++)
+        {
+            var width = 12 - step;
+            var alpha = (byte)((18 + (pulse * 20)) * (1.0 - (step / 6.0)));
+
+            Raylib.DrawRectangle(
+                centerX - (width / 2),
+                centerY - 6 - (step * 5),
+                width,
+                6,
+                Rgba(255, 168, 208, alpha));
+        }
+
+        // A ring that breathes: reads as "pick me up", not as another mushroom.
+        Raylib.DrawCircleLines(
+            centerX,
+            centerY,
+            12 + (float)(pulse * 3),
+            Rgba(255, 150, 200, (byte)(80 + (pulse * 80))));
+
+        var capY = centerY + bob;
 
         Raylib.DrawCircleGradient(
-            new Vector2(centerX, centerY), 18, Rgba(GlowPink.R, GlowPink.G, GlowPink.B, (byte)(52 * pulse)), Transparent);
-
+            new Vector2(centerX, capY - 2),
+            16,
+            Rgba(255, 130, 190, 110),
+            Transparent);
         Raylib.DrawLineEx(
-            new Vector2(centerX, centerY + 6), new Vector2(centerX, centerY + 1), 2.0f, Rgba(58, 118, 78, 230));
-        Raylib.DrawCircle(centerX - 2, centerY, 3.4f, GlowPink);
-        Raylib.DrawCircle(centerX + 3, centerY + 2, 2.4f, Rgba(208, 92, 150, 255));
-        Raylib.DrawCircle(centerX - 3, centerY - 1, 1.0f, Rgba(255, 220, 240, 220));
+            new Vector2(centerX, capY + 9),
+            new Vector2(centerX, capY + 1),
+            2.4f,
+            Rgba(58, 118, 78, 240));
+        Raylib.DrawCircleV(new Vector2(centerX - 2, capY), 5.0f, GlowPink);
+        Raylib.DrawCircleV(new Vector2(centerX + 4, capY + 3), 3.2f, Rgba(214, 84, 150, 255));
+        Raylib.DrawCircleV(new Vector2(centerX - 3, capY - 2), 1.6f, Rgba(255, 236, 248, 255));
+
+        // Two sparks orbiting the cap, the detail that separates a key from a glowing pebble.
+        for (var spark = 0; spark < 2; spark++)
+        {
+            var angle = (time * (1.6 + (spark * 0.4))) + (spark * Math.PI);
+            var sparkX = centerX + (float)(Math.Cos(angle) * (9 + spark));
+            var sparkY = capY - 3 + (float)(Math.Sin(angle) * 5);
+
+            Raylib.DrawCircleV(new Vector2(sparkX, sparkY), 1.2f, Rgba(255, 210, 230, 225));
+        }
     }
 
     /// <summary>
@@ -825,6 +904,91 @@ public sealed partial class RaylibRenderer : IRenderer
     }
 
     /// <summary>
+    /// Draws the run's hearts: filled for the hearts left, dim for the ones spent, in the footer
+    /// beside the control hints.
+    /// </summary>
+    /// <remarks>
+    /// The hearts live in the footer rather than in the HUD because the status pills and the
+    /// "it is close" warning already fill that strip; the footer has room for five hearts next
+    /// to the centred hints, which is the cap cards may raise.
+    /// </remarks>
+    /// <param name="state">The game to read the heart count from.</param>
+    /// <param name="x">Left edge of the row.</param>
+    /// <param name="centerY">Vertical centre of the hearts.</param>
+    private static void DrawHearts(GameState state, float x, float centerY)
+    {
+        const float size = 15f;
+        const float gap = 6f;
+        var lastHeart = state.Hearts == 1;
+
+        for (var index = 0; index < state.MaxHearts; index++)
+        {
+            var filled = index < state.Hearts;
+            var pulse = lastHeart && filled ? 0.65 + (Math.Sin(Raylib.GetTime() * 7.0) * 0.35) : 0.0;
+            var color = filled
+                ? Rgba(255, 96, 138, (byte)(185 + (pulse * 70)))
+                : Rgba(58, 84, 78, 150);
+
+            DrawHeart(x + (index * (size + gap)) + (size / 2f), centerY, size, color);
+        }
+    }
+
+    /// <summary>Draws one small heart from two lobes and a triangle, on the pixel grid.</summary>
+    private static void DrawHeart(float centerX, float centerY, float size, Color color)
+    {
+        var lobe = size * 0.27f;
+        var top = centerY - (size * 0.16f);
+
+        Raylib.DrawCircleV(new Vector2(centerX - lobe, top), lobe, color);
+        Raylib.DrawCircleV(new Vector2(centerX + lobe, top), lobe, color);
+        Raylib.DrawTriangle(
+            new Vector2(centerX - (lobe * 1.9f), top + (lobe * 0.35f)),
+            new Vector2(centerX + (lobe * 1.9f), top + (lobe * 0.35f)),
+            new Vector2(centerX, centerY + (size * 0.44f)),
+            color);
+    }
+
+    /// <summary>
+    /// Notes the moment a heart is lost so the next few frames can flash red.
+    /// </summary>
+    /// <remarks>
+    /// This is a read-only comparison against a rule value: the renderer has no event stream yet,
+    /// and a one-frame drop in <see cref="GameState.Hearts"/> is exactly the signal it needs.
+    /// </remarks>
+    private void TrackDamage(GameState state)
+    {
+        if (_heartsSeen >= 0 && state.Hearts < _heartsSeen)
+        {
+            _lastHitTime = Raylib.GetTime();
+        }
+
+        _heartsSeen = state.Hearts;
+    }
+
+    /// <summary>
+    /// Paints a short red wash over the frame after a heart is lost, so the cost of a mistake is
+    /// visible even though the player's cell does not change.
+    /// </summary>
+    private void DrawDamageFlash()
+    {
+        var elapsed = Raylib.GetTime() - _lastHitTime;
+
+        if (elapsed < 0 || elapsed >= DamageFlashSeconds)
+        {
+            return;
+        }
+
+        var strength = 1.0 - (elapsed / DamageFlashSeconds);
+
+        Raylib.DrawRectangle(
+            0,
+            0,
+            Raylib.GetScreenWidth(),
+            Raylib.GetScreenHeight(),
+            Rgba(190, 24, 60, (byte)(strength * 64)));
+    }
+
+    /// <summary>
     /// Draws the status strip as floating glass pills: keys, barriers and the exit, each with a
     /// glowing dot in its own colour. When the killer is close an extra warning appears, so the
     /// player gets a cue that is not only visual atmosphere.
@@ -908,6 +1072,8 @@ public sealed partial class RaylibRenderer : IRenderer
         Raylib.DrawRectangle(0, top, width, RaylibLayout.FooterHeight, Panel);
         Raylib.DrawLineEx(new Vector2(0, top), new Vector2(width, top), 1.0f, PanelEdge);
 
+        DrawHearts(state, OriginHeartX, top + (RaylibLayout.FooterHeight / 2f));
+
         var text = state.AimMode switch
         {
             PlacementMode.Barrier => "WASD: AIM    SPACE / ENTER: SEAL    ESC: CANCEL",
@@ -930,7 +1096,9 @@ public sealed partial class RaylibRenderer : IRenderer
     /// </summary>
     private void DrawEndBanner(GameState state)
     {
-        if (state.Status == GameStatus.InProgress)
+        // A cleared floor is a step in a run, not an ending: the campaign draws its own floor
+        // card (see RaylibRenderer.Campaign.cs), so only a lost run belongs here.
+        if (state.Status != GameStatus.Caught)
         {
             return;
         }
@@ -941,13 +1109,13 @@ public sealed partial class RaylibRenderer : IRenderer
         const float panelHeight = 150;
         var left = (width - panelWidth) / 2f;
         var top = (height - panelHeight) / 2f;
-        var accent = state.Status == GameStatus.Won ? ExitOpenColor : DangerText;
+        var accent = DangerText;
 
         Raylib.DrawRectangleRounded(new Rectangle(left, top, panelWidth, panelHeight), 0.08f, 6, Rgba(2, 8, 10, 236));
         Raylib.DrawRectangleRoundedLines(
             new Rectangle(left, top, panelWidth, panelHeight), 0.08f, 6, Rgba(accent.R, accent.G, accent.B, 120));
 
-        var title = state.Status == GameStatus.Won ? "YOU ESCAPED" : "THE THING FOUND YOU";
+        const string title = "THE THING FOUND YOU";
         TextCentered(title, width / 2f, top + 36, BannerTitleSize, accent, 2.4f);
 
         Raylib.DrawLineEx(
@@ -956,7 +1124,7 @@ public sealed partial class RaylibRenderer : IRenderer
             1.0f,
             Rgba(accent.R, accent.G, accent.B, 90));
 
-        TextCentered("R / ENTER: DESCEND AGAIN      ESC: QUIT", width / 2f, top + 104, BannerSubtitleSize, HintText);
+        TextCentered("R / ENTER: NEW RUN      ESC: QUIT", width / 2f, top + 104, BannerSubtitleSize, HintText);
     }
 
     /// <summary>Draws text centred horizontally on <paramref name="centerX"/>.</summary>

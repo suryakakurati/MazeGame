@@ -7,20 +7,20 @@ using Raylib_cs;
 namespace MazeGame.UI.Frontends;
 
 /// <summary>
-/// Plays the game in a Raylib window: owns the window, the title screen, the key mapping and the
-/// frame loop, and starts a fresh game whenever the player asks for another descent.
+/// Plays a whole campaign in a Raylib window: the title, a floor intro, the floor itself, the
+/// floor-cleared card and the run summary.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The window has two screens: the title (a menu over the cave) and the game itself. There is no
-/// third screen for the ending — the game over card sits on top of the last frame, so the player
-/// can still see where they were caught and press R straight into a new run.
+/// The frontend owns the screen state and the timers; the rules stay in Core. A floor is cleared
+/// when its <see cref="GameState.Status"/> becomes <see cref="GameStatus.Won"/>, which is progress
+/// rather than victory — <see cref="Campaign.TryAdvanceFloor"/> builds the next floor with the
+/// hearts the player has left.
 /// </para>
 /// <para>
-/// The frontend, not the renderer, brackets each frame with <c>BeginDrawing</c> /
-/// <c>EndDrawing</c>, so the renderer stays a plain "fill in this frame" component. Starting a
-/// game is a call to the injected factory: no maze generation or placement rule lives here, and a
-/// replay is the same call as the first run.
+/// Starting a run is a call to the injected factory, so a replay is a fresh campaign with full
+/// hearts and fresh floors. The renderer only remembers explored cells, which are cleared on every
+/// new floor.
 /// </para>
 /// </remarks>
 internal static class RaylibFrontend
@@ -30,13 +30,16 @@ internal static class RaylibFrontend
 
     private const int DescendItem = 0;
 
+    /// <summary>How long a floor intro card stays up before play begins.</summary>
+    private const double IntroSeconds = 1.6;
+
     /// <summary>
-    /// Opens the window and plays games until the player leaves.
+    /// Opens the window and plays campaigns until the player leaves.
     /// </summary>
-    /// <param name="config">The settings the window geometry and the games are built from.</param>
-    /// <param name="createGame">
-    /// Builds a fresh, playable game. Called once for the first descent and again for every
-    /// replay, so a restart is always a new maze with everything restored.
+    /// <param name="config">The settings the window geometry is built from.</param>
+    /// <param name="createCampaign">
+    /// Builds a fresh run. Called on the first descent and on every new run, so a restart always
+    /// starts on floor 1 with full hearts.
     /// </param>
     /// <returns>
     /// <see langword="true"/> when a window was opened and the session ran;
@@ -44,12 +47,12 @@ internal static class RaylibFrontend
     /// machine), so the caller can fall back to the console frontend.
     /// </returns>
     /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="config"/> or <paramref name="createGame"/> is null.
+    /// Thrown when <paramref name="config"/> or <paramref name="createCampaign"/> is null.
     /// </exception>
-    public static bool TryRun(GameConfig config, Func<GameState> createGame)
+    public static bool TryRun(GameConfig config, Func<Campaign> createCampaign)
     {
         ArgumentNullException.ThrowIfNull(config);
-        ArgumentNullException.ThrowIfNull(createGame);
+        ArgumentNullException.ThrowIfNull(createCampaign);
 
         var (width, height) = RaylibLayout.WindowSize(config);
 
@@ -68,13 +71,21 @@ internal static class RaylibFrontend
 
         try
         {
-            var lastGame = RunLoop(createGame);
+            var lastRun = RunLoop(createCampaign);
 
-            // Only report an outcome if there is one: leaving from the title, or mid-run after a
-            // replay, should not print the previous game's ending.
-            if (lastGame is { } game && game.Status != GameStatus.InProgress)
+            // Only report an outcome if there is one: leaving from the title, or mid-run, should
+            // not print a summary for a run the player walked away from.
+            if (lastRun is not null)
             {
-                Console.WriteLine(ConsoleFrontend.DescribeEnding(game.Status));
+                if (lastRun.Status == CampaignStatus.Lost)
+                {
+                    Console.WriteLine(ConsoleFrontend.DescribeEnding(GameStatus.Caught));
+                }
+                else if (lastRun.Status == CampaignStatus.Won)
+                {
+                    Console.WriteLine(
+                        $"You escaped the depths: {lastRun.FloorCount} floors, {lastRun.Hearts} hearts left.");
+                }
             }
         }
         finally
@@ -86,75 +97,151 @@ internal static class RaylibFrontend
     }
 
     /// <summary>
-    /// Runs frames until the window closes or the player leaves, switching between the title
-    /// screen and the game.
+    /// Runs frames until the window closes or the player leaves, switching between the title, the
+    /// floor intro, play and the outcome cards.
     /// </summary>
-    /// <param name="createGame">Builds each new game.</param>
+    /// <param name="createCampaign">Builds each new run.</param>
     /// <returns>
-    /// The last game played, or <see langword="null"/> when the player left from the title
-    /// screen without ever starting a run.
+    /// The run being played, or <see langword="null"/> when the player left from the title screen
+    /// without ever descending.
     /// </returns>
-    private static GameState? RunLoop(Func<GameState> createGame)
+    private static Campaign? RunLoop(Func<Campaign> createCampaign)
     {
         var renderer = new RaylibRenderer();
-        GameState? state = null;
-        var onTitle = true;
+        Campaign? campaign = null;
+        var screen = Screen.Title;
         var selected = DescendItem;
+        var introEndsAt = 0.0;
 
         while (!Raylib.WindowShouldClose())
         {
-            if (onTitle)
+            switch (screen)
             {
-                switch (ReadTitleChoice(ref selected))
-                {
-                    case TitleChoice.Quit:
-                        return null;
+                case Screen.Title:
+                    switch (ReadTitleChoice(ref selected))
+                    {
+                        case TitleChoice.Quit:
+                            return null;
 
-                    case TitleChoice.Descend:
-                        state = createGame();
+                        case TitleChoice.Descend:
+                            StartRun();
+                            break;
+                    }
 
-                        // A new maze must not inherit the previous cave's explored cells.
+                    break;
+
+                case Screen.FloorIntro:
+                    if (Raylib.GetTime() >= introEndsAt || Pressed(KeyboardKey.Enter) ||
+                        Pressed(KeyboardKey.KpEnter) || Pressed(KeyboardKey.Space))
+                    {
+                        screen = Screen.Play;
+                    }
+
+                    break;
+
+                case Screen.Play:
+                    if (TryReadCommand(campaign!.Floor.IsAiming, out var command) &&
+                        !GameCommands.Apply(campaign.Floor, command))
+                    {
+                        return campaign;
+                    }
+
+                    // Measured frame time: the killer's pace must not depend on the frame rate.
+                    campaign.Floor.Tick(Raylib.GetFrameTime());
+
+                    if (campaign.Floor.Status == GameStatus.Caught)
+                    {
+                        screen = Screen.RunLost;
+                    }
+                    else if (campaign.IsFloorCleared)
+                    {
+                        screen = campaign.IsOnLastFloor ? Screen.RunComplete : Screen.FloorCleared;
+                    }
+
+                    break;
+
+                case Screen.FloorCleared:
+                    if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) || Pressed(KeyboardKey.Space))
+                    {
+                        campaign!.TryAdvanceFloor();
                         renderer.Reset();
-                        onTitle = false;
-                        break;
-                }
-            }
-            else if (state!.Status == GameStatus.InProgress)
-            {
-                if (TryReadCommand(state.IsAiming, out var command) && !GameCommands.Apply(state, command))
-                {
-                    return state;
-                }
+                        StartFloorIntro();
+                    }
+                    else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
+                    {
+                        return campaign;
+                    }
 
-                // Measured frame time: the killer's pace must not depend on the frame rate.
-                state.Tick(Raylib.GetFrameTime());
-            }
-            else if (Pressed(KeyboardKey.R) || Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter))
-            {
-                // Replay is the same call as the first descent; the renderer just has to forget
-                // the previous cave.
-                state = createGame();
-                renderer.Reset();
-            }
-            else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
-            {
-                return state;
+                    break;
+
+                case Screen.RunComplete:
+                case Screen.RunLost:
+                    if (Pressed(KeyboardKey.R) || Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter))
+                    {
+                        StartRun();
+                    }
+                    else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
+                    {
+                        return campaign;
+                    }
+
+                    break;
             }
 
-            Raylib.BeginDrawing();
-            if (onTitle)
-            {
-                renderer.DrawTitle(selected);
-            }
-            else
-            {
-                renderer.Draw(state!);
-            }
-
-            Raylib.EndDrawing();
+            DrawFrame(screen, selected, campaign, renderer);
         }
 
-        return onTitle ? null : state;
+        return screen == Screen.Title ? null : campaign;
+
+        void StartRun()
+        {
+            campaign = createCampaign();
+            renderer.Reset();
+            StartFloorIntro();
+        }
+
+        void StartFloorIntro()
+        {
+            screen = Screen.FloorIntro;
+            introEndsAt = Raylib.GetTime() + IntroSeconds;
+            Raylib.SetWindowTitle(
+                $"{RaylibLayout.Title} — Floor {campaign!.FloorNumber}/{campaign.FloorCount}");
+        }
+    }
+
+    /// <summary>
+    /// Draws one frame for the current screen. The game frame is always drawn underneath the
+    /// campaign cards, so a cleared floor still shows where the player was standing.
+    /// </summary>
+    private static void DrawFrame(Screen screen, int selected, Campaign? campaign, RaylibRenderer renderer)
+    {
+        Raylib.BeginDrawing();
+
+        if (screen == Screen.Title)
+        {
+            renderer.DrawTitle(selected);
+        }
+        else
+        {
+            renderer.Draw(campaign!.Floor);
+
+            switch (screen)
+            {
+                case Screen.FloorIntro:
+                    renderer.DrawFloorIntro(campaign.CurrentFloor, campaign.FloorCount);
+                    break;
+
+                case Screen.FloorCleared:
+                    renderer.DrawFloorCleared(campaign.CurrentFloor, campaign.Hearts);
+                    break;
+
+                case Screen.RunComplete:
+                    renderer.DrawRunComplete(campaign.FloorCount, campaign.Hearts);
+                    break;
+            }
+        }
+
+        Raylib.EndDrawing();
     }
 
     /// <summary>
@@ -233,8 +320,6 @@ internal static class RaylibFrontend
             return TitleChoice.Quit;
         }
 
-        // Two entries, so either direction simply wraps; the arithmetic keeps working if a third
-        // entry is ever added between them.
         if (Pressed(KeyboardKey.W) || Pressed(KeyboardKey.Up))
         {
             selected = (selected + MenuItemCount - 1) % MenuItemCount;
@@ -262,13 +347,35 @@ internal static class RaylibFrontend
     private static bool Pressed(KeyboardKey key) =>
         Raylib.IsKeyPressed(key) || Raylib.IsKeyPressedRepeat(key);
 
+    /// <summary>Which screen the window is showing.</summary>
+    private enum Screen
+    {
+        /// <summary>The title menu.</summary>
+        Title,
+
+        /// <summary>A floor card, before its first frame of play.</summary>
+        FloorIntro,
+
+        /// <summary>A floor being played.</summary>
+        Play,
+
+        /// <summary>The card shown after a floor that is not the last one.</summary>
+        FloorCleared,
+
+        /// <summary>The run summary after the final floor.</summary>
+        RunComplete,
+
+        /// <summary>The run summary after the last heart was spent.</summary>
+        RunLost,
+    }
+
     /// <summary>What the player asked for on the title screen.</summary>
     private enum TitleChoice
     {
         /// <summary>Nothing yet: keep showing the title.</summary>
         None,
 
-        /// <summary>Start a game.</summary>
+        /// <summary>Start a run.</summary>
         Descend,
 
         /// <summary>Close the window.</summary>

@@ -242,6 +242,10 @@ public sealed class GameStateLureTests
                 VisionRadius = 3,
                 LureCount = lureCount,
                 LureSeconds = lureSeconds,
+                // One heart keeps this helper about wisp targeting: a catch should end the game
+                // here, and the heart economy has its own tests.
+                StartingHearts = 1,
+                MaxHearts = 1,
                 Seed = null,
             });
 
