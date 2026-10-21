@@ -33,6 +33,7 @@ public static class FloorCatalog
             ThemeId = "shallows",
             KeyCount = 3,
             EnemyStepSeconds = 0.60,
+            PlayerStepSeconds = 0.11,
         },
         new()
         {
@@ -41,6 +42,7 @@ public static class FloorCatalog
             ThemeId = "rootbound",
             KeyCount = 3,
             EnemyStepSeconds = 0.54,
+            PlayerStepSeconds = 0.10,
         },
         new()
         {
@@ -49,6 +51,7 @@ public static class FloorCatalog
             ThemeId = "drowned",
             KeyCount = 4,
             EnemyStepSeconds = 0.48,
+            PlayerStepSeconds = 0.09,
         },
     ];
 

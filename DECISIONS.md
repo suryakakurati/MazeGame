@@ -835,3 +835,383 @@ a three-floor run is short enough to finish in one sitting in the meantime. Floo
 names, accent colours, key counts and killer pace only; the per-floor cave look is deliberately
 deferred to the sprite compiler (Phase 6) and palette work (Phase 8), so no renderer hacks should
 be added for it now.
+
+## 2026-10-20 — Cards change a floor's inputs, not its rules (Phase 3)
+
+**Decision:** A card is data: `Card` (id, tier, face sentence, `CardEffect`) plus `CardCatalog`.
+The run accumulates the held cards in `RunModifiers`, and `GameFactory.CreateFloor` applies those
+totals over the floor's `GameConfig` before building the ordinary `GameState`. `GameState` gained
+no knowledge of cards; the only rule additions are two tuning values (`LureStunSeconds`,
+`LureVisionPenalty`) that default to zero, so the shipped game without cards is unchanged.
+`GameConfig` became a **record** so the composition is a `with` expression rather than a
+hand-written copy of every field.
+
+**Reason:** The tempting alternative is a pile of `if (hasCard("wide-eyes"))` checks inside
+`GameState`. That would put run-level state inside the object the rule tests treat as "one floor",
+and every new card would touch the most-tested code in the project. Composing over the config
+keeps all 415 tests meaningful: they still describe a floor played by the same rules, and a card
+test only has to assert the numbers the floor was built from. Making `GameConfig` a record removes
+a specific failure mode: a 25-field hand-written copy silently drops any value added later, which
+is exactly how a tuning number gets lost.
+
+**Consequences:** `RunModifiers.Apply` clamps and then validates: vision never drops below one step
+once a card touched it, budgets and counts never go negative, the killer never gets faster than
+0.05 s per step, and a heart ceiling never falls below the hearts being carried. A composition that
+still cannot describe a playable floor (for example extra keys that do not fit the maze) throws
+from `Apply` instead of producing a broken floor. Two catalog texts were adapted to what the rules
+can honestly deliver: **Second Wind**'s vision cost is run-wide rather than "for the rest of the
+floor" (the draft happens between floors, so "this floor" had no referent), and **Trophy
+Hunter**'s heal is capped by the floor's ceiling rather than allowed one over it.
+
+## 2026-10-20 — The draft is a gate in the run, not a screen in the frontend
+
+**Decision:** `Campaign` owns the offers, the held cards and the pending heals.
+Clearing a floor that is not the last opens `Campaign.Draft`, and `TryAdvanceFloor` returns
+`false` until it is resolved with `TakeCard` or `SkipDraft`. Offers come from `DraftFactory`,
+seeded by `{run seed, floor number}`, and `Draft`'s mutation methods are internal to Core.
+
+**Reason:** If the frontend owned the draft, "take a card or skip" would be UI convention rather
+than a rule, and any second frontend could forget it — the same reason hearts and floors already
+live in `Campaign`. Keeping the mutation internal means a frontend can draw the offers but cannot
+resolve them without the run's modifiers hearing about it. Deriving the offers from the seed rather
+than storing them is what keeps a future save file small: `{seed, floorIndex, hearts, cardIds}` is
+enough to reproduce the run, including what it offered.
+
+**Consequences:** Existing campaign tests had to resolve the draft before advancing — a deliberate
+behaviour change, not a test fixup. `TryAdvanceFloor` still refuses on the last floor (the run is
+won). Skip heals exactly one heart, applied when the next floor is built and capped by that floor's
+ceiling; a card's one-shot heal is banked the same way, while a per-clear heal is read from the
+modifiers at advance time so that merely looking at a draft cannot change the run's health. The
+draft's non-config effects (one-shot heals, queued draft-size changes) are applied at pick time by
+`Campaign`, because they are events in the run rather than numbers on a floor.
+
+## 2026-10-20 — A card is withheld when the run cannot pay for it
+
+**Decision:** `Card.DraftsNeededAfterThisOne` says how many drafts must follow before the card can
+be offered; `DraftFactory` withholds a card when there are fewer. `Lucky Find` needs two, so it
+never appears in the shipped three-floor campaign.
+
+**Reason:** The harness caught the alternative being wrong in a way tests had not: with three
+floors, `Lucky Find` was taken at the first draft, its bonus made the second draft offer four
+cards, and then the run ended — the price (a two-card draft afterwards) could never be paid. That
+made it a pure upgrade in the one run the game actually ships, which the design rules forbid. The
+rule is expressed as a number rather than a Lucky-Find special case so a future card paid for
+later can declare its own requirement.
+
+**Consequences:** One of nine catalogued cards is unreachable in the current run; it is covered by
+tests and appears in any run of four or more floors. `DraftFactory` also treats a negative
+remaining count as "last draft", so a miscomputed length can never open a hole. The other three
+draft guards — no duplicates unless stackable, no contradictory pair (Deep Roots vs Thornwright),
+at most two vision-changing cards per run — are enforced in the same place, with tests over a fake
+two-card catalog so each rule is the only thing that can decide the outcome.
+
+## 2026-10-20 — A wisp's stun and its vision cost are floor rules, and its light goes out
+
+**Decision:** Two new `GameConfig` values back two cards: `LureStunSeconds` (reaching a wisp stuns
+the killer for that long) and `LureVisionPenalty` (a burning wisp subtracts that many steps from
+the player's vision). `GameState.EffectiveVisionRadius` applies the penalty, and `ClearLure` now
+recomputes visibility.
+
+**Reason:** Both cards describe a mechanical change the player can see in the next thirty seconds,
+so they belong in the rules as numbers, not in the renderer as effects — a stun that only looked
+like a stun would be a lie, and a vision penalty the fog ignored would not exist. The visibility
+recompute in `ClearLure` was a real bug the new rule exposed: the wisp's own pool of light used to
+stay in the visible set after it expired or was consumed, until the player's next move re-derived
+it. The penalty made that stale state load-bearing, so it is fixed at the source.
+
+**Consequences:** Both values default to zero, so no existing behaviour changed without a card. The
+stun uses the same window as the post-catch stun, so the killer neither moves nor banks progress
+towards its next step during it. The penalty can reduce vision to zero (the player's own cell only)
+but never below it, and `RecomputeVisibility` reads the effective radius rather than the floor's
+own number.
+
+## 2026-10-20 — Rules move on the grid; the renderer interpolates (Phase 4)
+
+**Decision:** A player step still changes `GameState.Player` the instant it is accepted. What the
+step time gates is the *next* step: `TryMove` refuses while `PlayerStepSeconds` is cooling down and
+stores at most one buffered direction, which `Tick` spends when the cooldown ends. The same
+approach applies to the killer, whose step time already gated its movement. `GameState` then
+publishes `PreviousPlayer`/`PlayerStepFraction` (and the killer pair), and `RaylibRenderer` draws
+both figures between those cells.
+
+**Reason:** The alternative — holding the cell change until the step completes — would create a
+window in which the player is neither on the old cell nor the new one, and every rule that reads a
+cell (key pickup, the arch, a catch, two path searches) would need a definition for it. That is a
+lot of new state for a visual effect. Making the cell change immediate keeps the rule surface
+exactly as it was, which is why all 415 earlier tests still describe the same game; the
+interpolation reads a previous cell and a fraction and is deliberately one-way.
+
+**Consequences:** A buffered step is one input, dropped if it points into a wall, and cleared when
+the game ends inside `Tick` (a buffered step that wins the floor must not let the killer take
+another step). An enemy respawn snaps instead of sliding — it is a throw, not a walk. Anyone adding
+a new moving actor needs a previous-cell/fraction pair of its own; do not make the renderer track
+positions itself.
+
+## 2026-10-20 — Zero step time is the rule-test seam; shipped floors are timed
+
+**Decision:** `GameConfig.PlayerStepSeconds` defaults to 0 (instant) and
+`FloorDefinition.PlayerStepSeconds` defaults to 0.11 with the catalog shipping 0.11 / 0.10 / 0.09.
+`GameConfig.ForFloor` copies the floor's value.
+
+**Reason:** Every existing rule test steps the player and asserts a cell on the next line, and the
+tools (`Create()`, hand-built test levels, the harness's walker) are written the same way. Making the
+base config timed would have forced a tick into hundreds of assertions without testing anything
+new, and would have made the tests describe a game the rules do not depend on. Putting the value on
+the floor also matches the plan: the base player step is a per-floor number that cards may
+multiply, not a run-wide constant.
+
+**Consequences:** A floor of step 0 cannot sprint (sprinting would have nothing to shorten), which
+is explicit in `IsSprinting`. The shipped ratio is about 5.5:1 against the killer's step, so the
+descent tightens both sides together. `GameConfig.Validate` still rejects a negative or non-finite
+step, so a bad config cannot make movement nonsensical.
+
+## 2026-10-20 — Sprint is a request with a refill gate, not a speed toggle
+
+**Decision:** The input calls `GameState.SetSprinting(bool)` every frame; `IsSprinting` grants it
+only when the player asked, stamina is above zero, the floor has timed steps, and the run is live
+and not aiming. Sprinting multiplies speed by `SprintMultiplier` (1.4) and drains
+`SprintStaminaSeconds` (1.2); an empty bar must refill to 25% before sprint can be used again.
+
+**Reason:** Sprint is meant to be a decision about *when* to spend a resource, not a movement mode
+players hold permanently. Draining without a gate lets a player sprint one step at a time as the
+bar trickles back, which is both ugly and strictly better than saving it. Making it a request keeps
+the rule in one place: the frontend cannot grant itself a speed the game has not allowed.
+
+**Consequences:** The HUD shows the bar only once stamina has been spent, so a player who never
+sprints is not given another meter to read. Sprint currently costs only stamina; the plan's
+diegetic cost (a footstep ring in the fog, the killer turning toward it) is not implemented and is
+recorded as a known gap. The catalog's Sprint Lungs card now overlaps with the free sprint and
+needs revisiting when the remaining cards ship.
+
+## 2026-10-20 — Walking reads held keys; the aim cursor reads taps
+
+**Decision:** In the window, direction keys are sampled with `IsKeyDown` while walking and with
+`IsKeyPressed`/`IsKeyPressedRepeat` while aiming. Shift is sampled every frame as a sprint request.
+
+**Reason:** A held key plus the game's own cooldown gives continuous walking without the frontend
+knowing the cadence, and without the operating system's auto-repeat rate leaking into movement
+speed. The aim cursor is the opposite: a cursor that keeps moving while a key is held flies across
+the map, and aiming is a deliberate, precise act that pauses the clock.
+
+**Consequences:** Pressing a direction faster than the cadence is harmless — the extra press is
+buffered, then ignored. The console frontend cannot hold a key, so it stays one press per step and
+has no sprint mapping; that is a limitation of terminals rather than a rule difference, and it is
+listed in `PROGRESS.md`.
+
+## 2026-10-20 — Movement cards are config knobs; Momentum earns one small rule
+
+**Decision:** The movement cards ship as data wherever possible: `CardEffect.PlayerStepScale`,
+`InvulnerabilitySeconds` and `SprintStaminaScale` are composed by `RunModifiers` and clamped in
+`Apply`, and the catalog carries the values. Momentum needs behaviour, so it becomes four
+`GameConfig` numbers (`MomentumRampPerStep`, `MomentumMaxBonus`, `TurnPenaltyScale`,
+`TurnPenaltySeconds`) that are **all zero by default**, with one rule in `GameState`
+(`TrackMomentum` plus the bonus in `NextPlayerStepSeconds`).
+
+**Reason:** The architecture's promise is that a card changes a floor's inputs, never a branch in
+`GameState`. A card that is a behavioural rule breaks that promise unless the behaviour is a
+numbered property of the floor that happens to be off. Momentum is exactly that: with the zeros the
+whole code path is skipped, so a run without the card is pixel- and millisecond-identical to
+before, and the four values are one record in the catalog to retune. Light Feet, Hollow Bones and
+Sprint Lungs needed no rule at all.
+
+**Consequences:** Any future card of this kind follows the same shape: a validated `GameConfig`
+number (or four), defaulting to "off", and a test that the defaults change nothing. The numbers
+themselves are unplay-tested guesses and are recorded as such in `PROGRESS.md`.
+
+## 2026-10-20 — A card may raise a floor's heart ceiling, so hearts are checked after composition
+
+**Decision:** `Campaign.HeartsOnNextFloor` caps at `floor.MaxHearts + modifiers.MaxHearts`, and
+`GameFactory.CreateFloor` builds the base config from `min(startingHearts, floor.MaxHearts)`, applies
+the cards, and only then validates that `startingHearts <= config.MaxHearts` (throwing when nothing
+could justify the carry).
+
+**Reason:** Two separate caps ignored the run's cards. The campaign capped carried hearts at the
+floor definition's ceiling, so a rising ceiling (Blood Pact) could never be filled and a banked
+skip-heal into a four-heart floor vanished. The factory validated the floor definition's ceiling
+*before* the cards were applied, so the extra heart would have thrown the moment it got through.
+Both are the same mistake — validating a partly composed object — and both are now checked once,
+against the object the floor is actually built from.
+
+**Consequences:** A ceiling a card bought is usable (the run can start a floor at four hearts), and
+an impossible carry still fails loudly instead of being clamped away silently. `Light Feet`'s -1
+slot does not take a heart the player is holding: `Apply` floors the ceiling at `StartingHearts`,
+which is intended but only bites once wounded.
+
+## 2026-10-20 — The sprite compiler outputs committed PNGs, with `--check` as the brake
+
+**Decision:** `tools/AssetForge` is a console project with no packages, referencing Core only for
+`SeededRandom`. Tiles are compiled from palette **indices** on a `PixelCanvas`; the palette is
+derived from two hues on a fixed lightness ladder (`Palette.Derive`); the PNG encoder is
+hand-written (stored deflate, no compression); the atlases and a manifest are committed to
+`src/MazeGame.UI/Content/Generated`. `--check` validates themes, neighbour palette distance and
+structural difference, recompiles twice for determinism, and fails when a committed atlas or the
+manifest no longer matches. The game does **not** load the atlases yet.
+
+**Reason:** Index canvases keep a tile theme-blind, so twenty themes are twenty parameter blocks
+and no drawing code branches on a theme id. Derived palettes make contrast a property of the code
+rather than of an artist's luck, and the distance metric turns "each floor feels different" into
+something a machine rejects. Committed output means a fresh clone needs no tool step and a diff is
+visible in review; determinism is what makes "committed" safe. Stored deflate is a deliberate
+trade: a few KB more per atlas in exchange for an encoder small enough to audit and output stable
+enough to hash.
+
+**Consequences:** Changing a tile routine, a theme or the palette is a two-step change — recompile
+and commit the diff — and forgetting is a red test, not a silent drift. The atlases are inert until
+the pixel-renderer phase loads them, so this slice cannot regress the game. Compression can be
+added later, but it must be added with a one-shot re-commit of every atlas.
+
+## 2026-10-20 — The explorer snaps to its tile; only the killer slides
+
+**Decision:** `RaylibRenderer.DrawFigures` draws the player at `CellCenter(state.Player)` and the
+lantern pool at the same point. The killer keeps `FigureCenter(PreviousEnemy, Enemy,
+EnemyStepFraction)`. `PreviousPlayer`/`PlayerStepFraction` stay published, documented as the step's
+clock for a walk-cycle animation rather than a position.
+
+**Reason:** With a 0.11 s cadence and held keys, interpolating the player meant the figure was
+between cells almost all the time and never visibly *on* a tile. Counting cells while being chased
+is the core navigation skill, and the slide made it guesswork. The player's cell already changes the
+instant a step is accepted, so drawing it there is the most honest picture of what the rules are
+doing — one press, one tile. The killer is the opposite case: it is at a distance, the player never
+counts its tiles, and a smooth drift makes it read as a creature instead of a marker.
+
+**Consequences:** Any future renderer must snap the player too; a smooth camera or a scroll should
+not reintroduce per-figure interpolation. The step fraction is still the right input for the walk
+cycle (idle/walk0..2) once the pixel renderer animates from the atlas.
+
+## 2026-10-20 — Autotiling and the rig are generated from data, not drawn by hand
+
+**Decision:** `Autotiler` builds the 16 edge tiles and all 47 blob tiles from open-side masks, with
+corner bits canonicalised (a diagonal matters only when both of its edges are open). `Rig` draws
+the cast from `(theme, facing, frame)` with four facings coming from two drawings plus a mirror.
+`SpriteCompiler` lays tiles eight to a row and lists every tile's name and position in the manifest.
+
+**Reason:** A tile that is generated from the same mask the renderer will use to choose it cannot
+drift from the map ("tile *n* provably matches mask *n*"), which is the property that makes an
+autotiled map possible at all. Canonicalising corners is what keeps the blob set at 47 tiles instead
+of 256, and asserting that count in the static constructor means a bit-order mistake fails at
+startup rather than by rendering a wall with the wrong hole. The rig's facings are mirrored because
+four hand-drawn directions would be four chances to disagree.
+
+**Consequences:** Changing the tile shape or a pose means recompiling and committing the atlases;
+`--check` fails otherwise. The bit order is fixed (N=1, NE=2, E=4, SE=8, S=16, SW=32, W=64, NW=128)
+and documented on `Autotiler.BlobClass`; the renderer must use the same order.
+
+## 2026-10-20 — Tap versus hold is a Core rule (`StepRepeat`), not a frontend detail
+
+**Decision:** `MazeGame.Core.Game.StepRepeat` owns the input cadence. It is handed the direction
+whose key is down (or null), whether the previous step is still running, and the frame's time, and
+returns the direction to send this frame or null. The first frame of a press returns the direction;
+later frames return nothing until the key has been down 0.15 s **and** no step is running; a
+release clears it, so the next press is fresh. `RaylibFrontend.ReadWalk` maps the returned
+`Direction` to a `GameCommand` and does nothing else.
+
+**Reason:** The old code sent the held direction every frame, so a tap lasting a few frames left a
+press in the state's one-slot buffer and could move a second tile after the player had let go —
+exactly the "it moves more than one tile" complaint. Deciding it in Core costs nothing (the class has
+no maze, no window and no dependency beyond `Direction`) and buys the only test that matters: nine
+unit cases plus three that drive it against a real `GameState`, including "a slow tap while stepping
+is worth exactly one tile". A private frontend class could not be tested without a GLFW context,
+which is why the earlier version shipped with the bug.
+
+**Consequences:** Any frontend that wants tap-to-step reads the gate rather than polling held keys;
+a rerun at a different frame rate changes nothing, because repeats wait for the step clock instead of
+the frame clock. Shift needs no branch anywhere: sprint shortens the step in Core, so the same repeat
+simply lands sooner. The console frontend is untouched — a terminal press is one event, so it is
+already one tile per press and has no hold to distinguish.
+
+## 2026-10-20 — The floor is drawn on a virtual canvas at an integer scale
+
+**Decision:** `PixelLayout` sizes a canvas from the floor (`16 px` per cell, an `8 px` margin, an
+`18 px` header), `PixelView` owns a `RenderTexture2D` at that size with a point filter, and
+`Present` blits it to the window at an **integer** scale (`Fit`, 1 to 4) with a centred offset and a
+cleared letterbox. Nothing inside the game knows the window size.
+
+**Reason:** Pixel art has one honest sampling rate. A fractional scale puts tile edges on half
+pixels, and a sharpening filter afterwards only changes which kind of wrong it looks. Making the
+canvas the unit of layout also means a resize is a scale change and nothing else — no coordinate in
+the game moves. Sizing the canvas per floor rather than fixing 336x400 keeps a 15x15 floor from
+carrying dead space on four sides while still fitting a 19x19 one, which is the size the design note
+budgets for.
+
+**Consequences:** Adding a screen means adding it to the canvas, not to the window. The vector chrome
+(the status pills, the hints, the loss card) deliberately lives outside it, in the letterbox, so the
+HUD keeps its designed type size while the tiles stay at whole-pixel scale; slice 2 of the phase
+moves the chrome in once there is a pixel font.
+
+## 2026-10-20 — Thin wall faces, because a wall here lives between two cells
+
+**Decision:** `tools/AssetForge/WallStrips` compiles four 16x16 faces per theme (`wall-north`,
+`-east`, `-south`, `-west`): a 5 px band on a transparent canvas, outer rock then a lit rim then a
+contact shadow. `PixelRenderer` draws a cell's north and west faces, plus the south/east rim on the
+last row and column, and the floor underneath. The older solid `wall` plus the 16 edge and 47 blob
+tiles stay compiled and validated but unused.
+
+**Reason:** The maze stores walls *between* cells — every cell is a room — while the solid autotile
+set describes a cell that *is* wall (a full cell of rock with its open sides carved). Using it here
+painted rock in the middle of every room, and using it on both sides of one wall painted two bands
+16 px apart. The honest shape for this maze is a face along the closed edge, and ownership by
+north/west paints every shared wall exactly once. The solid set is still the right art for the
+floors whose chasm and veto cells arrive in Phase 8, so it is neither deleted nor reworked.
+
+**Consequences:** Changing wall thickness is one constant (`WallStrips.Thickness`) plus a recompile
+and a committed diff. A future "one cell of rock" floor must switch to the blob tiles by mask, which
+`TileMask.BlobTile` already computes.
+
+## 2026-10-20 — The tile masks exist twice, and a test keeps them identical
+
+**Decision:** `MazeGame.UI.Rendering.Pixels.TileMask` reimplements the compiler's eight-neighbour
+mask, canonical corner rule, 47-class table and 4-bit edge index, because the game must not
+reference `tools/AssetForge`. `TileMaskTests` compares both tables for all 256 masks (and the
+canonical set against `Autotiler.BlobMasks`), so a change to one that is not made to the other is a
+red test.
+
+**Reason:** The manifest is the only contract between the compiler and the game; the bit order is
+part of it, and a mismatch cannot be seen in a PNG — it shows up as a wall with its hole on the
+wrong side. Duplicating twenty lines of bit logic is cheaper than shipping the tool, and a test over
+all 256 inputs is complete rather than sampled.
+
+**Consequences:** The UI's pure rendering helpers are now covered by the test project, which means
+`MazeGame.Tests` references `MazeGame.UI` (no test opens a window, so the native library is never
+called). The compiler remains the source of truth: if the bit order ever changes, the test is what
+says so.
+
+## 2026-10-20 — A theme names a shape family; the families share no drawing code
+
+**Decision:** `Theme.Family` is a `TileFamily` (`OrganicCave`, `WrongOrganic`, `WorkedStone`), and
+`tools/AssetForge/TileGrammar` is the only place a family is named: it switches floor, solid wall,
+wall face and props to `CaveTiles`, `WrongOrganicTiles` or `WorkedStoneTiles`. The three files share
+seeds, the `PixelCanvas` primitives and the palette roles, but not one drawing routine.
+
+**Reason:** The three floors were the same boulders, roots and joints in three hues — a player could
+not tell Rootbound from The Shallows with the colour turned off. A theme is data, but colour is the
+*last* thing that distinguishes a place; shape is the first. A family per place also keeps the
+alternative honest: nine themes later, a new floor is either a new record in an existing family or a
+new file, never an extra branch inside a shared routine.
+
+**Consequences:** `Theme` grew the knobs a family reads (`CourseHeight`, `VeinDensity`) and
+`--check` compares neighbouring themes on parameters; that only proves the *data* differs, so
+`tests/.../ThemeFamilyTests` compares the compiled tiles on palette **indices** — two themes that
+draw the same shape produce the same index grid whatever their hues, which makes "it is a recolour"
+a red test rather than a matter of taste.
+
+## 2026-10-20 — The font is its own atlas, and the campaign cards are set in it
+
+**Decision:** `tools/AssetForge/Glyphs` holds a hand-coded 5x7 face for every printable ASCII
+character; `FontAtlas` compiles it into `font.png` on 6x8 cells (5x7 plus a row and column of gap)
+with the heart and pip icons in a final row, and appends its own `theme`/`tile` section to
+`manifest.txt`. Tile lines now carry an explicit width and height, defaulting to 16x16 so the maze
+atlases read the same as before. `PixelFont` blits text and icons at an integer scale;
+`PixelCards` draws the floor intro, floor-cleared, run-summary and caught cards; the vector
+implementations of those four are deleted.
+
+**Reason:** The screens were the last place the game looked like a program with a window: a system
+typeface over pixel art reads as a placeholder at any size, and a vector panel cannot be framed by
+the 9-slice chrome the phase calls for. Compiling the type keeps the "no external assets" rule and
+puts the text under the same `--check` as the tiles, so a missing glyph is a failing test rather
+than a hole in a sentence.
+
+**Consequences:** Text is crisp only at integer scales, which is the right constraint for pixel art
+and the reason the cards pick 4 → 2 by measured width instead of scaling to fit. A character the
+face does not have draws as `?` rather than throwing: the text comes from game data, and a stray
+symbol in a floor's name must not end a run mid-frame. The draft screen is the last vector screen,
+and the HUD still lives in the letterbox; both are slice 2b.

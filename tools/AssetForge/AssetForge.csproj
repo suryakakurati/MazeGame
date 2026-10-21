@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>MazeGame.AssetForge</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <!-- The tool's own API is documented too: the tests drive it directly. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The tool shares the game's SeededRandom, so a seed means the same thing in both. -->
+    <ProjectReference Include="..\..\src\MazeGame.Core\MazeGame.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -9,15 +9,22 @@ This is a course project, so the graded data structures and algorithms
 min-heap for the enemy) are implemented from scratch in this repository. No
 graph/pathfinding libraries are used.
 
-> **Status (2026-10-20):** Course Phases 1–6 complete, and roguelike **Phases 1–2** are in — the
-> game is **playable in a Raylib window** as a **three-floor campaign**. Each floor is a braided
-> maze drawn as a bioluminescent cave, with fog of war, glowing flora and a killer that carries
-> its own light: collect the keys, open the arch, and descend. **You have three hearts**: a catch
-> costs one, throws the killer to a distant dead end and stuns it, and **hearts carry between
-> floors**, so only the third catch on the whole run ends it. Floors differ in name, accent, key
-> count and killer pace (The Shallows → Rootbound → Drowned Halls), with an intro card, a
-> floor-cleared card and a run summary (331 unit tests). The phased plan to a full roguelike is
-> in [`FUTURE.md`](FUTURE.md); current state in [`PROGRESS.md`](PROGRESS.md).
+> **Status (2026-10-20):** Course Phases 1–6 complete, and roguelike **Phases 1–4 plus the first
+> slice of Phase 6** are in — the
+> game is **playable in a Raylib window** as a **three-floor campaign with a card draft and timed
+> steps**. Each floor is a braided maze **drawn from the compiled pixel-art atlases** on a virtual
+> canvas at an integer scale, with fog of war, a per-cell lantern lightmap and a killer that carries
+> its own light: collect the keys, open the arch, and descend.
+> **You have three hearts**: a catch costs one, throws the killer to a distant dead end and stuns
+> it, and **hearts carry between floors**, so only the third catch on the whole run ends it. Walking
+> is a cadence (0.11 s per cell, tightening as you descend), one press is buffered, **Shift
+> sprints** on a stamina bar. The explorer snaps to its tile (one press, one tile) while the killer
+> slides between cells. Floors differ in name, accent, key count and killer pace (The Shallows →
+> Rootbound → Drowned Halls), with an intro card, a floor-cleared card, **a draft of three cards
+> between floors — take one or skip for a heart** — from a catalog of thirteen, including four
+> movement cards, and a run summary (574 unit tests; the sprite compiler has produced 327 validated
+> pixel-art tiles, and the game draws the floor from them). The phased plan to a full roguelike is in [`FUTURE.md`](FUTURE.md); current
+> state in [`PROGRESS.md`](PROGRESS.md).
 
 ## Requirements
 
@@ -34,7 +41,22 @@ dotnet build                        # must be warning-free
 dotnet test                         # unit tests for MazeGame.Core
 dotnet run --project src/MazeGame.UI              # Raylib window
 dotnet run --project src/MazeGame.UI -- --console # terminal version
+
+dotnet run --project tools/AssetForge             # recompile the committed sprite atlases
+dotnet run --project tools/AssetForge -- --check  # validate themes and atlases, write nothing
 ```
+
+`tools/AssetForge` is the sprite compiler (see [`FUTURE.md`](FUTURE.md) §6.6): it draws the
+16x16 pixel-art atlases from theme parameters and writes them to
+`src/MazeGame.UI/Content/Generated`, which **is committed**, so building and playing never needs
+the tool. `--check` is the brake: it fails on an invalid theme, on two neighbouring floors whose
+palettes or shapes are too similar, if two compiles differ, or if a committed atlas has drifted
+from the code that claims to draw it. The game loads these atlases at startup (they are copied
+beside the executable, and found in the repository when running from source), so the floor is
+real pixel art: a 16 px-per-cell canvas at an integer scale, thin wall faces along closed edges,
+the cast animated from the step clocks, and one multiplied lightmap for the lantern and the fog.
+The menus, the draft and the run summary are still the older vector renderer until the font atlas
+lands — that is the next slice of the phase.
 
 `dotnet run --project src/MazeGame.UI` opens the title screen; `--console` plays the same
 campaign in the terminal, and the console view is also used automatically when no window can be
@@ -52,12 +74,16 @@ The first restore downloads the Raylib native library for your platform (see
 | --- | --- |
 | W / S or arrows (title) | Select `DESCEND` or `LEAVE` |
 | Enter or Space (title) | Confirm the highlighted entry |
-| W A S D / arrow keys | Move one cell |
+| W A S D / arrow keys | Walk: a tap is one tile, a hold keeps walking at the cadence |
+| Shift (hold) | Sprint, while the stamina bar lasts |
 | B or Space | Start aiming a barrier (the game pauses) |
 | R | Start aiming a wisp (the game pauses) |
 | WASD / arrows (while aiming) | Move the aim cursor anywhere on the map |
 | B, Space or Enter (while aiming) | Place the aimed barrier or wisp on the cursor |
 | Esc (while aiming) | Cancel the aim |
+| A / D, arrows (draft) | Move between the cards |
+| Enter, Space or 1–4 (draft) | Take the highlighted card |
+| S (draft) | Skip: take a heart instead |
 | R or Enter (after a run) | Descend again, on a new maze |
 | Q or Esc | Quit |
 
@@ -68,9 +94,13 @@ The game opens on a title screen over the cave: `BIOLUMINESCENT / DEPTHS`, with 
 three hearts, every budget full. A floor intro card names the floor (The Shallows, Rootbound,
 Drowned Halls) before play begins.
 
-A run is three floors. Clearing a floor's arch shows a floor-cleared card; Enter descends with
-the hearts you have left. The third arch wins the run and shows a summary. Losing all three
-hearts ends the run whichever floor you are on.
+A run is three floors. Clearing a floor's arch shows a floor-cleared card; Enter opens the
+**draft**: three cards, each naming its own price in the same sentence as its benefit ("Vision
++2, but the killer's light reaches 3 steps further"). Take one with Enter or its number, or skip
+with S for one heart. Whatever you take applies to every floor from then on, and the draft screen
+shows the run's totals underneath the title. Then the next floor begins with the hearts you have
+left. The third arch wins the run and shows a summary; there is no draft after it. Losing all
+three hearts ends the run whichever floor you are on.
 
 The window is an underground cave lit by living light. You are a small hooded figure carrying
 a lantern; the killer is a tall, spindly silhouette with pink rim light and two pale eyes; keys
@@ -80,6 +110,12 @@ arch (cyan once open); barriers are thorny
 barricades of cave moss. Mushrooms, lichen and spore motes glow green, pink and cyan in the
 dark. The terminal view uses `@` for you, `K` for the killer, `k` for a key, `E` for the exit,
 `#` for a sealed barrier, `=` for a spent one, `*` for a wisp and `X` for the aiming cursor.
+
+Walking is timed rather than instant: a step takes about a tenth of a second, a press during that
+window is remembered for the next step, and holding a direction keeps walking at that cadence.
+Hold Shift to sprint for 40% more speed while the stamina bar lasts (it only drains while you are
+actually moving, so holding Shift on the spot costs nothing); when it runs dry you have to wait for
+a quarter of it to come back. Sprint is for breaking line of sight, not for going fast.
 
 1. Collect all three keys — the exit stays `LOCKED` until the last one is picked up.
 2. Reach the exit. You start with three hearts, shown beside the control hints at the bottom:
@@ -256,8 +292,8 @@ in ASCII, which keeps the terminal fallback a fair way to play rather than a map
 | 8 | Final cleanup, README screenshots, presentation notes |
 
 Beyond the course scope, [`FUTURE.md`](FUTURE.md) lays out the roguelike conversion in nine
-phases — hearts and a three-floor campaign (both done), a card draft, smooth timed movement, a
-generated pixel-art renderer, synthesised audio, twenty themes, and polish.
+phases — hearts, a three-floor campaign, a card draft and smooth timed movement (all four done),
+followed by a generated pixel-art renderer, synthesised audio, twenty themes, and polish.
 
 ## Contributing
 

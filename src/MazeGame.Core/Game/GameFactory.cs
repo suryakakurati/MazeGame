@@ -73,35 +73,63 @@ public sealed class GameFactory
     /// <returns>A run that starts on floor 1.</returns>
     /// <remarks>
     /// This is what the frontends call on the title screen and on "descend again", so a new run
-    /// is always a fresh campaign with fresh floors.
+    /// is always a fresh campaign with fresh floors. The campaign is given the run's seed, so a
+    /// seeded run reproduces its draft offers as well as its mazes; an unseeded run passes null
+    /// and gets a fresh stream of offers.
     /// </remarks>
-    public Campaign CreateCampaign() => new(FloorCatalog.Shipped, CreateFloor);
+    public Campaign CreateCampaign() => new(FloorCatalog.Shipped, CreateFloor, _config.Seed);
 
     /// <summary>
-    /// Builds one floor of a run from its definition and the hearts the player brings.
+    /// Builds one floor of a run from its definition, the hearts the player brings and the cards
+    /// they hold.
     /// </summary>
     /// <param name="floor">The floor's data.</param>
     /// <param name="startingHearts">
     /// Hearts the player has left. They become the floor's <see cref="GameConfig.StartingHearts"/>,
     /// which is how damage carries between floors.
     /// </param>
+    /// <param name="modifiers">The cards taken this run, applied over the floor's config.</param>
     /// <returns>A playable floor that starts <see cref="GameStatus.InProgress"/>.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="floor"/> is null.</exception>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when <paramref name="floor"/> or <paramref name="modifiers"/> is null.
+    /// </exception>
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when the floor is invalid, the carried hearts do not fit its ceiling, or the seeded
     /// random source is missing.
     /// </exception>
     /// <exception cref="ArgumentException">
-    /// Thrown when the floor's maze is too small for its player, killer, exit and keys.
+    /// Thrown when the floor's maze is too small for its player, killer, exit and keys — including
+    /// the extra keys a card may have added.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when the random factory returns <see langword="null"/>.
     /// </exception>
-    public GameState CreateFloor(FloorDefinition floor, int startingHearts)
+    public GameState CreateFloor(FloorDefinition floor, int startingHearts, RunModifiers modifiers)
     {
         ArgumentNullException.ThrowIfNull(floor);
+        ArgumentNullException.ThrowIfNull(modifiers);
 
-        var config = _config.ForFloor(floor, startingHearts);
+        // The floor's own numbers first, so a bad floor definition fails with its own message,
+        // then the cards over them, which may change the key count and the heart ceiling.
+        //
+        // The hearts are checked against the *composed* floor: a card can raise a floor's ceiling
+        // (Blood Pact), so the floor definition's own ceiling cannot be the last word on how many
+        // hearts it accepts. Clamping there instead would silently eat a heart on the way in.
+        var config = modifiers.Apply(_config.ForFloor(floor, Math.Min(startingHearts, floor.MaxHearts)));
+
+        if (startingHearts > config.MaxHearts)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(startingHearts),
+                startingHearts,
+                $"Floor {floor.Number} allows at most {config.MaxHearts} hearts.");
+        }
+
+        if (startingHearts != config.StartingHearts)
+        {
+            config = config with { StartingHearts = startingHearts };
+        }
+
         var seed = FloorSeed(floor);
         var random = _createRandom(seed)
             ?? throw new InvalidOperationException("The random factory returned null.");

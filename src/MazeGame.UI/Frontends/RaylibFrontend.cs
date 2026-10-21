@@ -1,7 +1,9 @@
 using System;
 using MazeGame.Core.Game;
+using MazeGame.Core.Maze;
 using MazeGame.UI.Input;
 using MazeGame.UI.Rendering;
+using MazeGame.UI.Rendering.Pixels;
 using Raylib_cs;
 
 namespace MazeGame.UI.Frontends;
@@ -71,7 +73,7 @@ internal static class RaylibFrontend
 
         try
         {
-            var lastRun = RunLoop(createCampaign);
+            var lastRun = RunLoop(config, createCampaign);
 
             // Only report an outcome if there is one: leaving from the title, or mid-run, should
             // not print a summary for a run the player walked away from.
@@ -100,18 +102,27 @@ internal static class RaylibFrontend
     /// Runs frames until the window closes or the player leaves, switching between the title, the
     /// floor intro, play and the outcome cards.
     /// </summary>
+    /// <param name="config">The settings the pixel canvas is sized from.</param>
     /// <param name="createCampaign">Builds each new run.</param>
     /// <returns>
     /// The run being played, or <see langword="null"/> when the player left from the title screen
     /// without ever descending.
     /// </returns>
-    private static Campaign? RunLoop(Func<Campaign> createCampaign)
+    private static Campaign? RunLoop(GameConfig config, Func<Campaign> createCampaign)
     {
         var renderer = new RaylibRenderer();
+
+        // The floors are drawn from the committed atlases; the vector renderer keeps the title, the
+        // campaign cards and the HUD chrome around the canvas.
+        using var pixels = new PixelRenderer(config);
         Campaign? campaign = null;
         var screen = Screen.Title;
         var selected = DescendItem;
         var introEndsAt = 0.0;
+
+        // Walking is a tap or a hold, and the difference is what keeps one press worth one tile.
+        // The rule itself is Core's, so it is tested without a window.
+        var walk = new StepRepeat();
 
         while (!Raylib.WindowShouldClose())
         {
@@ -140,7 +151,12 @@ internal static class RaylibFrontend
                     break;
 
                 case Screen.Play:
-                    if (TryReadCommand(campaign!.Floor.IsAiming, out var command) &&
+                    // Sprint is a hold, so it is sampled every frame; the state decides whether it
+                    // is granted (stamina, aiming, a timed floor) rather than the input layer.
+                    campaign!.Floor.SetSprinting(
+                        Held(KeyboardKey.LeftShift) || Held(KeyboardKey.RightShift));
+
+                    if (TryReadCommand(campaign.Floor, walk, Raylib.GetTime(), out var command) &&
                         !GameCommands.Apply(campaign.Floor, command))
                     {
                         return campaign;
@@ -163,8 +179,41 @@ internal static class RaylibFrontend
                 case Screen.FloorCleared:
                     if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) || Pressed(KeyboardKey.Space))
                     {
-                        campaign!.TryAdvanceFloor();
+                        // The cleared card is the results beat; the choice itself is the next
+                        // screen, so the player reads what the floor cost before picking.
+                        screen = Screen.Draft;
+                        selected = 0;
+                    }
+                    else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
+                    {
+                        return campaign;
+                    }
+
+                    break;
+
+                case Screen.Draft:
+                    if (ReadDraftChoice(campaign!, ref selected, out var take, out var skip))
+                    {
+                        if (take is not null && !campaign!.TakeCard(take))
+                        {
+                            break;
+                        }
+
+                        if (skip)
+                        {
+                            campaign!.SkipDraft();
+                        }
+
+                        // Only move on if the floor was actually built: a refused advance must
+                        // leave the draft on screen rather than loop back to a floor intro for a
+                        // floor that is already cleared.
+                        if (!campaign!.TryAdvanceFloor())
+                        {
+                            break;
+                        }
+
                         renderer.Reset();
+                        pixels.Reset();
                         StartFloorIntro();
                     }
                     else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
@@ -188,7 +237,7 @@ internal static class RaylibFrontend
                     break;
             }
 
-            DrawFrame(screen, selected, campaign, renderer);
+            DrawFrame(screen, selected, campaign, renderer, pixels);
         }
 
         return screen == Screen.Title ? null : campaign;
@@ -197,12 +246,17 @@ internal static class RaylibFrontend
         {
             campaign = createCampaign();
             renderer.Reset();
+            pixels.Reset();
             StartFloorIntro();
         }
 
         void StartFloorIntro()
         {
             screen = Screen.FloorIntro;
+
+            // Every floor is drawn in its own theme's palette, so the atlas is chosen here — the
+            // one place both "a run started" and "the next floor was built" pass through.
+            pixels.SetTheme(campaign!.CurrentFloor.ThemeId);
             introEndsAt = Raylib.GetTime() + IntroSeconds;
             Raylib.SetWindowTitle(
                 $"{RaylibLayout.Title} — Floor {campaign!.FloorNumber}/{campaign.FloorCount}");
@@ -213,7 +267,12 @@ internal static class RaylibFrontend
     /// Draws one frame for the current screen. The game frame is always drawn underneath the
     /// campaign cards, so a cleared floor still shows where the player was standing.
     /// </summary>
-    private static void DrawFrame(Screen screen, int selected, Campaign? campaign, RaylibRenderer renderer)
+    private static void DrawFrame(
+        Screen screen,
+        int selected,
+        Campaign? campaign,
+        RaylibRenderer renderer,
+        PixelRenderer pixels)
     {
         Raylib.BeginDrawing();
 
@@ -223,20 +282,36 @@ internal static class RaylibFrontend
         }
         else
         {
-            renderer.Draw(campaign!.Floor);
+            pixels.Draw(campaign!.Floor);
 
             switch (screen)
             {
                 case Screen.FloorIntro:
-                    renderer.DrawFloorIntro(campaign.CurrentFloor, campaign.FloorCount);
+                    PixelCards.FloorIntro(
+                        pixels.Font,
+                        campaign.CurrentFloor,
+                        campaign.FloorCount,
+                        RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId));
                     break;
 
                 case Screen.FloorCleared:
-                    renderer.DrawFloorCleared(campaign.CurrentFloor, campaign.Hearts);
+                    PixelCards.FloorCleared(
+                        pixels.Font,
+                        campaign.CurrentFloor,
+                        campaign.Hearts,
+                        RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId));
+                    break;
+
+                case Screen.Draft:
+                    renderer.DrawDraft(campaign, selected);
                     break;
 
                 case Screen.RunComplete:
-                    renderer.DrawRunComplete(campaign.FloorCount, campaign.Hearts);
+                    PixelCards.RunComplete(
+                        pixels.Font,
+                        campaign.FloorCount,
+                        campaign.Hearts,
+                        RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId));
                     break;
             }
         }
@@ -248,35 +323,26 @@ internal static class RaylibFrontend
     /// Reads one command for this frame. Escape means "cancel" while aiming and "quit"
     /// otherwise, mirroring the console frontend.
     /// </summary>
-    private static bool TryReadCommand(bool aiming, out GameCommand command)
+    /// <param name="state">The floor being played.</param>
+    /// <param name="walk">The walking gate's memory across frames.</param>
+    /// <param name="now">Seconds since the window opened.</param>
+    /// <param name="command">The command to apply, when one was read.</param>
+    /// <returns><see langword="true"/> when a command is waiting.</returns>
+    private static bool TryReadCommand(GameState state, StepRepeat walk, double now, out GameCommand command)
     {
+        var aiming = state.IsAiming;
+
         if (Pressed(KeyboardKey.Q) || (!aiming && Pressed(KeyboardKey.Escape)))
         {
             command = GameCommand.Quit;
             return true;
         }
 
-        if (Pressed(KeyboardKey.W) || Pressed(KeyboardKey.Up))
+        // Walking is a tap or a hold (see ReadWalk). The aim cursor stays press-based: holding a
+        // direction there would fly across the map.
+        if (ReadDirection(state, walk, now) is { } direction)
         {
-            command = GameCommand.MoveNorth;
-            return true;
-        }
-
-        if (Pressed(KeyboardKey.S) || Pressed(KeyboardKey.Down))
-        {
-            command = GameCommand.MoveSouth;
-            return true;
-        }
-
-        if (Pressed(KeyboardKey.A) || Pressed(KeyboardKey.Left))
-        {
-            command = GameCommand.MoveWest;
-            return true;
-        }
-
-        if (Pressed(KeyboardKey.D) || Pressed(KeyboardKey.Right))
-        {
-            command = GameCommand.MoveEast;
+            command = direction;
             return true;
         }
 
@@ -305,6 +371,195 @@ internal static class RaylibFrontend
         }
 
         command = default;
+        return false;
+    }
+
+    /// <summary>
+    /// Returns the direction the player is asking for this frame, or null when nothing should be
+    /// sent.
+    /// </summary>
+    /// <param name="state">The floor being played, for aiming and its step cooldown.</param>
+    /// <param name="walk">The walking gate's memory across frames.</param>
+    /// <param name="now">Seconds since the window opened.</param>
+    /// <returns>A direction command, or null when the frame sends none.</returns>
+    /// <remarks>
+    /// While aiming the cursor moves on key presses, not holds, so its step stays one cell per tap.
+    /// Walking goes through <see cref="ReadWalk"/>, which is where tap-versus-hold is decided.
+    /// </remarks>
+    private static GameCommand? ReadDirection(GameState state, StepRepeat walk, double now)
+    {
+        if (state.IsAiming)
+        {
+            walk.Clear();
+
+            return DirectionOf(Pressed, KeyboardKey.W, KeyboardKey.Up) ??
+                   DirectionOf(Pressed, KeyboardKey.S, KeyboardKey.Down) ??
+                   DirectionOf(Pressed, KeyboardKey.A, KeyboardKey.Left) ??
+                   DirectionOf(Pressed, KeyboardKey.D, KeyboardKey.Right);
+        }
+
+        return ReadWalk(state, walk, now);
+    }
+
+    /// <summary>
+    /// Reads walking: a tap is exactly one tile, a hold repeats, and sprint only makes the repeat
+    /// faster.
+    /// </summary>
+    /// <param name="state">The floor being played, for its step cooldown.</param>
+    /// <param name="walk">The gate's memory: which direction is down and for how long.</param>
+    /// <param name="now">Seconds since the window opened.</param>
+    /// <returns>A direction to send this frame, or null when nothing should be sent.</returns>
+    /// <remarks>
+    /// <para>
+    /// The old version sent the held direction every frame, so a tap that lasted a couple of
+    /// frames left a press in the buffer and could move a second tile after the player had let go.
+    /// A fresh press now sends exactly one command — which the state buffers if the last step is
+    /// still cooling down, so a tap is worth one tile even when pressed early.
+    /// </para>
+    /// <para>
+    /// Repeats only start after <see cref="StepRepeat.HoldDelaySeconds"/> and only once the previous step has
+    /// finished, so holding walks at the game's own cadence rather than at the frame rate, and a
+    /// deliberately slow tap is still a tap. Sprint is not read here: holding Shift shortens the
+    /// step in Core, so the same repeat simply runs faster until the stamina bar is empty.
+    /// </para>
+    /// </remarks>
+    private static GameCommand? ReadWalk(GameState state, StepRepeat walk, double now)
+    {
+        var held = HeldDirection();
+
+        if (walk.Next(held, state.IsPlayerStepping, now) is not { } direction)
+        {
+            return null;
+        }
+
+        return ToCommand(direction);
+    }
+
+    /// <summary>
+    /// Returns the direction whose key is down, or null when none is.
+    /// </summary>
+    private static Direction? HeldDirection()
+    {
+        if (Held(KeyboardKey.W) || Held(KeyboardKey.Up))
+        {
+            return Direction.North;
+        }
+
+        if (Held(KeyboardKey.S) || Held(KeyboardKey.Down))
+        {
+            return Direction.South;
+        }
+
+        if (Held(KeyboardKey.A) || Held(KeyboardKey.Left))
+        {
+            return Direction.West;
+        }
+
+        return Held(KeyboardKey.D) || Held(KeyboardKey.Right) ? Direction.East : null;
+    }
+
+    /// <summary>
+    /// Returns the movement command for a direction.
+    /// </summary>
+    private static GameCommand ToCommand(Direction direction) => direction switch
+    {
+        Direction.North => GameCommand.MoveNorth,
+        Direction.South => GameCommand.MoveSouth,
+        Direction.West => GameCommand.MoveWest,
+        _ => GameCommand.MoveEast,
+    };
+
+    /// <summary>
+    /// Returns the movement command for a key pair, or null when neither key is down.
+    /// </summary>
+    private static GameCommand? DirectionOf(
+        Func<KeyboardKey, bool> isDown,
+        KeyboardKey primary,
+        KeyboardKey alternate)
+    {
+        if (!isDown(primary) && !isDown(alternate))
+        {
+            return null;
+        }
+
+        return primary switch
+        {
+            KeyboardKey.W => GameCommand.MoveNorth,
+            KeyboardKey.S => GameCommand.MoveSouth,
+            KeyboardKey.A => GameCommand.MoveWest,
+            _ => GameCommand.MoveEast,
+        };
+    }
+
+    /// <summary>
+    /// Reads one draft command for this frame: move the highlight, take a card, or skip.
+    /// </summary>
+    /// <param name="campaign">The run, whose open draft is being chosen from.</param>
+    /// <param name="selected">The highlighted card, moved in place.</param>
+    /// <param name="take">The card to take this frame, or null when none was chosen.</param>
+    /// <param name="skip">Whether the player chose to skip for a heart.</param>
+    /// <returns><see langword="true"/> when the draft is resolved by this frame's input.</returns>
+    private static bool ReadDraftChoice(Campaign campaign, ref int selected, out Card? take, out bool skip)
+    {
+        take = null;
+        skip = false;
+
+        var offers = campaign.Draft?.Offers ?? Array.Empty<Card>();
+        if (offers.Count == 0)
+        {
+            if (Pressed(KeyboardKey.S) || Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.Space))
+            {
+                skip = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        // Four or more cards are laid out in two columns, so down has to move by a row.
+        var columns = offers.Count <= 3 ? offers.Count : 2;
+
+        if (Pressed(KeyboardKey.A) || Pressed(KeyboardKey.Left))
+        {
+            selected = (selected + offers.Count - 1) % offers.Count;
+        }
+        else if (Pressed(KeyboardKey.D) || Pressed(KeyboardKey.Right))
+        {
+            selected = (selected + 1) % offers.Count;
+        }
+        else if (Pressed(KeyboardKey.W) || Pressed(KeyboardKey.Up))
+        {
+            selected = Math.Max(0, selected - columns);
+        }
+        else if (Pressed(KeyboardKey.S) || Pressed(KeyboardKey.Down))
+        {
+            // S is the skip key, so it must not also move the highlight; the arrows and A/D do
+            // the moving, while S always means "take the heart".
+            if (Pressed(KeyboardKey.S) && !Pressed(KeyboardKey.Down))
+            {
+                skip = true;
+                return true;
+            }
+
+            selected = Math.Min(offers.Count - 1, selected + columns);
+        }
+
+        if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) || Pressed(KeyboardKey.Space))
+        {
+            take = offers[Math.Clamp(selected, 0, offers.Count - 1)];
+            return true;
+        }
+
+        // The number keys take a card directly, which is faster than moving the highlight.
+        for (var index = 0; index < offers.Count && index < 9; index++)
+        {
+            if (Pressed((KeyboardKey)((int)KeyboardKey.One + index)))
+            {
+                take = offers[index];
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -341,11 +596,14 @@ internal static class RaylibFrontend
     }
 
     /// <summary>
-    /// Tests a key press including the operating system's auto-repeat, so holding a direction
-    /// key keeps walking instead of requiring one tap per cell.
+    /// Tests a key press including the operating system's auto-repeat. Used for the aim cursor,
+    /// the menus and the draft, where one tap is one action.
     /// </summary>
     private static bool Pressed(KeyboardKey key) =>
         Raylib.IsKeyPressed(key) || Raylib.IsKeyPressedRepeat(key);
+
+    /// <summary>Tests whether a key is being held, which is how walking and sprint are read.</summary>
+    private static bool Held(KeyboardKey key) => Raylib.IsKeyDown(key);
 
     /// <summary>Which screen the window is showing.</summary>
     private enum Screen
@@ -361,6 +619,9 @@ internal static class RaylibFrontend
 
         /// <summary>The card shown after a floor that is not the last one.</summary>
         FloorCleared,
+
+        /// <summary>The choice between two floors.</summary>
+        Draft,
 
         /// <summary>The run summary after the final floor.</summary>
         RunComplete,

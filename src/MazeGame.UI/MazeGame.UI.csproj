@@ -17,4 +17,14 @@
     <PackageReference Include="Raylib-cs" Version="8.1.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      The committed atlases are copied beside the executable so a published build (or a plain
+      `dotnet run`) finds them; the pixel renderer falls back to the repository path otherwise,
+      which is what `dotnet test` relies on.
+    -->
+    <Content Include="Content/Generated/*.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Content/Generated/manifest.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

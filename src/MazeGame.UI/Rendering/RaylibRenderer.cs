@@ -161,6 +161,10 @@ public sealed partial class RaylibRenderer : IRenderer
             }
         }
 
+        // The two figures are drawn after the cells, from their interpolated positions, so they
+        // slide between tiles instead of hopping. The rules still see one cell per actor.
+        DrawFigures(state);
+
         DrawEnemyAura(state);
         DrawMotes(state, light);
         DrawAimCursor(state);
@@ -168,10 +172,29 @@ public sealed partial class RaylibRenderer : IRenderer
         // The vignette darkens the cave, not the interface: it goes on before the HUD so the
         // status pills and hints keep their contrast.
         DrawVignette(danger);
+        DrawOverlay(state);
+    }
+
+    /// <summary>
+    /// Draws the interface over a frame someone else painted: the damage flash, the status strip,
+    /// the hints and the grain.
+    /// </summary>
+    /// <param name="state">The floor being played.</param>
+    /// <remarks>
+    /// The pixel renderer draws its world into a virtual canvas and then calls this, so the HUD is
+    /// one implementation rather than two that can drift. It is in window pixels on purpose: the
+    /// chrome sits in the letterbox around the canvas, which keeps the tiles at whole-pixel scale
+    /// and the type at its designed size.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="state"/> is null.</exception>
+    public void DrawOverlay(GameState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        TrackDamage(state);
         DrawDamageFlash();
         DrawHud(state);
         DrawHints(state);
-        DrawEndBanner(state);
         DrawGrain();
     }
 
@@ -443,9 +466,14 @@ public sealed partial class RaylibRenderer : IRenderer
     }
 
     /// <summary>
-    /// Draws whatever stands on a visible cell. The player is drawn last so the explorer is
-    /// never hidden by another object sharing the tile.
+    /// Draws the things that belong to a cell and do not move between steps: barriers, the arch,
+    /// keys and the wisp.
     /// </summary>
+    /// <remarks>
+    /// The player and the killer are deliberately <b>not</b> here: they are drawn once, after the
+    /// grid, from an interpolated position (see <see cref="DrawFigures"/>). Drawing them from their
+    /// cell would snap them a whole tile at a time and make the timed steps look broken.
+    /// </remarks>
     private static void DrawContents(GameState state, Cell cell, int x, int y)
     {
         var centerX = x + (RaylibLayout.CellSize / 2);
@@ -470,16 +498,57 @@ public sealed partial class RaylibRenderer : IRenderer
         {
             DrawLure(centerX, centerY);
         }
+    }
 
-        if (cell == state.Enemy)
+    /// <summary>
+    /// Draws the killer between its two cells and the explorer on its own cell.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The killer slides because it is a creature at a distance: a smooth drift reads as something
+    /// stalking, and the player never has to count its tiles.
+    /// </para>
+    /// <para>
+    /// The explorer **snaps**. Its cell changes the instant a step is accepted, so drawing it there
+    /// makes one press one tile exactly — the player can count the grid while running, which is the
+    /// whole navigation skill of the game. Drawing it between cells (which this used to do) turned
+    /// a 0.11 s cadence into a continuous glide at exactly the moment precision matters. The step
+    /// fraction is still published for a walk-cycle animation; it is not a position.
+    /// </para>
+    /// </remarks>
+    private static void DrawFigures(GameState state)
+    {
+        if (state.IsVisible(state.Enemy))
         {
-            DrawKiller(centerX, centerY);
+            var killer = FigureCenter(state.PreviousEnemy, state.Enemy, state.EnemyStepFraction);
+            DrawKiller(killer.X, killer.Y);
         }
 
-        if (cell == state.Player)
-        {
-            DrawPlayer(centerX, centerY);
-        }
+        var player = CellCenter(state.Player);
+        DrawPlayer(player.X, player.Y);
+    }
+
+    /// <summary>Returns the pixel centre of <paramref name="cell"/>.</summary>
+    private static (int X, int Y) CellCenter(Cell cell) =>
+        (RaylibLayout.CellX(cell.Column) + (RaylibLayout.CellSize / 2),
+         RaylibLayout.CellY(cell.Row) + (RaylibLayout.CellSize / 2));
+
+    /// <summary>
+    /// Returns the pixel centre of a figure on its way from <paramref name="from"/> to
+    /// <paramref name="to"/>, rounded to whole pixels.
+    /// </summary>
+    private static (int X, int Y) FigureCenter(Cell from, Cell to, double fraction)
+    {
+        var fromX = RaylibLayout.CellX(from.Column) + (RaylibLayout.CellSize / 2.0);
+        var fromY = RaylibLayout.CellY(from.Row) + (RaylibLayout.CellSize / 2.0);
+        var toX = RaylibLayout.CellX(to.Column) + (RaylibLayout.CellSize / 2.0);
+        var toY = RaylibLayout.CellY(to.Row) + (RaylibLayout.CellSize / 2.0);
+
+        var eased = Math.Clamp(fraction, 0, 1);
+
+        return (
+            (int)Math.Round(fromX + ((toX - fromX) * eased)),
+            (int)Math.Round(fromY + ((toY - fromY) * eased)));
     }
 
     /// <summary>
@@ -822,8 +891,12 @@ public sealed partial class RaylibRenderer : IRenderer
         var mazeWidth = state.Maze.Columns * RaylibLayout.CellSize;
         var mazeHeight = state.Maze.Rows * RaylibLayout.CellSize;
         var radius = (state.Config.VisionRadius + 0.7) * RaylibLayout.CellSize;
-        var centerX = RaylibLayout.CellX(state.Player.Column) + (RaylibLayout.CellSize / 2.0);
-        var centerY = RaylibLayout.CellY(state.Player.Row) + (RaylibLayout.CellSize / 2.0);
+
+        // The lantern is the explorer's light, so it snaps with the body: a glow that lags behind
+        // the figure makes the lit area lag behind the cell the rules are actually using.
+        var lantern = CellCenter(state.Player);
+        var centerX = (double)lantern.X;
+        var centerY = (double)lantern.Y;
 
         for (var index = 0; index < MoteCount; index++)
         {
@@ -989,6 +1062,35 @@ public sealed partial class RaylibRenderer : IRenderer
     }
 
     /// <summary>
+    /// Draws the sprint bar under the status pills, and nothing at all when the bar is full.
+    /// </summary>
+    /// <remarks>
+    /// The bar only appears once stamina has been spent, so a player who never sprints is not
+    /// given another meter to read. It turns danger-pink while the bar cannot be used, which is
+    /// the same colour the game already uses for damage.
+    /// </remarks>
+    private void DrawStamina(GameState state)
+    {
+        if (state.Config.SprintStaminaSeconds <= 0 || state.SprintStaminaFraction >= 0.999)
+        {
+            return;
+        }
+
+        const float trackWidth = 132f;
+        const float trackHeight = 4f;
+        var left = (float)RaylibLayout.OriginX;
+        var top = RaylibLayout.HudHeight - 10f;
+        var filled = trackWidth * (float)state.SprintStaminaFraction;
+        var colour = state.IsSprinting ? GlowCyan : Rgba(HintText.R, HintText.G, HintText.B, 255);
+
+        Raylib.DrawRectangleRec(
+            new Rectangle(left, top, trackWidth, trackHeight),
+            Rgba(8, 26, 28, 200));
+        Raylib.DrawRectangleRec(new Rectangle(left, top, filled, trackHeight), colour);
+        Text("SPRINT", left + trackWidth + 8, top - 4, 10, HintText);
+    }
+
+    /// <summary>
     /// Draws the status strip as floating glass pills: keys, barriers and the exit, each with a
     /// glowing dot in its own colour. When the killer is close an extra warning appears, so the
     /// player gets a cue that is not only visual atmosphere.
@@ -1011,6 +1113,8 @@ public sealed partial class RaylibRenderer : IRenderer
         x = DrawStatPill(x, y, "BARRIERS", $"{state.BarriersRemaining}", GlowGreen) + 10;
         x = DrawStatPill(x, y, "WISPS", $"{state.LuresRemaining}", GlowCyan) + 10;
         DrawStatPill(x, y, "EXIT", state.IsExitUnlocked ? "OPEN" : "LOCKED", state.IsExitUnlocked ? ExitOpenColor : ExitLockedColor);
+
+        DrawStamina(state);
 
         if (state.EnemyGlow.Count == 0)
         {
@@ -1078,7 +1182,7 @@ public sealed partial class RaylibRenderer : IRenderer
         {
             PlacementMode.Barrier => "WASD: AIM    SPACE / ENTER: SEAL    ESC: CANCEL",
             PlacementMode.Lure => "WASD: AIM    SPACE / ENTER: LIGHT    ESC: CANCEL",
-            _ => "WASD: MOVE    B: BARRIER    R: WISP    ESC: QUIT",
+            _ => "WASD: MOVE   SHIFT: RUN   B: BARRIER   R: WISP   ESC: QUIT",
         };
         var color = state.AimMode switch
         {
@@ -1087,44 +1191,15 @@ public sealed partial class RaylibRenderer : IRenderer
             _ => HintText,
         };
 
-        Text(text, (width - TextWidth(text, HintFontSize)) / 2f, top + 14, HintFontSize, color);
-    }
-
-    /// <summary>
-    /// Ends the game on a card that matches the cave: dark glass, a glowing rule and the outcome
-    /// in the cave's own colours, instead of a bare window that vanishes mid-chase.
-    /// </summary>
-    private void DrawEndBanner(GameState state)
-    {
-        // A cleared floor is a step in a run, not an ending: the campaign draws its own floor
-        // card (see RaylibRenderer.Campaign.cs), so only a lost run belongs here.
-        if (state.Status != GameStatus.Caught)
+        // The strip is only as wide as the maze (656 px on a 15x15 floor), so a long hint shrinks a
+        // point at a time instead of being clipped at both ends.
+        var size = HintFontSize;
+        while (size > 9 && TextWidth(text, size) > width - 16)
         {
-            return;
+            size--;
         }
 
-        var width = Raylib.GetScreenWidth();
-        var height = Raylib.GetScreenHeight();
-        const float panelWidth = 470;
-        const float panelHeight = 150;
-        var left = (width - panelWidth) / 2f;
-        var top = (height - panelHeight) / 2f;
-        var accent = DangerText;
-
-        Raylib.DrawRectangleRounded(new Rectangle(left, top, panelWidth, panelHeight), 0.08f, 6, Rgba(2, 8, 10, 236));
-        Raylib.DrawRectangleRoundedLines(
-            new Rectangle(left, top, panelWidth, panelHeight), 0.08f, 6, Rgba(accent.R, accent.G, accent.B, 120));
-
-        const string title = "THE THING FOUND YOU";
-        TextCentered(title, width / 2f, top + 36, BannerTitleSize, accent, 2.4f);
-
-        Raylib.DrawLineEx(
-            new Vector2(left + 70, top + 84),
-            new Vector2(left + panelWidth - 70, top + 84),
-            1.0f,
-            Rgba(accent.R, accent.G, accent.B, 90));
-
-        TextCentered("R / ENTER: NEW RUN      ESC: QUIT", width / 2f, top + 104, BannerSubtitleSize, HintText);
+        Text(text, (width - TextWidth(text, size)) / 2f, top + ((RaylibLayout.FooterHeight - size) / 2f), size, color);
     }
 
     /// <summary>Draws text centred horizontally on <paramref name="centerX"/>.</summary>

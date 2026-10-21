@@ -107,6 +107,19 @@ internal static class ConsoleFrontend
 
             // The floor is cleared: either the run continues or this was the last one.
             var cleared = campaign.FloorNumber;
+
+            if (campaign.Draft is not null)
+            {
+                Console.WriteLine();
+
+                if (PromptForDraft(campaign))
+                {
+                    return true;
+                }
+
+                Console.WriteLine($"run: {campaign.Modifiers.Describe()}");
+            }
+
             if (!campaign.TryAdvanceFloor())
             {
                 return false;
@@ -115,6 +128,69 @@ internal static class ConsoleFrontend
             Console.WriteLine(
                 $"Floor {cleared} cleared — carrying {campaign.Hearts} heart(s) to floor " +
                 $"{campaign.FloorNumber}.");
+        }
+    }
+
+    /// <summary>
+    /// Offers the cards between two floors and applies the player's choice.
+    /// </summary>
+    /// <param name="campaign">The run whose draft is open.</param>
+    /// <returns>
+    /// <see langword="true"/> when the player asked to leave; <see langword="false"/> when the
+    /// draft was resolved and the run can continue.
+    /// </returns>
+    /// <remarks>
+    /// The offers are printed even when the input is a pipe, so a log shows the run's choices;
+    /// a piped run cannot press a key, so it takes the heart. Taking a hit point is the safe
+    /// default: it never spends a card the player did not choose.
+    /// </remarks>
+    private static bool PromptForDraft(Campaign campaign)
+    {
+        var draft = campaign.Draft;
+        if (draft is null)
+        {
+            return false;
+        }
+
+        Console.WriteLine("DRAFT — pick one:");
+
+        for (var index = 0; index < draft.Offers.Count; index++)
+        {
+            var card = draft.Offers[index];
+            Console.WriteLine($"  [{index + 1}] {card.Name} ({card.Tier}): {card.FaceText}");
+        }
+
+        Console.WriteLine("  [S] skip: heal one heart");
+
+        if (Console.IsInputRedirected)
+        {
+            campaign.SkipDraft();
+            Console.WriteLine("  (no input: skipped for a heart)");
+            return false;
+        }
+
+        while (true)
+        {
+            var key = Console.ReadKey(intercept: true).Key;
+
+            if (key is ConsoleKey.Q or ConsoleKey.Escape)
+            {
+                return true;
+            }
+
+            if (key == ConsoleKey.S)
+            {
+                campaign.SkipDraft();
+                Console.WriteLine("  skipped: one heart restored.");
+                return false;
+            }
+
+            var index = key - ConsoleKey.D1;
+            if (index >= 0 && index < draft.Offers.Count && campaign.TakeCard(draft.Offers[index]))
+            {
+                Console.WriteLine($"  took {draft.Offers[index].Name}.");
+                return false;
+            }
         }
     }
 

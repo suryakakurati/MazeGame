@@ -54,6 +54,12 @@ public sealed class GameState
     /// <summary>How many steps of cave a glowing wisp lights up around itself.</summary>
     private const int LureGlowRadius = 1;
 
+    /// <summary>
+    /// How full the stamina bar must be before sprinting is available again after running dry.
+    /// Without this, an empty bar would let the player sprint one step at a time.
+    /// </summary>
+    private const double SprintRecoveryThreshold = 0.25;
+
     private readonly GameConfig _config;
     private readonly Grid _maze;
     private readonly IPathfinder _pathfinder;
@@ -78,6 +84,32 @@ public sealed class GameState
     private GameStatus _status = GameStatus.InProgress;
     private double _elapsedSeconds;
     private PlacementMode _aiming;
+
+    // Timed steps. The player's cell changes the instant a step is accepted; this cooldown only
+    // decides when the next step may start, and the renderer slides the figure across.
+    private Cell _playerFrom;
+    private double _playerStepLeft;
+    private double _playerStepTotal;
+    private Direction? _bufferedDirection;
+
+    // Sprint: a stamina bar, not a card. Exhausting it requires a partial refill before it can be
+    // used again, so the bar reads as a resource rather than a flickering toggle.
+    private bool _sprintRequested;
+    private bool _sprintExhausted;
+    private double _sprintStaminaLeft;
+
+    // Momentum: a run rule a card switches on. Straight steps earn speed up to the cap, and the
+    // first step after a turn is slower for a moment afterwards. With the defaults (all zero) none
+    // of this runs and no timing changes, which is what keeps the rule tests' feel identical.
+    private Direction? _lastStepDirection;
+    private int _straightSteps;
+    private double _turnPenaltyLeft;
+
+    // The killer's last step, kept for the same visual slide. Its step length varies (a barriered
+    // cell costs several steps' worth of time), so the duration is recorded per step.
+    private Cell _enemyFrom;
+    private double _enemyStepLeft;
+    private double _enemyStepTotal;
 
     // The killer's route to its chosen target, cached so it is only recomputed when something
     // invalidates it (the player moves, an item is placed, a seal cracks, or a wisp goes).
@@ -129,6 +161,7 @@ public sealed class GameState
         _luresRemaining = config.LureCount;
         _hearts = config.StartingHearts;
         _maxHearts = config.MaxHearts;
+        _sprintStaminaLeft = config.SprintStaminaSeconds;
 
         // Shuffle every cell once, then take the first unused ones. Because the list holds
         // each cell exactly once, the player, killer, exit and keys are guaranteed to be on
@@ -160,6 +193,10 @@ public sealed class GameState
         // fits in this list. The slicing below therefore cannot run out.
         _exit = available[0];
         _keys = new HashSet<Cell>(available.GetRange(1, config.KeyCount));
+
+        // Nothing is mid-step at the start, so both figures are drawn exactly on their cells.
+        _playerFrom = _player;
+        _enemyFrom = _enemy;
 
         RecomputeVisibility();
     }
@@ -417,6 +454,73 @@ public sealed class GameState
     public bool IsVisible(Cell cell) => _visible.Contains(cell);
 
     /// <summary>
+    /// Gets the vision radius in force right now: the floor's radius, less what a burning wisp
+    /// costs.
+    /// </summary>
+    /// <remarks>
+    /// The wisp is a beacon, and a card may make watching it expensive. The penalty is subtracted
+    /// only while the wisp is actually burning, and the visible set is rebuilt when it starts and
+    /// when it clears, so the cost comes and goes with the glow. It never reduces sight below the
+    /// player's own cell.
+    /// </remarks>
+    public int EffectiveVisionRadius =>
+        Math.Max(0, _config.VisionRadius - (_lure is not null ? _config.LureVisionPenalty : 0));
+
+    /// <summary>Gets a value indicating whether a step's cooldown is still running.</summary>
+    public bool IsPlayerStepping => _playerStepLeft > 0;
+
+    /// <summary>Gets the cell the player stepped from.</summary>
+    /// <remarks>
+    /// The rule-side position is <see cref="Player"/>, which changes at the start of a step. The
+    /// window deliberately does <b>not</b> draw between the two cells: the explorer snaps to its
+    /// tile so one press is one tile and the player can count them. These two members exist for a
+    /// walk-cycle animation and for tests that measure the cadence.
+    /// </remarks>
+    public Cell PreviousPlayer => _playerFrom;
+
+    /// <summary>Gets how far through its step the player is, from 0 to 1.</summary>
+    /// <remarks>1 means "standing still on a cell". This is the step's clock, not a position: the
+    /// window draws the explorer on its cell and uses this only to pick a walk frame.</remarks>
+    public double PlayerStepFraction => StepFraction(_playerStepLeft, _playerStepTotal);
+
+    /// <summary>Gets the cell the killer stepped from, for the renderer's slide.</summary>
+    public Cell PreviousEnemy => _enemyFrom;
+
+    /// <summary>Gets how far through its step the killer's figure is, from 0 to 1.</summary>
+    public double EnemyStepFraction => StepFraction(_enemyStepLeft, _enemyStepTotal);
+
+    /// <summary>Gets a value indicating whether the player is sprinting right now.</summary>
+    /// <remarks>
+    /// Sprinting needs a request from the input, stamina left, a timed game (an instant-step floor
+    /// cannot sprint), and a live, un-aimed run.
+    /// </remarks>
+    public bool IsSprinting =>
+        _sprintRequested &&
+        !_sprintExhausted &&
+        _sprintStaminaLeft > 0 &&
+        _config.PlayerStepSeconds > 0 &&
+        _config.SprintStaminaSeconds > 0 &&
+        _status == GameStatus.InProgress &&
+        _aiming == PlacementMode.None;
+
+    /// <summary>Gets the fraction of the stamina bar that is left, from 0 to 1.</summary>
+    /// <remarks>One when sprinting is disabled for the floor, so a HUD can hide the bar.</remarks>
+    public double SprintStaminaFraction =>
+        _config.SprintStaminaSeconds <= 0
+            ? 1.0
+            : Math.Clamp(_sprintStaminaLeft / _config.SprintStaminaSeconds, 0, 1);
+
+    /// <summary>
+    /// Asks for sprinting to be on or off. The input calls this every frame while Shift is held.
+    /// </summary>
+    /// <param name="sprinting">Whether the player is holding sprint.</param>
+    /// <remarks>
+    /// This is a request, not a command: <see cref="IsSprinting"/> decides whether it is granted, so
+    /// stamina, aiming and an instant-step floor cannot be bypassed by the input layer.
+    /// </remarks>
+    public void SetSprinting(bool sprinting) => _sprintRequested = sprinting;
+
+    /// <summary>
     /// Gets the cells that are visible only because the killer is lighting them.
     /// </summary>
     /// <remarks>
@@ -458,6 +562,26 @@ public sealed class GameState
             return false;
         }
 
+        // Timed steps: while the last step is still cooling down, this press is remembered for the
+        // end of it instead of being queued. One input only, so mashing cannot outrun the cadence,
+        // and a hold reads as continuous walking.
+        if (_playerStepLeft > 0)
+        {
+            _bufferedDirection = direction;
+            return false;
+        }
+
+        return Step(direction);
+    }
+
+    /// <summary>
+    /// Performs one step: the whole of the movement rule, unchanged, plus the cooldown that gates
+    /// the next one.
+    /// </summary>
+    /// <param name="direction">The direction to step in.</param>
+    /// <returns><see langword="true"/> when the player moved, even if that ended the game.</returns>
+    private bool Step(Direction direction)
+    {
         // HasWall validates the position and the direction, and an outer wall always reports
         // true, so a step out of the maze is rejected here rather than indexing off the grid.
         if (_maze.HasWall(_player.Row, _player.Column, direction))
@@ -477,7 +601,14 @@ public sealed class GameState
             return false;
         }
 
+        _playerFrom = _player;
         _player = destination;
+
+        // The step is accepted now, so the next one waits. A zero step time leaves the cooldown at
+        // zero, which is exactly the instant movement the rule tests were written against.
+        TrackMomentum(direction);
+        _playerStepLeft = NextPlayerStepSeconds();
+        _playerStepTotal = _playerStepLeft;
 
         // The killer was chasing the old destination; its cached route is now stale.
         InvalidateEnemyRoute();
@@ -737,6 +868,17 @@ public sealed class GameState
         // still counts fully against them.
         AdvanceTimers(deltaSeconds);
 
+        // A press that arrived during the last step is spent here, before the killer acts. It can
+        // never chain: the buffered step starts its own cooldown, so one input is one step.
+        ResolveBufferedStep();
+
+        // That step may have won the floor or lost the last heart; either way the killer has no
+        // business taking another step in the same frame.
+        if (_status != GameStatus.InProgress)
+        {
+            return;
+        }
+
         // A stunned killer neither moves nor banks progress towards its next step: the stun has
         // to be a real window, not a step that lands the instant the player stops running.
         if (_stunSecondsLeft > 0)
@@ -754,8 +896,95 @@ public sealed class GameState
         }
 
         _elapsedSeconds -= interval;
-        AdvanceEnemy();
+        AdvanceEnemy(interval);
     }
+
+    /// <summary>
+    /// Spends a buffered direction once the last step's cooldown has run out.
+    /// </summary>
+    /// <remarks>
+    /// The buffer is cleared whether or not the step is legal: a press aimed at a wall should not
+    /// sit there and fire later when the player happens to face an opening.
+    /// </remarks>
+    private void ResolveBufferedStep()
+    {
+        if (_playerStepLeft > 0 || _bufferedDirection is not { } direction)
+        {
+            return;
+        }
+
+        _bufferedDirection = null;
+        Step(direction);
+    }
+
+    /// <summary>
+    /// Returns how long the next player step must wait: the floor's step time, shortened by sprint
+    /// when it is granted.
+    /// </summary>
+    private double NextPlayerStepSeconds()
+    {
+        if (_config.PlayerStepSeconds <= 0)
+        {
+            return 0;
+        }
+
+        var step = _config.PlayerStepSeconds;
+
+        if (_config.MomentumMaxBonus > 0 && _config.MomentumRampPerStep > 0)
+        {
+            var bonus = Math.Min(_config.MomentumMaxBonus, _straightSteps * _config.MomentumRampPerStep);
+            step /= 1.0 + bonus;
+
+            if (_turnPenaltyLeft > 0)
+            {
+                step *= 1.0 + _config.TurnPenaltyScale;
+            }
+        }
+
+        return IsSprinting ? step / Math.Max(1.0, _config.SprintMultiplier) : step;
+    }
+
+    /// <summary>
+    /// Updates the straight-line run counter and starts the turn penalty when the player turns.
+    /// </summary>
+    /// <param name="direction">The direction of the step that was just accepted.</param>
+    /// <remarks>
+    /// This is a rule about cadence only: the cell has already changed by the time it runs, and
+    /// with momentum switched off (the default) it does nothing at all.
+    /// </remarks>
+    private void TrackMomentum(Direction direction)
+    {
+        if (_config.MomentumMaxBonus <= 0 || _config.MomentumRampPerStep <= 0)
+        {
+            return;
+        }
+
+        if (_lastStepDirection == direction)
+        {
+            _straightSteps++;
+        }
+        else
+        {
+            // The step that starts a new line is the turn, so it is the one that pays.
+            _straightSteps = 0;
+
+            if (_lastStepDirection is not null)
+            {
+                _turnPenaltyLeft = _config.TurnPenaltySeconds;
+            }
+        }
+
+        _lastStepDirection = direction;
+    }
+
+    /// <summary>
+    /// Maps a step's remaining time to how far through it the figure is, from 0 to 1.
+    /// </summary>
+    /// <param name="left">Seconds left in the step.</param>
+    /// <param name="total">The step's full length.</param>
+    /// <returns>1 when no step is running, so "standing still" needs no special case.</returns>
+    private static double StepFraction(double left, double total) =>
+        total <= 0 ? 1.0 : Math.Clamp(1.0 - (left / total), 0, 1);
 
     /// <summary>
     /// Ages the seals and the wisp by <paramref name="deltaSeconds"/>, expiring whatever runs
@@ -813,6 +1042,83 @@ public sealed class GameState
         {
             _stunSecondsLeft = Math.Max(0, _stunSecondsLeft - deltaSeconds);
         }
+
+        if (_turnPenaltyLeft > 0)
+        {
+            _turnPenaltyLeft = Math.Max(0, _turnPenaltyLeft - deltaSeconds);
+        }
+
+        // The two slides finish in wall-clock time even when the game is otherwise paused for a
+        // stun; they are presentation, not a rule window.
+        var stepping = _playerStepLeft > 0;
+
+        if (stepping)
+        {
+            _playerStepLeft = Math.Max(0, _playerStepLeft - deltaSeconds);
+        }
+
+        if (_enemyStepLeft > 0)
+        {
+            _enemyStepLeft = Math.Max(0, _enemyStepLeft - deltaSeconds);
+        }
+
+        UpdateSprint(deltaSeconds, stepping);
+    }
+
+    /// <summary>
+    /// Drains or refills the stamina bar for <paramref name="deltaSeconds"/>, and re-enables
+    /// sprinting once the bar is back above the recovery threshold.
+    /// </summary>
+    /// <param name="deltaSeconds">The frame's length.</param>
+    /// <param name="stepping">Whether a player step was running at the start of the frame.</param>
+    /// <remarks>
+    /// <para>
+    /// The bar only drains <b>while a step is running</b>. Holding Shift on the spot is a player
+    /// getting ready, not a sprint, and charging for it would empty the bar before they set off.
+    /// Reading the flag from the start of the frame keeps the last sliver of a step honest: the
+    /// frame that finishes a step still pays for it.
+    /// </para>
+    /// <para>
+    /// Running dry has to cost something, or sprint would be free: an empty bar needs a quarter
+    /// refill before it can be spent again.
+    /// </para>
+    /// </remarks>
+    private void UpdateSprint(double deltaSeconds, bool stepping)
+    {
+        var capacity = _config.SprintStaminaSeconds;
+
+        if (capacity <= 0)
+        {
+            _sprintStaminaLeft = 0;
+            _sprintExhausted = false;
+            return;
+        }
+
+        if (IsSprinting && stepping)
+        {
+            _sprintStaminaLeft = Math.Max(0, _sprintStaminaLeft - deltaSeconds);
+
+            if (_sprintStaminaLeft <= 0)
+            {
+                _sprintExhausted = true;
+            }
+
+            return;
+        }
+
+        if (IsSprinting)
+        {
+            // Standing still with Shift held: nothing spent, nothing regained.
+            return;
+        }
+
+        var recoveryRate = capacity / Math.Max(0.0001, _config.SprintRecoverySeconds);
+        _sprintStaminaLeft = Math.Min(capacity, _sprintStaminaLeft + (deltaSeconds * recoveryRate));
+
+        if (_sprintExhausted && _sprintStaminaLeft >= capacity * SprintRecoveryThreshold)
+        {
+            _sprintExhausted = false;
+        }
     }
 
     /// <summary>
@@ -832,6 +1138,10 @@ public sealed class GameState
         _lure = null;
         _lureSecondsLeft = 0;
         InvalidateEnemyRoute();
+
+        // The wisp's pool of light goes with it, and a card's vision penalty ends with the glow.
+        // Without this the cells it lit stayed visible until the next move.
+        RecomputeVisibility();
     }
 
     /// <summary>
@@ -866,12 +1176,16 @@ public sealed class GameState
     /// Moves the killer one cell along its route, ending the game if that brings it onto the
     /// player's cell, or tears apart a sealed barrier that stands in the way.
     /// </summary>
+    /// <param name="interval">
+    /// How long the step that just completed took. Recorded so the renderer can slide the killer
+    /// over the same time, whatever cell it walked into.
+    /// </param>
     /// <remarks>
     /// Tearing the seal is a step of its own: the barrier shatters, nothing moves, and the next
     /// route is computed over plain floor. That is what makes a sealed barrier read as an
     /// obstacle the killer deals with, rather than something it walks through after a pause.
     /// </remarks>
-    private void AdvanceEnemy()
+    private void AdvanceEnemy(double interval)
     {
         var route = EnemyRouteToTarget();
 
@@ -898,7 +1212,10 @@ public sealed class GameState
             return;
         }
 
+        _enemyFrom = _enemy;
         _enemy = next;
+        _enemyStepLeft = interval;
+        _enemyStepTotal = interval;
         _nextStepIndex++;
 
         // The killer carries its own light, so what the player can see changes as it moves
@@ -917,6 +1234,14 @@ public sealed class GameState
         if (_enemy == _lure)
         {
             ClearLure();
+
+            // A card may make the wisp cost the killer real time. The stun is the same window a
+            // catch buys, so it cannot be shortened by a frame landing mid-step.
+            if (_config.LureStunSeconds > 0)
+            {
+                _stunSecondsLeft = Math.Max(_stunSecondsLeft, _config.LureStunSeconds);
+                _elapsedSeconds = 0;
+            }
         }
     }
 
@@ -947,6 +1272,12 @@ public sealed class GameState
         }
 
         _enemy = ChooseRespawnCell();
+
+        // A respawn is a throw, not a walk: snap the figure instead of sliding it across the map.
+        _enemyFrom = _enemy;
+        _enemyStepLeft = 0;
+        _enemyStepTotal = 0;
+
         _invulnerableSeconds = _config.InvulnerabilitySeconds;
         _stunSecondsLeft = _config.RespawnStunSeconds;
         _elapsedSeconds = 0;
@@ -1124,12 +1455,15 @@ public sealed class GameState
         _visible.Clear();
         _enemyGlow.Clear();
 
-        var searchRadius = Math.Max(_config.VisionRadius, _config.EnemyAuraDistance);
+        // A burning wisp can shrink the torch, so read the radius in force rather than the
+        // floor's own number.
+        var visionRadius = EffectiveVisionRadius;
+        var searchRadius = Math.Max(visionRadius, _config.EnemyAuraDistance);
         var playerDistances = DistancesFrom(_player, searchRadius);
 
         foreach (var (cell, distance) in playerDistances)
         {
-            if (distance <= _config.VisionRadius)
+            if (distance <= visionRadius)
             {
                 _visible.Add(cell);
             }

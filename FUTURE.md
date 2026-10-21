@@ -280,6 +280,11 @@ Tier: C = common, U = uncommon, R = rare, X = curse. Every row is a real trade.
 | 27 | **Heavy** (curse) | - | Player step time +15%, barrier budget -1 | X |
 | 28 | **Blind Lantern** (curse) | - | Remembered cells are not drawn; only what you can see now | X |
 
+Shipped early (2026-10-20), once timed player steps existed: **Light Feet**, **Momentum**,
+**Sprint Lungs** and **Hollow Bones** — the catalog is now 13 cards. Momentum is the only one that
+needed a rule rather than a number (straight-step ramp, turn-penalty window), and it is the one
+most likely to need re-tuning by feel.
+
 Two rules for the catalog itself: every card gets a unit test for **both** halves of its
 trade, and every card must state its drawback in the same sentence as its upside on the card
 face. "Vision +2, it sees you sooner" is the whole card, not fine print.
@@ -506,6 +511,16 @@ dotnet run --project tools/AssetForge -- --check      # validation only, non-zer
 Generated output is committed, so a fresh clone builds and runs with no tool step. A test
 asserts that re-running the compiler on the same inputs produces byte-identical files
 (determinism), so a drifted atlas is a red test rather than a mystery.
+
+**Status (2026-10-20):** the compiler is in `tools/AssetForge` — `PixelCanvas`, `Palette`, `Png`,
+`CaveTiles`, `WallStrips`, `Autotiler`, `Rig`, `ThemeCatalog` (shallows / rootbound / drowned) and
+`SpriteCompiler` with `--all`, `--theme <id>` and `--check`. Each theme's atlas holds floor
+variants, the plain wall, the four thin wall faces, the 16 edge and 47 blob tiles, the full cast
+and its props: 109 / 108 / 110 tiles in 128x224 PNGs listed in `manifest.txt`. `WallStrips` exists
+because this maze stores walls *between* cells: a 5 px face along a closed edge is the shape the
+renderer can use, while the solid wall and its autotiles are for the later floors whose
+non-walkable cells are wall. **The pixel renderer now loads these atlases** (see 11.2 M4); what is
+*not* there: `Glyphs`, `Pictograms`, `UiForge`, and the worked-stone and wrong-organic families.
 
 ### 6.7 One atlas, twenty theme parameter sets
 
@@ -878,10 +893,10 @@ still works end to end, not merely that it compiles.
 | --- | --- | --- | --- |
 | **1** | **Hearts and damage** — 3 hearts, a catch costs one, killer respawn + stun + i-frames, heart HUD and damage flash | A run can still be won or lost; losing a heart is now survivable | **done 2026-10-20** |
 | **2** | **Floors and campaign** — `Campaign`, 3 named floors, arch clears the floor, hearts carry, floor intro and run summary | A complete 3-floor run, won by clearing the last arch | **done 2026-10-20** |
-| 3 | Card draft — 9 cards, clamped `RunModifiers`, draft screen, skip-to-heal | Runs differ; every card has a tested drawback | next |
-| 4 | Movement feel — timed steps, one buffered input, render interpolation, sprint | Same rules, smooth motion; speed becomes a stat | |
-| 5 | Sprite compiler — `AssetForge`, palettes, three families, rig, font, `--check` | No visual change yet; the atlases and validation exist | |
-| 6 | Pixel renderer — virtual canvas, integer scale, atlas blitting, lightmap, pixel HUD | The game looks like the planned indie game, same rules | |
+| **3** | **Card draft** — 9 cards, clamped `RunModifiers`, draft screen, skip-to-heal | Runs differ; every card has a tested drawback | **done 2026-10-20** (13 cards after Phase 5's slice) |
+| **4** | **Movement feel** — timed steps, one buffered input, render interpolation, sprint | Same rules, smooth motion; speed becomes a stat | **done 2026-10-20** |
+| 5 | Sprite compiler — `AssetForge`, palettes, three families, rig, font, `--check` | No visual change yet; the atlases and validation exist | **done 2026-10-20 (exit met)**: canvas, palette, PNG writer, autotiler (16 edge + 47 blob), rig (cast + props), 3 themes, `--check`. Font, pictograms, UI chrome and the two other families follow the renderer's screens |
+| 6 | Pixel renderer — virtual canvas, integer scale, atlas blitting, lightmap, pixel HUD | The game looks like the planned indie game, same rules | **in progress 2026-10-20 (slice 1)**: virtual canvas, integer scale, atlas blitting, thin wall faces, lightmap, fog, cast, reticle. The font, pictograms, pixel HUD and the four menu screens remain |
 | 7 | Audio — synth engine, sequencer, motifs, intensity layers, FX bank, silent fallback | The chase is audible and the game is silent-safe | |
 | 8 | Themes and content — 20 floors, 20 palettes, remaining cards, hazards, save/continue | The full roguelike run exists | |
 | 9 | Polish — juice, accessibility, balance, docs, screenshots | Definition of done in section 15 | |
@@ -904,6 +919,44 @@ reproducible with different layouts per floor. The window gained a floor intro c
 floor-cleared card and a run summary, and the console prints a floor heading and carries hearts
 forward. The frontends now take `Func<Campaign>` instead of `Func<GameState>`.
 
+Phase 3 is shipped as well. Nine cards went live then, and the four movement cards joined them once
+player steps were timed — thirteen today (`wide-eyes`, `deep-roots`, `thornwright`,
+`blood-pact`, `second-wind`, `bait`, `smoke-wisp`, `trophy-hunter`, `lucky-find`, `light-feet`,
+`momentum`, `sprint-lungs`, `hollow-bones`), each one a
+`Card` record carrying a `CardEffect` of numbers, composed by `RunModifiers` over the floor's
+`GameConfig` and clamped before the floor is built — no card is an `if` inside `GameState`. The
+draft is a gate in `Campaign`: clearing a floor that is not the last opens three seeded offers
+and `TryAdvanceFloor` refuses until one is taken or the draft is skipped for a heart. The window
+has a card grid with the run's totals and the console prints the offers. Two floor rules were
+added for two of the cards (`LureStunSeconds`, `LureVisionPenalty`), and the wisp's light now
+goes out when it expires. 84 new tests (415 total), 224 renderer frames through two drafts and a
+four-offer layout, 1.75–2.03 ms/frame (three runs).
+
+The catalog's nine are the cards expressible with today's rules. The movement cards (Light Feet,
+Momentum, Sprint Lungs, Hollow Bones) need timed player steps from Phase 4, the curse pair (The
+Debt plus Quiet) needs the rare-with-a-price machinery, and the rest need hazards or blueprint
+changes from Phase 8. Two texts were adapted rather than implemented as written: Second Wind's
+vision cost is run-wide (a draft happens *between* floors, so "the rest of this floor" had no
+referent) and Trophy Hunter's heal is capped by the floor's ceiling. Tiers currently weight the
+draw instead of gating by floor band, because three floors would collapse every band onto floor 1.
+
+Phase 4 is shipped. `GameConfig.PlayerStepSeconds` gates the *next* step rather than delaying the
+cell change, so every rule still sees one cell at a time; the shipped floors use 0.11 / 0.10 / 0.09 s
+against the killer's 0.60 / 0.54 / 0.48, and the base config keeps 0 as the instant-movement seam
+the rule tests were written against. One direction is buffered while a step cools down and spent
+when it ends. `GameState` publishes `PreviousPlayer`/`PlayerStepFraction` and the killer's pair, and
+the window slides both figures (and the lantern pool) between cells. Sprint is a stamina resource
+on Shift: 1.4× speed, a 1.2 s bar that only drains while a step is running, a 25% refill gate,
+refused while aiming or on an instant floor, with a HUD bar that appears once stamina has been
+spent. Walking reads held keys while the aim cursor stays tap-based. 34 new tests (449 total), and
+the harness reports
+`MOVEMENT_OK step=0.11s halfway=0.50 sprinting=True stamina=0.91 idleStamina=1.00` across 236
+frames (draining while moving, free while standing).
+
+The movement cards in §4.3 (Light Feet, Momentum, Sprint Lungs, Hollow Bones) can now be built on a
+real player step time, though Sprint Lungs overlaps with the free sprint and needs a redesign. The
+diegetic sprint cost from §5.2 (footstep ring, the killer listening) is not implemented yet.
+
 ### 11.2 Milestone detail
 
 Roughly **14–18 focused sessions** remain at the current pace, with the content compiler and
@@ -912,18 +965,37 @@ the synthesiser being the two places that can eat a session unexpectedly.
 - **M0 — run spine (done in Phases 1–2).** Hearts, catch/respawn and the campaign with three
   floors, carried hearts, floor intro and run summary are in place. The save file and a 20-floor
   catalog arrive with Phase 8, because both depend on the theme data.
-- **M1 — Draft (2 sessions).** Card catalog, 9 cards, draft screen, modifier composition,
-  tests for every card. Exit: cards visibly change a floor and every one has a tested
-  drawback.
-- **M2 — Movement (1 session).** Timed steps, input buffer, interpolation, sprint; retune
-  killer speed. Exit: 60 fps smooth walking, no rule regressions.
-- **M3 — Sprite compiler (3 sessions).** `PixelCanvas`, palettes, the three families, the
-  autotiler, the rig, the font, `--check`, contact sheets, manifest. Exit: floor 1's tiles and
-  cast exist as PNGs and pass validation. This is the riskiest milestone; if it slips, the
-  fallback is section 12's "one family, palette-only themes".
-- **M4 — Pixel renderer (2 sessions).** Virtual canvas, integer scale, atlas blitting,
-  autotiling, lightmap, fog, entities, HUD, title and draft screens. Exit: floor 1 looks like
-  an indie game, under 2 ms/frame, and the harness renders every screen.
+- **M1 — Draft (done in Phase 3).** Nine cards, a seeded draft after every cleared floor,
+  clamped modifier composition, skip-to-heal, a window card grid and a console prompt. Exit met:
+  the harness log shows cards reaching the next floor (`maxHearts 4`, `step 0.422`, `barriers 4`)
+  and every card has both halves under test.
+- **M2 — Movement (done in Phase 4, corrected 2026-10-20).** Timed steps with one buffered input,
+  sprint on stamina, killer speed untouched because the 5.5:1 ratio already preserved the escape
+  feel. The explorer originally slid between cells like the killer; that was reverted to a snap
+  because it made the grid uncountable while running. Exit met: the harness measures the cadence
+  (`halfway=0.50`) and no rule regressed (449 tests, all earlier ones untouched).
+- **M3 — Sprite compiler (done 2026-10-20).** `PixelCanvas`, `Palette` with the fixed lightness
+  ladder, a dependency-free PNG encoder, the organic-cave grammar, the autotiler (16 edge + 47
+  blob tiles, generated from the same masks the renderer will use), the rig (explorer and killer
+  poses plus key, wisp, barrier and arch), three theme parameter sets and `--check` (theme
+  validity, neighbour colour distance and structural difference, determinism, drift against the
+  committed atlases). Exit met: floor 1's tiles and cast exist as committed PNGs (315 tiles across
+  three themes) and pass validation. **Deferred on purpose:** the font atlas, the pictograms, the
+  9-slice UI chrome and the worked-stone / wrong-organic families — they only have consumers once
+  the renderer draws screens and the later floors exist.
+- **M2b — Movement cards (done alongside M3's first slice).** With a real step time, the four
+  movement cards ship: Light Feet, Momentum (a straight-step ramp with a turn penalty — a rule,
+  not a number), Sprint Lungs and Hollow Bones. Exit met: each has both halves under test, and
+  the four knobs are zero by default, so a run without them has the old cadence exactly.
+- **M4 — Pixel renderer (2 sessions; slice 1 done 2026-10-20).** Slice 1: `PixelLayout` sizes a
+  16 px-per-cell canvas per floor, `PixelView` renders into it and blits at an **integer** scale with
+  letterboxing, `AtlasManifest`/`AssetPaths`/`TileAtlas` load the committed PNGs (missing art throws),
+  `TileMask` picks the wall faces from the same bit order the compiler uses (cross-checked by a
+  test), and one `cols x rows` lightmap carries the lantern falloff, the remembered cells and the
+  killer's tint. Exit met for the floor: **1.03 ms median per draw** over 200 frames, 62% of the
+  canvas painted, no fog leaks, the cast animates from the step clocks, and the aim reticle is
+  chrome so fog cannot dim it. Slice 2 is the font, the pictograms, the pixel HUD and the four
+  menu screens; the vector renderer still draws those, which is why the phase is not closed.
 - **M5 — Synthesiser (3 sessions).** Mixer + ring buffer, voices, filters, reverb, sequencer,
   motifs, intensity layers, FX bank, silent fallback. Exit: the chase is audible and the game
   is silent-safe; buffer math tested headlessly.

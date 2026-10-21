@@ -3,21 +3,243 @@
 Single source of truth for the state of the project. Update this file at the end of
 every work session (see the handoff protocol in `HANDOFF.md`).
 
-Last updated: 2026-10-20 (Roguelike Phase 2: floors and the campaign)
+Last updated: 2026-10-20 (Phase 6 slice 1: the floor is drawn from the committed atlases on a
+virtual canvas)
 
 ## Current Status
 
-The solution builds with zero warnings, `dotnet test` is green (331 tests), and the game runs
-**in a Raylib window** as a **three-floor campaign**: the title leads to a floor intro card, then
-a seeded 15x15 maze drawn as a bioluminescent cave — fog of war, braided dead ends, keys, an exit,
-sealed barriers, wisps, and a killer that hunts the player with Dijkstra. **The player has three
-hearts**: a catch costs one, throws the killer to a distant cell and stuns it, and keeps every key
-and barrier; hearts carry from floor to floor, so the run is lost only when the last heart is. A
-cleared arch opens the floor-cleared card and the next floor, and the third arch wins the run.
-The terminal view offered by `--console` (and used automatically when no window can be opened)
-plays the same campaign in ASCII.
+The solution builds with zero warnings, `dotnet test` is green (574 tests), and the game runs
+**in a Raylib window** as a **three-floor campaign with a card draft between floors and timed
+steps**: the title leads to a floor intro card, then a seeded 15x15 maze drawn as a bioluminescent
+cave — fog of war, braided dead ends, keys, an exit, sealed barriers, wisps, and a killer that
+hunts the player with Dijkstra. **The player has three hearts**: a catch costs one, throws the
+killer to a distant cell and stuns it, and keeps every key and barrier; hearts carry from floor to
+floor, so the run is lost only when the last heart is. Walking is now a **cadence** — 0.11 s per
+cell on floor 1, tightening as you descend — with one buffered input and **sprint on Shift** (a
+1.2 s stamina bar). The explorer **snaps to its tile** (one press, one tile, so the grid is
+countable while running) and the killer **slides** between its cells. Clearing an arch opens a **draft of three cards — take one or skip for a heart** — and
+the third arch wins the run. The terminal view offered by `--console` (and used automatically when
+no window can be opened) plays the same campaign in ASCII. The catalog holds **thirteen cards**,
+including the four movement cards. The **sprite compiler is complete to its Phase 5 exit**: every
+committed atlas under `src/MazeGame.UI/Content/Generated` holds the full tileset (floor variants,
+wall, four thin wall faces, 16 edge and 47 blob tiles) and the whole cast, checked by `--check`.
+**The floor is now drawn from those atlases**: a 16 px-per-cell virtual canvas, blitted to the
+window at an integer scale, with a per-cell lightmap for the lantern and the fog. The menus, the
+campaign cards and the HUD are still drawn by the vector renderer, which is what the font atlas
+will replace next.
 
-What changed in this session (roguelike Phase 2: floors and campaign):
+What changed in this session (Phase 6 slice 1 — the pixel renderer):
+
+- **The floor is pixel art, at a whole-pixel scale.** `PixelLayout` sizes a virtual canvas from the
+  floor (one 16 px atlas tile per cell, an 8 px margin, an 18 px header), `PixelView` renders into a
+  `RenderTexture2D` and blits it with **integer** scale and letterboxing — 2x for the shipped
+  656x760 window, 512x548 in the middle — so the art is never resampled by a fraction. A resize
+  changes only the scale and the offset, never a coordinate inside the game.
+- **The atlases are loaded, and a missing tile fails loudly.** `AtlasManifest` parses and validates
+  `manifest.txt` (theme lines, tile lines, counts, positions inside the atlas), `AssetPaths` finds
+  the folder beside the executable or in the repository, and `TileAtlas` looks a tile up by name.
+  An unknown theme or tile throws with the name in it; nothing draws a placeholder.
+- **Thin wall faces, and a new tile family to draw them.** This maze stores walls *between* cells,
+  so the compiled solid wall and autotile set (a whole cell of rock with its open sides carved) is
+  the wrong shape for it: it is for the later floors whose non-walkable cells are walls. A wall is
+  now a 5 px face along the closed edge — four new tiles per theme (`wall-north`/`-east`/`-south`/
+  `-west`, transparent elsewhere), drawn once per wall by giving it to the cell's north/west side,
+  plus the outer rim. 327 tiles across three themes.
+- **One light pass, one fog rule.** A `cols x rows` texture holds the lantern falloff, the
+  remembered-cell level and the killer's cold tint; it is multiplied over the scene once per frame,
+  so there is no gradient call per cell, and the flicker rides on the draw's tint instead of forcing
+  a texture upload. Unexplored cells are not drawn at all, remembered ones are drawn tinted, and the
+  explorer's lantern is the brightest pixel on screen (measured at 598/765 in the harness).
+- **The cast, animated from the step clock.** The explorer picks a facing from the cell it stepped
+  from and a walk frame from `PlayerStepFraction`; the killer uses its own pair; keys and wisps
+  cycle three frames from the clock; a barrier draws cracked once its seal is spent, and the arch
+  opens when the keys are in. The figures snap to their cells, like the vector renderer.
+- **The aim reticle is chrome, not world.** It is drawn after the canvas is scaled, in window
+  pixels, so fog cannot dim the one thing a player needs while placing a barrier, and the brackets
+  stay whole pixels wide at any scale.
+- **The HUD is shared, not cloned.** `RaylibRenderer` grew `DrawOverlay` (damage flash, status
+  pills, hints, loss card, grain) and both renderers call it; the vector chrome sits in the
+  letterbox around the canvas, which keeps the tiles at whole-pixel scale and the type at its
+  designed size.
+
+Verified in this pass:
+
+- `dotnet build` → 0 warnings, 0 errors. `dotnet test` → **574/574 passing, 0 skipped** (46 new:
+  the manifest parser and its rejections, the shipped tiles the renderer asks for, the mask table
+  against the compiler's, and the canvas and integer-scale geometry).
+- `tools/AssetForge -- --check` → `CHECK_OK themes=3 tiles=327`; the atlases are regenerated and
+  their PNGs and manifest are byte-identical on a recompile.
+- Real pixel renderer in a real window, 200 frames after walking 70 steps: **median 1.03 ms**,
+  mean 1.34 ms, p95 3.28 ms per draw. The canvas at 2x is **62% painted** with 592 distinct
+  colours, the letterbox has **0** lit pixels, the **136 unexplored cells have 0** lit pixels, the
+  explorer's cell peaks at **598/765**, all **three themes** load and draw, and the aim reticle
+  reads **690/765** at the cursor corner. Screenshots: `/tmp/mzgame-pixel-{shallows,rootbound,
+  drowned,aiming}.png`.
+- The shipped game opened and idled for 9 s with an empty log, and `--console` is unchanged.
+
+What changed in the previous session (input, snapped movement and the rest of Phase 5):
+
+- **A tap is one tile, a hold walks, Shift runs.** Sending the held direction every frame meant a
+  tap that lasted a few frames left a press in the buffer, so a slow tap could move a second tile
+  after the player had let go. The decision is now Core's `StepRepeat`: a fresh press sends exactly
+  one direction (the state buffers it if the last step is still cooling down), a direction only
+  repeats after 0.15 s down **and** only once the previous step has finished, and a release resets
+  the gate so the next tap is fresh again. Because repeats wait for the step clock, the hold runs at
+  the floor's cadence rather than the frame rate, and Shift needs no special case: it shortens the
+  step, so the same repeat simply lands faster. It lives in Core only because that is the only way
+  to test it without a window (nine unit tests, plus three that drive it against a real `GameState`).
+- **The explorer snaps to its tile.** The window used to draw the player (and the lantern pool)
+  between two cells, so at 0.11 s per step a held key was a continuous glide: the figure was
+  almost never on a tile, and counting cells while being chased was guesswork. The player is now
+  drawn on `GameState.Player`, which changes the instant a step is accepted, so **one press is
+  exactly one tile**. `PlayerStepFraction` still exists as the step's clock (for a walk cycle),
+  but it is no longer a position. The killer still slides: it is a creature at a distance, and a
+  smooth drift reads as stalking without costing the player any navigation.
+- **Phase 5's exit is met: the tileset and the whole cast are compiled, committed and checked.**
+  The autotiler derives the 16 edge tiles and all 47 blob tiles from open-side masks (a diagonal
+  only counts when both of its edges are open, which is what makes it 47 and not 256), and
+  `Rig` draws the cast: the explorer (4 facings x idle/walk0/walk1/walk2), the killer (4 x 3), the
+  key and wisp (3 frames each), the barrier (fresh and cracked) and the arch (locked and open).
+  All three shipped themes carry 104–106 tiles in a 128x224 atlas, and the manifest lists every
+  tile's name and position.
+
+What changed in the previous pass (stacking fixes, movement cards, sprite compiler slice 1):
+
+- **Two real card bugs, found by asking whether effects stack as the run gets deeper.** (a) Two
+  caps ignored the run's cards: `Campaign.HeartsOnNextFloor` clamped carried hearts to the floor
+  definition's ceiling, so a card that raised the ceiling (Blood Pact) could never be filled — a
+  skip-heal into a four-heart floor was thrown away — and `GameFactory.CreateFloor` validated the
+  carried hearts against the unmodified floor, so the extra heart would have thrown once it got
+  through. Both now use the composed ceiling, and the factory still refuses a carry no card could
+  justify. (b) The composition itself was already right: additive effects add, the pace scale
+  multiplies, and every floor is built from its own definition with the run's totals applied once
+  — now with a test per bullet.
+- **Movement cards, on a real step time.** They could not exist before Phase 4: there was no
+  player step to trade against. `CardEffect` gains `PlayerStepScale`, `InvulnerabilitySeconds`,
+  `SprintStaminaScale` and the momentum knobs; `RunModifiers` multiplies the scales, adds the
+  seconds and clamps. Shipped: **Light Feet** (-15% step, one heart slot fewer), **Hollow Bones**
+  (+1.5 s grace, +25% step), **Sprint Lungs** (×1.5 stamina bar, aura +2) and **Momentum**, which
+  needed a rule rather than a number: each straight step earns 5% up to +25%, and the first step
+  after a turn costs 15% for 2 s. All of it is zero by default, so a run without the card keeps
+  the old cadence exactly.
+- **Sprite compiler, slice 1 (`tools/AssetForge`).** A console project with no packages, Core
+  referenced only for `SeededRandom`: `PixelCanvas` (index canvas with Rect, Line, Ellipse,
+  Speckle, Dither, Shade, Outline, Mirror, Stamp), `Palette` (16 roles derived from two hues on a
+  fixed lightness ladder, so contrast cannot drift with the theme), a dependency-free PNG encoder,
+  the organic-cave `CaveTiles` grammar, three shipped themes and a `--check` pass that validates
+  the themes, neighbouring palette distance and structural differences, and catches a committed
+  atlas that no longer matches the code. The atlases are committed to
+  `src/MazeGame.UI/Content/Generated`; **nothing in the game reads them yet**.
+
+Verified for this pass:
+
+- `dotnet build` → 0 warnings, 0 errors. `dotnet test` → **516/516 passing, 0 skipped** (19 new
+  cases this pass: the autotiler's masks and carves, the rig's facings, frames and props, and the
+  atlas layout).
+- `dotnet run --project tools/AssetForge -- --check` → `CHECK_OK themes=3 tiles=315`. Every atlas
+  was decoded independently (platform zlib, every chunk CRC) at 128x208 or 128x224, and a
+  recompile is byte-identical.
+- Real renderer through the whole campaign and both draft layouts, plus the movement probe:
+  **236 frames**, `DRAFT_OK`, `DRAFT4_OK four=4 two=2`, `MOVEMENT_OK step=0.11s halfway=0.50
+  sprinting=True stamina=0.91 idleStamina=1.00`, **2.3–2.4 ms/frame**. The run now ships the new
+  cards through real drafts: its final modifiers read
+  `WISPS -1   HEARTS -1   WISP STUN 1s   STEP +15%` — four different card kinds composing on the
+  floors that followed.
+
+## Previous pass: roguelike Phase 4 (movement feel)
+
+What changed in that pass:
+
+- **Timed steps, with the rules still on the grid.** `GameConfig.PlayerStepSeconds` gates when the
+  next step may start; the player's cell still changes the instant a step is accepted, so keys,
+  the arch, a catch and every path search still see one cell at a time. Zero means instant, which
+  is the seam every rule test was written against; `FloorDefinition.PlayerStepSeconds` is the
+  per-floor value (0.11 / 0.10 / 0.09 s against killer steps of 0.60 / 0.54 / 0.48), so the
+  shipped game is timed while the tests stay instant.
+- **One buffered input.** A direction pressed while the last step is cooling down is remembered for
+  the end of it — one only, so mashing cannot outrun the cadence. The buffer is spent on the step's
+  completion, dropped if it points into a wall, and cleared if it would fire after the game ends.
+- **Render interpolation.** `GameState` publishes `PreviousPlayer` / `PlayerStepFraction` and the
+  same pair for the killer; `RaylibRenderer` draws both figures (and the lantern's pool) from them.
+  Nothing in the rules can see a position between cells, and a respawn snaps rather than sliding.
+- **Sprint is a stamina resource, not a card.** Hold Shift for 1.4× speed while the 1.2 s bar
+  lasts, and it only drains while you are actually moving — holding Shift on the spot is free, so
+  the bar is full when you set off. An empty bar needs a quarter refill before it can be spent
+  again (otherwise sprint would flicker on and off). `SetSprinting` is a *request*: `IsSprinting` refuses it while aiming, when
+  the floor has instant steps, when the run is over, or when stamina is gone. The HUD grows a
+  sprint bar that only appears once stamina has been spent.
+- **Frontends.** The window reads walking through Core's **`StepRepeat`** — a tap is one tile, a
+  hold repeats at the cadence, and a release resets the gate — while the aim cursor stays
+  press-based (a hold would fly across the map) and Shift is sampled every frame. The console is unchanged: a
+  terminal cannot hold a key, so it stays one press per step and has no sprint.
+
+Verified in that pass:
+
+- `dotnet build` → 0 warnings, 0 errors. `dotnet test` → **449/449 passing, 0 skipped** (34 new
+  cases: timed steps, the buffer, sprint and stamina, the config rules, and the catalog's step
+  values).
+- Real renderer through the whole campaign and both draft layouts, plus a movement probe that
+  steps onto a tile, draws halfway through it and then sprints: **236 frames**, `DRAFT_OK`,
+  `DRAFT4_OK four=4 two=2`, `MOVEMENT_OK step=0.11s halfway=0.50 sprinting=True stamina=0.91
+  idleStamina=1.00`, **2.0–2.3 ms/frame**.
+- Redirected `--console` run: **3,217 frames**, heading `FLOOR 1/3 — THE SHALLOWS`, ended with the
+  loss summary, exit 0.
+- Window build stayed alive for 8 s with an empty log (stopped by the harness).
+
+## Previous pass: roguelike Phase 3 (the card draft)
+
+What changed in that pass:
+
+- **Cards are data, and they change a floor's inputs, not its rules.** `Card` carries an id, a
+  tier, a face sentence and a `CardEffect` of numbers; `CardCatalog` holds nine of them. Nothing in
+  `GameState` knows a card exists: `GameFactory.CreateFloor` composes the floor's config with
+  `RunModifiers` before building it, so all 415 tests still describe the same rules.
+- **`RunModifiers` composes and clamps.** Additive deltas (vision, aura distance, budgets, key
+  count, hearts, wisp rules), two absolute overrides (seal lifetime and wisp lifetime) and one
+  multiplier on the killer's pace. Clamps: vision never below 1 step once a card touched it,
+  budgets and counts never negative, the killer never faster than 0.05 s per step, and a heart
+  ceiling never below the hearts the player is carrying.
+- **The draft belongs to the run.** `Campaign` owns the held cards, the offers and the queue of
+  pending heals. `TryAdvanceFloor` **refuses to advance while a draft is open**, so no frontend can
+  skip the choice. Offers come from `DraftFactory`, seeded by the run seed and the floor number,
+  so a seeded run reproduces its drafts exactly. Skip = one heart, capped by the next floor.
+- **Nine cards, each with a tested price.** Wide Eyes (+2 vision / aura +3), Deep Roots (18 s
+  seals / one barrier fewer), Thornwright (+1 barrier / 4 s seals), Blood Pact (+1 heart / killer
+  12% faster), Second Wind (heal now / vision −1), Bait (wisp stuns / one wisp fewer), Smoke Wisp
+  (10 s pull / −2 vision while it burns), Trophy Hunter (heal per clear / +1 key per floor), Lucky
+  Find (+1 offer next draft / −1 the one after).
+- **Two new floor rules** back two of the cards: `LureStunSeconds` (a wisp can stun the killer)
+  and `LureVisionPenalty` (a burning wisp can shrink the torch). Both default to zero, so the
+  shipped game is unchanged without cards. The wisp's own light now also goes out when it expires
+  or is consumed (it used to linger until the player's next move).
+- **Draft guards.** No card is offered twice unless the catalog marks it stackable; a card that
+  contradicts a held one is not offered (Deep Roots vs Thornwright, which both set an absolute
+  seal time); no card may change vision once two held cards already do; and a card is withheld
+  when the part of the run that pays for it does not exist — which is why Lucky Find cannot appear
+  in the three-floor campaign at all.
+- **Frontends.** The window gained a draft screen between the floor-cleared card and the next
+  intro: cards in a grid (two rows above three offers), tier colour, the face sentence wrapped
+  inside each card, the run's totals underneath the title, and "next floor: n hearts". Choose
+  with A/D or the arrows, take with Enter/Space or a number key, skip with S. The console prints
+  the offers and takes a keypress, or skips automatically when input is piped.
+
+Verified in that pass:
+
+- `dotnet build` → 0 warnings, 0 errors. `dotnet test` → **415/415 passing, 0 skipped** (84 new
+  cases: every card's two halves, the clamps, draft determinism and guards, the campaign's draft
+  beats, and the two wisp rules).
+- Real renderer through a whole campaign with drafts — title, three intros, three cleared cards,
+  two drafts, the run summary — and a second four-floor run that draws the four-offer layout and
+  the two-offer draft that follows: **224 frames**, `DRAFT_OK` + `DRAFT4_OK four=4 two=2`,
+  **1.75–2.03 ms/frame (three runs)**. Cards visibly reach the next floor in the same log: `maxHearts 4`,
+  `step 0.422`, `barriers 4`, `WISPS -1`, `WISP STUN 1s`.
+- Redirected `--console` run: **5,402 frames**, heading `FLOOR 1/3 — THE SHALLOWS`, ended with the
+  loss summary, exit 0.
+- Window build stayed alive for 8 s with an empty log (stopped by the harness).
+
+## Previous pass: roguelike Phase 2 (floors and the campaign)
+
+What changed in that pass:
 
 - **A run object in Core.** `Campaign` owns the floor list, the current `GameState`, the hearts
   carried between floors and the run outcome. `CampaignStatus` (InProgress / Won / Lost) keeps the
@@ -39,7 +261,7 @@ What changed in this session (roguelike Phase 2: floors and campaign):
 - **The window says where you are.** The title bar becomes
   `Bioluminescent Depths — Floor n/3`, and the intro/cleared cards use the floor's accent.
 
-Verified for this pass:
+Verified in that pass:
 
 - `dotnet build` → 0 warnings, 0 errors. `dotnet test` → **331/331 passing** (30 new cases across
   campaign progression, the floor catalog, and factory floor/campaign building).
@@ -188,34 +410,110 @@ Core contains:
 
 ## Current Task
 
-None in flight. Roguelike **Phase 2 (floors and the campaign)** is implemented, tested and
-verified: a three-floor run with a floor intro, carried hearts, floor-cleared cards and a run
-summary. The next phase is **Phase 3: the card draft** — three offers after each floor, nine
-cards with honest drawbacks, and a skip-to-heal option.
+**Phase 6 is two-thirds done.** Slice 1 (the play screen) is complete: the floor is drawn from the
+committed atlases on a virtual canvas (`PixelLayout`, `PixelView`, `TileAtlas`, `AtlasManifest`,
+`TileMask`, `PixelRenderer`) with a per-cell lightmap and thin wall faces.
+
+Slice 2a (the art and the type) is done as of this pass:
+- **Three shape families.** A theme carries a `TileFamily`; `TileGrammar` dispatches to
+  `CaveTiles` (boulders), `WrongOrganicTiles` (roots, veins, membrane) or `WorkedStoneTiles`
+  (courses, grout, carved bands), and the families share no drawing code. Rootbound and Drowned
+  Halls are no longer the cave in a different hue, and `ThemeFamilyTests` compares palette
+  *indices* so a recolour is a red test.
+- **The compiled font.** `Glyphs` (5x7, ASCII 32–126), `FontAtlas` (6x8 cells plus the heart and
+  pip icons) and `font.png` in the generated folder, with its own `theme`/`tile` section in the
+  manifest; tile lines now carry an explicit width and height (default 16x16).
+- **The campaign cards in that font.** `PixelFont` blits text and icons at an integer scale, and
+  `PixelCards` draws the floor intro, floor-cleared, run-summary and caught cards. The vector
+  versions are deleted, not kept side by side.
+
+What is left of the phase: the **pictograms** (24x24 card art), the **UI chrome** (9-slice panels,
+card frames, hearts in the canvas) and the **draft screen**, which is the last screen still set in
+the system typeface.
 
 ## Next Steps
 
-1. **Play the campaign and judge the arc.** The three floors differ in name, accent, key count
-   and killer pace (0.60/0.54/0.48 s), and hearts carry. Only a play session can say whether
-   three floors is the right first act or whether the second floor already needs a rest beat.
-   The numbers are all in `FloorCatalog`.
-2. **Phase 3: the draft.** `Card` + `CardCatalog` (9 cards), `RunModifiers` composing over
-   `GameConfig.ForFloor`, a draft screen after `TryAdvanceFloor`, and skip-to-heal. Keep the
-   composition clamped and tested for both halves of every card, as `FUTURE.md` §4 specifies.
-3. **Give the draft a home in the run object.** `Campaign` should own the offers and the held
-   cards (seeded by run seed + floor), so the frontends only draw the choice and forward it.
-4. **Then Phase 4: movement feel.** Timed steps, one buffered input, render interpolation and
-   sprint; the rules stay grid-based, so the card and floor tests keep meaning what they meant.
-5. **Theme palettes are still Phase 8.** The floor's theme currently only picks an accent colour
-   and a name; the per-floor cave look arrives with the generated pixel art, so do not add
-   per-floor renderer hacks in the meantime.
-6. **Keep the seam clean.** `GameFactory.CreateFloor` remains the only place a floor is built,
-   and `Campaign` the only place hearts and floors are sequenced.
+1. **Phase 6 slice 2b: the last vector screen and the chrome.** `Pictograms` (24x24 card art) and
+   `UiForge` (9-slice panels, card frames) in `tools/AssetForge`, then the draft screen and the HUD
+   redrawn with `PixelCards`/`PixelFont` and the vector chrome retired. That removes the last of the
+   primitive drawing, and the window's top strip can shrink once the pills live in the canvas.
+2. **Play a run and judge the new look.** The floor is real pixel art now, and the harness measures
+   it (1.03 ms median, 62% of the canvas painted, no fog leaks) — but whether the 16 px tiles read
+   as a cave at 2x, and whether the thin wall faces are thick enough, needs a human at the window.
+   The knobs are `PixelLayout.CellSize`, `WallStrips.Thickness` and the light levels in
+   `PixelRenderer.UploadLight`.
+3. **Judge the movement.** Timed steps change difficulty more than any card does: instant movement
+   was generous, and the first real question is whether 0.11 s per cell plus a 0.6 s killer still
+   lets a player escape by reflex.
+4. **Momentum needs a play-test of its own.** It is the first card that changes how the game
+   *feels* rather than what it allows: 5% a step to +25%, and 15% slower for 2 s after a turn.
+   The numbers are one record in `CardCatalog`; the shape (ramp vs. flat) is the open question.
+5. **Get the window screens judged by eye.** The draft screen, the interpolated figures, the
+   stamina bar and now the card faces (13 of them) are drawn through the real renderer, but no
+   framebuffer can be read here (see Known Issues).
+6. **Keep the seams clean.** `GameFactory.CreateFloor` remains the only place a floor is built
+   (now with the run's modifiers), and `Campaign` the only place floors, hearts and drafts are
+   sequenced. Movement timing lives in `GameState`, never in a frontend.
 7. Re-run `dotnet build`, `dotnet test`, the renderer harness and a window session after every
    phase; update `PROGRESS.md` and the phase table in `FUTURE.md`.
 
 ## Completed
 
+- [x] 2026-10-20 — Phase 6 slice 2a: three shape families and the compiled font. `TileFamily` +
+      `TileGrammar` dispatch floor/wall/face/props to `CaveTiles`, `WrongOrganicTiles` and
+      `WorkedStoneTiles` (three shape languages, no shared drawing code), and `ThemeFamilyTests`
+      proves on palette indices that the shipped floors are different places rather than three
+      tints. `Glyphs`/`FontAtlas` compile a 5x7 ASCII face into its own `font.png` (98 tiles) with
+      a manifest section; `PixelFont` and `PixelCards` set the floor intro, cleared, run-summary and
+      caught cards in it, and `RaylibRenderer` lost the four vector card implementations.
+      `--check` green at 334 tiles; 583 tests pass.
+- [x] 2026-10-20 — Phase 6 slice 1: the pixel renderer. The floor is drawn from the committed
+      atlases into a 16 px-per-cell virtual canvas (`PixelLayout` 256x274, `PixelView` render target,
+      integer scale 2x with letterboxing), through `AtlasManifest`/`AssetPaths`/`TileAtlas` with a
+      fail-loud lookup, `TileMask` for the wall faces (cross-checked against the compiler's blob
+      table), a per-cell multiplied lightmap for the lantern, fog and the killer's tint, and the
+      cast animated from the step clocks. `tools/AssetForge` grew `WallStrips` (4 thin faces per
+      theme, 327 tiles) because a cell-per-room maze needs walls *between* cells. `RaylibRenderer`
+      exposes `DrawOverlay` so the HUD is one implementation for both renderers. 46 new tests (574
+      total), asset `--check` green, harness at **1.03 ms median** over 200 frames.
+- [x] 2026-10-20 — Snapped movement and the rest of Phase 5. The window draws the explorer on its
+      own cell (`CellCenter`) instead of interpolating, so one press is one tile; the killer keeps
+      its slide and `PlayerStepFraction` becomes a walk-cycle clock. `Autotiler` derives the 16
+      edge and 47 blob wall tiles from open-side masks (corner bits canonicalised), and `Rig`
+      draws the whole cast: explorer 4x4 poses, killer 4x3, key and wisp 3 frames, barrier
+      fresh/cracked, arch locked/open. `SpriteCompiler` lays 8 tiles to a row into 128x208–224
+      atlases (105/104/106 tiles per theme, 315 total) and the manifest lists every tile's name
+      and position. 19 new tests (516 total), `CHECK_OK themes=3 tiles=315`, build 0/0, harness
+      unchanged.
+- [x] 2026-10-20 — Card stacking fixes, movement cards, sprite compiler slice 1. Two caps that
+      ignored the run's cards: `Campaign.HeartsOnNextFloor` now caps at
+      `floor.MaxHearts + modifiers.MaxHearts`, and `GameFactory.CreateFloor` validates the carried
+      hearts against the *composed* floor instead of the floor definition, so a ceiling a card
+      raised can actually be used. New `CardEffect`/`RunModifiers` fields: `PlayerStepScale`,
+      `InvulnerabilitySeconds`, `SprintStaminaScale`, and momentum's four numbers; `GameState`
+      grows the momentum rule (straight-step ramp, turn penalty window). Four cards ship —
+      Light Feet, Momentum, Sprint Lungs, Hollow Bones — taking the catalog to 13. `tools/AssetForge`
+      is new: `PixelCanvas`, `Palette`, a dependency-free PNG encoder, `CaveTiles`, three themes,
+      a committed atlas set and a `--check` pass. 48 new tests (497 total), build 0/0, harness
+      `DRAFT_OK`/`DRAFT4_OK`/`MOVEMENT_OK`, `CHECK_OK themes=3 tiles=12`.
+- [x] 2026-10-20 — Roguelike Phase 4: movement feel. `GameConfig.PlayerStepSeconds` (0 = instant,
+      the test seam), per-floor values in `FloorDefinition` (0.11/0.10/0.09), one buffered input
+      spent at the end of a step, `PreviousPlayer`/`PlayerStepFraction` and the killer's pair for
+      render interpolation, and sprint as a stamina resource (1.4×, a 1.2 s bar that drains only
+      while a step runs, 25% refill gate, refused while aiming or on an instant floor). The window reads walking as held keys and
+      samples Shift; the renderer draws both figures and the lantern pool from the interpolated
+      positions and shows a sprint bar once stamina is spent. 34 new tests (449 total), harness
+      `MOVEMENT_OK … stamina=0.91 idleStamina=1.00` across 236 frames.
+- [x] 2026-10-20 — Roguelike Phase 3: the card draft. `Card`/`CardEffect`/`CardCatalog` (9
+      cards), `RunModifiers` with clamped composition over `GameConfig` (now a record, so a card
+      cannot silently drop a tuned value), `Draft` + seeded `DraftFactory` with duplicate,
+      incompatibility, vision-cap and short-run guards, and `Campaign` owning the offers, the
+      held cards, the pending heals and the gate that blocks `TryAdvanceFloor` until the draft is
+      resolved. Two new floor rules for two cards: `LureStunSeconds` and `LureVisionPenalty`;
+      `ClearLure` now recomputes visibility, so an expired or consumed wisp stops lighting cells.
+      Window draft screen (grid, wrapped faces, run totals) and a console draft prompt. 84 new
+      tests (415 total), 224 renderer frames through two drafts and a four-offer layout at
+      1.75–2.03 ms/frame (three runs).
 - [x] 2026-10-20 — Phase 1: solution, three projects, project references,
       `Directory.Build.props`, `.editorconfig`, `.gitignore`, folder layout and docs.
 - [x] 2026-10-20 — Phase 2: `DisjointSet` with path compression and union by size
@@ -341,6 +639,59 @@ cards with honest drawbacks, and a skip-to-heal option.
 
 ## Known Issues / Bugs
 
+- **The menus are still vector.** The play screen draws from the atlases, but the title, floor
+  intro, draft grid and run summary are still the old primitive renderer, because the font atlas
+  that would let them be drawn in pixels does not exist yet. The two look different on purpose for
+  now; slice 2 of the phase replaces them.
+- **The solid wall and autotile families have no consumer yet.** The 16 edge and 47 blob tiles
+  describe a cell that *is* wall, which this maze does not have: walls live between cells, so the
+  renderer uses the thin faces instead. They stay compiled and validated for the floors whose
+  chasm and veto cells arrive in Phase 8.
+- **The look is measured, not judged.** The harness proves the canvas is painted, the fog does not
+  leak, the lantern is the brightest pixel and the reticle lands (see the numbers above), but
+  nobody has looked at `/tmp/mzgame-pixel-shallows.png` and said whether it reads as a cave. The
+  rig's proportions, the 5 px wall thickness and the light levels are all guesses until then.
+- **No props or decals layer.** `FUTURE.md` §6.3 asks for mushrooms, puddles, bones and chains on
+  their own layer with y-sorting; the atlas has no prop tiles yet, so the floor is bare tiles and
+  the cast.
+- **The PNG encoder does not compress.** Atlases are stored-deflate, so a 64x16 strip is ~4 KB
+  instead of ~1 KB. That is deliberate for this slice (byte-identical output, no packages); if the
+  committed sets grow, add a fixed Huffman pass and re-commit every atlas in one go.
+- **Momentum is a guess.** 5% per straight step, capped at 25%, with 15% for 2 s after a turn.
+  Nothing has played it: the card could feel like a reward for corridor-running or like a tax on
+  corners, and those are opposite designs.
+- **Light Feet's heart cost is invisible at full health.** The clamp never takes a heart the player
+  is holding, so the card only bites once wounded or when a heal lands. That is intended, but the
+  face text does not explain it.
+- **Movement feel is unjudged by eye.** The cadence, the buffer and the interpolation are measured
+  (`MOVEMENT_OK step=0.11s halfway=0.50`), but whether walking *feels* right — and whether the
+  killer's slide reads as a creature rather than a drifting marker — needs a human at the window.
+  The knobs are `FloorDefinition.PlayerStepSeconds` per floor and the two sprint numbers.
+- **Sprint has no diegetic cost yet.** `FUTURE.md` §5.2 asks for a footstep ring in the fog while
+  sprinting, and §5.3 for the killer turning toward your last sprint footstep. Neither exists:
+  sprint currently costs only stamina, so its drawback is mechanical rather than visible.
+- **The console cannot sprint or hold a direction.** A terminal key press is a single event, so
+  `--console` movement stays one press per cell and Shift is unmapped there. The window is the
+  only place the movement feel is real.
+- **The console draft prompt was never driven interactively.** The window's draft screen is
+  verified through the real renderer, and the campaign API behind the console prompt is covered
+  by tests, but a piped console run can never clear a floor (the player cannot move), so the
+  "press 1..n / S" branch has only been read, not exercised. A human at a terminal should run
+  `--console`, clear floor 1 and take a card once.
+- **The draft screen's look is unjudged.** Card sizing, the two-row layout above three offers and
+  the wrapped face text are drawn and measured, but the pixels cannot be read here. The knobs are
+  local to `RaylibRenderer.DrawDraft`/`DrawCardFace`.
+- **Lucky Find cannot appear in the shipped run.** Its price is paid one draft later, and a
+  three-floor run has no second draft after its first, so the draft withholds it rather than offer
+  a free upgrade. It is catalogued and tested, and appears in runs of four or more floors. That is
+  deliberate (see `DECISIONS.md`) but means one of the thirteen cards is currently unreachable.
+- **Card balance is unproven.** Thirteen trades were chosen for rule expressiveness, not for a tuned
+  curve; `Blood Pact` (+1 heart for a 12% faster killer) and `Deep Roots` (18 s seals for one
+  barrier fewer) are the two most likely to be either mandatory or a trap. The numbers are in
+  `CardCatalog`.
+- **Tiers do not gate by floor yet.** With three floors, the planned bands (commons 1–8, uncommons
+  from 5, rares from 11) would collapse onto floor 1, so the tier currently weights the draw and
+  colours the card instead. The bands arrive with the twenty-floor campaign.
 - **The campaign has no save yet.** Quitting mid-run throws the run away; the save file is
   Phase 8 because it depends on the final floor/card data. A run is currently short enough
   (three floors) that this is tolerable, but it must not survive into the twenty-floor build.
@@ -426,7 +777,8 @@ Run these from the repository root (the folder containing `MazeGame.sln`):
 
 ```bash
 dotnet build                      # must report 0 Warning(s), 0 Error(s)
-dotnet test                       # currently 331/331 passing
+dotnet test                       # currently 574/574 passing
+dotnet run --project tools/AssetForge -- --check   # atlases and themes are healthy
 dotnet run --project src/MazeGame.UI              # Raylib window
 dotnet run --project src/MazeGame.UI -- --console # terminal fallback
 ```
@@ -440,6 +792,7 @@ If `dotnet` is not on `PATH` (this is the case on the setup machine):
 ```
 
 Controls: on the title, W/S or the arrows select and Enter/Space confirms. In play, WASD or arrow
-keys move, `B` or Space aims a barrier, `R` aims a wisp (then WASD moves the cursor,
-B/Space/Enter places it, Esc cancels), and Q or Esc quits. After a run, `R` or Enter descends
+keys move, **hold Shift to sprint** (window only; the console has no sprint yet), `B` or Space aims
+a barrier, `R` aims a wisp (then WASD moves the cursor, B/Space/Enter places it, Esc cancels), and
+Q or Esc quits. After a run, `R` or Enter descends
 again. The same keys work in the window and in the terminal.

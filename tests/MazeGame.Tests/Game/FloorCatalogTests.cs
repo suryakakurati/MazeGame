@@ -84,6 +84,33 @@ public sealed class FloorCatalogTests
     }
 
     [Fact]
+    public void Shipped_EveryFloorHasTimedMovementAndOutrunsTheKiller()
+    {
+        foreach (var floor in FloorCatalog.Shipped)
+        {
+            Assert.True(
+                floor.PlayerStepSeconds > 0,
+                $"floor {floor.Number} would be instant, which is a test-floor setting, not a shipped one");
+
+            // The chase's shape comes from this ratio: the player must always be the faster one.
+            Assert.True(
+                floor.PlayerStepSeconds < floor.EnemyStepSeconds,
+                $"floor {floor.Number} would let the killer outrun the player");
+        }
+    }
+
+    [Fact]
+    public void Shipped_LaterFloorsTightenThePlayerStepToo()
+    {
+        for (var index = 1; index < FloorCatalog.Shipped.Count; index++)
+        {
+            Assert.True(
+                FloorCatalog.Shipped[index].PlayerStepSeconds <= FloorCatalog.Shipped[index - 1].PlayerStepSeconds,
+                "a later floor must not give the player more time per step");
+        }
+    }
+
+    [Fact]
     public void ByNumber_ReturnsTheFloorWithThatNumber()
     {
         var floor = FloorCatalog.ByNumber(2);

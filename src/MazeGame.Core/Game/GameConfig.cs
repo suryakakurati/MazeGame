@@ -19,10 +19,12 @@ namespace MazeGame.Core.Game;
 /// </para>
 /// <para>
 /// The values are init-only, so a config can be shared safely once built — nothing can
-/// change it mid-game.
+/// change it mid-game. It is a record because cards compose a run's modifiers <i>over</i> a
+/// floor's config with a <c>with</c> expression: every field is copied by the compiler, so a
+/// new tuning number cannot be silently forgotten when a card is applied.
 /// </para>
 /// </remarks>
-public sealed class GameConfig
+public sealed record GameConfig
 {
     /// <summary>
     /// Gets the number of maze rows. Defaults to 15.
@@ -101,11 +103,101 @@ public sealed class GameConfig
     public double LureSeconds { get; init; } = 6.0;
 
     /// <summary>
+    /// Gets how long the killer is stunned when it reaches a wisp. Defaults to zero, which means
+    /// the decoy only costs it the trip. Must be finite and not negative.
+    /// </summary>
+    /// <remarks>
+    /// A stun is the same window as the one after a catch: the killer neither moves nor banks
+    /// progress towards its next step, so a card that grants one buys the player real distance
+    /// rather than a step that lands the moment the stun ends.
+    /// </remarks>
+    public double LureStunSeconds { get; init; }
+
+    /// <summary>
+    /// Gets how many steps of vision a burning wisp costs. Defaults to zero, so the wisp costs
+    /// nothing to watch. Must not be negative.
+    /// </summary>
+    /// <remarks>
+    /// This is the drawback half of a card, not a rule of the wisp: the wisp is a beacon, and a
+    /// card may make watching it expensive. Visibility is recomputed when a wisp starts and when
+    /// it clears, so the penalty really does come and go with the glow.
+    /// </remarks>
+    public int LureVisionPenalty { get; init; }
+
+    /// <summary>
     /// Gets the seconds the killer needs to enter a normal cell. Defaults to 0.6, which is
     /// slow enough for the player to keep walking away. A barriered cell multiplies this by
     /// <see cref="ObstacleCost"/>. Must be positive.
     /// </summary>
     public double EnemyStepSeconds { get; init; } = 0.6;
+
+    /// <summary>
+    /// Gets how long the player waits between steps. Defaults to zero, which means movement is
+    /// instant — the behaviour every rule test and tool relies on. The shipped floors override
+    /// it (about 0.11 s, roughly five and a half times the killer's pace). Must be finite and
+    /// not negative.
+    /// </summary>
+    /// <remarks>
+    /// The rules stay grid-based: the player's cell changes the moment a step is accepted, and this
+    /// value only gates when the *next* step may start. That is what lets the renderer slide the
+    /// figure between cells without any rule ever seeing a position between two cells.
+    /// </remarks>
+    public double PlayerStepSeconds { get; init; }
+
+    /// <summary>
+    /// Gets how much faster sprinting is than walking. Defaults to 1.4 (40% faster). Must be at
+    /// least 1 and finite.
+    /// </summary>
+    public double SprintMultiplier { get; init; } = 1.4;
+
+    /// <summary>
+    /// Gets how many seconds of sprinting a full stamina bar holds. Defaults to 1.2. Zero disables
+    /// sprinting entirely. Must be finite and not negative.
+    /// </summary>
+    /// <remarks>
+    /// Sprint is a resource rather than a card: it makes the first moment of an escape better and
+    /// the rest worse, and a run that spends it on feeling fast instead of breaking line of sight
+    /// is a run that gets caught.
+    /// </remarks>
+    public double SprintStaminaSeconds { get; init; } = 1.2;
+
+    /// <summary>
+    /// Gets how long an empty stamina bar takes to refill. Defaults to 1.6. Must be finite and
+    /// positive.
+    /// </summary>
+    public double SprintRecoverySeconds { get; init; } = 1.6;
+
+    /// <summary>
+    /// Gets how much of a speed bonus each straight step in a row earns, as a fraction. Zero, the
+    /// default, switches momentum off entirely. Must be finite and not negative.
+    /// </summary>
+    /// <remarks>
+    /// Momentum is a run rule rather than a player mode: it only changes the length of the next
+    /// step, so every rule still sees the player on one cell at a time. A card is what turns it on
+    /// (see <c>momentum</c>); a run without the card pays nothing for turning.
+    /// </remarks>
+    public double MomentumRampPerStep { get; init; }
+
+    /// <summary>
+    /// Gets the most speed a straight run may earn, as a fraction. Zero switches momentum off.
+    /// Defaults to zero. Must be finite and not negative.
+    /// </summary>
+    public double MomentumMaxBonus { get; init; }
+
+    /// <summary>
+    /// Gets how much slower the first step after a turn is, as a fraction. Defaults to zero, so
+    /// turning costs nothing unless a card says so. Must be finite and not negative.
+    /// </summary>
+    public double TurnPenaltyScale { get; init; }
+
+    /// <summary>
+    /// Gets how long the turn penalty lasts. Defaults to zero. Must be finite and not negative.
+    /// </summary>
+    /// <remarks>
+    /// The penalty is a window rather than a single step, which is what makes a corner feel like
+    /// a cost: the killer closes while the player is still recovering from the turn.
+    /// </remarks>
+    public double TurnPenaltySeconds { get; init; }
 
     /// <summary>
     /// Gets the radius, in walking steps, that the player can see. Defaults to 3. Zero means
@@ -299,6 +391,23 @@ public sealed class GameConfig
                 "A wisp must last a finite, positive number of seconds.");
         }
 
+        // Written as "not greater than or equal to zero" so NaN is rejected as well as negatives.
+        if (!(LureStunSeconds >= 0) || double.IsInfinity(LureStunSeconds))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(LureStunSeconds),
+                LureStunSeconds,
+                "The stun a wisp buys must be a finite, non-negative number of seconds.");
+        }
+
+        if (LureVisionPenalty < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(LureVisionPenalty),
+                LureVisionPenalty,
+                "A wisp cannot grant vision; the penalty is a non-negative number of steps.");
+        }
+
         if (DeadEndBraidPercent is < 0 or > 100)
         {
             throw new ArgumentOutOfRangeException(
@@ -355,6 +464,71 @@ public sealed class GameConfig
                 nameof(EnemyStepSeconds),
                 EnemyStepSeconds,
                 "The killer's step time must be a finite, positive number of seconds.");
+        }
+
+        // Written as "not greater than or equal to zero" so NaN is rejected as well as negatives.
+        if (!(PlayerStepSeconds >= 0) || double.IsInfinity(PlayerStepSeconds))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(PlayerStepSeconds),
+                PlayerStepSeconds,
+                "The player's step time must be a finite, non-negative number of seconds.");
+        }
+
+        if (!(SprintMultiplier >= 1) || double.IsInfinity(SprintMultiplier))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(SprintMultiplier),
+                SprintMultiplier,
+                "Sprinting cannot be slower than walking; the multiplier must be at least 1.");
+        }
+
+        if (!(SprintStaminaSeconds >= 0) || double.IsInfinity(SprintStaminaSeconds))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(SprintStaminaSeconds),
+                SprintStaminaSeconds,
+                "The sprint stamina must be a finite, non-negative number of seconds.");
+        }
+
+        if (!(SprintRecoverySeconds > 0) || double.IsInfinity(SprintRecoverySeconds))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(SprintRecoverySeconds),
+                SprintRecoverySeconds,
+                "An empty stamina bar must refill in a finite, positive number of seconds.");
+        }
+
+        if (!(MomentumRampPerStep >= 0) || double.IsInfinity(MomentumRampPerStep))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MomentumRampPerStep),
+                MomentumRampPerStep,
+                "The momentum ramp must be a finite, non-negative fraction.");
+        }
+
+        if (!(MomentumMaxBonus >= 0) || double.IsInfinity(MomentumMaxBonus))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MomentumMaxBonus),
+                MomentumMaxBonus,
+                "The momentum cap must be a finite, non-negative fraction.");
+        }
+
+        if (!(TurnPenaltyScale >= 0) || double.IsInfinity(TurnPenaltyScale))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(TurnPenaltyScale),
+                TurnPenaltyScale,
+                "The turn penalty must be a finite, non-negative fraction.");
+        }
+
+        if (!(TurnPenaltySeconds >= 0) || double.IsInfinity(TurnPenaltySeconds))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(TurnPenaltySeconds),
+                TurnPenaltySeconds,
+                "The turn penalty must last a finite, non-negative number of seconds.");
         }
 
         if (VisionRadius < 0)
@@ -425,6 +599,7 @@ public sealed class GameConfig
             Columns = floor.Columns,
             KeyCount = floor.KeyCount,
             EnemyStepSeconds = floor.EnemyStepSeconds,
+            PlayerStepSeconds = floor.PlayerStepSeconds,
             StartingHearts = startingHearts,
             MaxHearts = floor.MaxHearts,
 
@@ -436,6 +611,8 @@ public sealed class GameConfig
             SealedBarrierCost = SealedBarrierCost,
             LureCount = LureCount,
             LureSeconds = LureSeconds,
+            LureStunSeconds = LureStunSeconds,
+            LureVisionPenalty = LureVisionPenalty,
             VisionRadius = VisionRadius,
             ExtraLoops = ExtraLoops,
             DeadEndBraidPercent = DeadEndBraidPercent,
@@ -444,6 +621,13 @@ public sealed class GameConfig
             InvulnerabilitySeconds = InvulnerabilitySeconds,
             RespawnDistance = RespawnDistance,
             RespawnStunSeconds = RespawnStunSeconds,
+            SprintMultiplier = SprintMultiplier,
+            SprintStaminaSeconds = SprintStaminaSeconds,
+            MomentumRampPerStep = MomentumRampPerStep,
+            MomentumMaxBonus = MomentumMaxBonus,
+            TurnPenaltyScale = TurnPenaltyScale,
+            TurnPenaltySeconds = TurnPenaltySeconds,
+            SprintRecoverySeconds = SprintRecoverySeconds,
             Seed = Seed,
         };
 

@@ -195,7 +195,7 @@ public sealed class GameFactoryTests
     {
         var floor = FloorCatalog.ByNumber(3);
 
-        var state = Factory().CreateFloor(floor, startingHearts: 2);
+        var state = Factory().CreateFloor(floor, startingHearts: 2, RunModifiers.None);
 
         Assert.Equal(floor.Rows, state.Maze.Rows);
         Assert.Equal(floor.Columns, state.Maze.Columns);
@@ -209,7 +209,7 @@ public sealed class GameFactoryTests
     [Fact]
     public void CreateFloor_WithOneHeartLeft_StartsWithOneHeart()
     {
-        var state = Factory().CreateFloor(FloorCatalog.ByNumber(1), startingHearts: 1);
+        var state = Factory().CreateFloor(FloorCatalog.ByNumber(1), startingHearts: 1, RunModifiers.None);
 
         Assert.Equal(1, state.Hearts);
         Assert.Equal(3, state.MaxHearts);
@@ -221,15 +221,41 @@ public sealed class GameFactoryTests
         var floor = FloorCatalog.ByNumber(1);
 
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => Factory().CreateFloor(floor, startingHearts: floor.MaxHearts + 1));
+            () => Factory().CreateFloor(floor, startingHearts: floor.MaxHearts + 1, RunModifiers.None));
+    }
+
+    [Fact]
+    public void CreateFloor_WhenACardRaisesTheCeiling_AcceptsHeartsAboveTheFloorsOwn()
+    {
+        var floor = FloorCatalog.ByNumber(1);
+        var bloodPact = RunModifiers.None.With(CardCatalog.ById("blood-pact")!);
+
+        var state = Factory().CreateFloor(floor, startingHearts: 4, bloodPact);
+
+        Assert.Equal(4, state.Hearts);
+        Assert.Equal(4, state.MaxHearts);
+    }
+
+    [Fact]
+    public void CreateFloor_AppliesTheCardsToEachFloorsOwnNumbers()
+    {
+        var floor = FloorCatalog.ByNumber(3);
+        var bloodPact = RunModifiers.None.With(CardCatalog.ById("blood-pact")!);
+
+        var state = Factory().CreateFloor(floor, startingHearts: 3, bloodPact);
+
+        // Floor 3 is faster than floor 1 on its own; the card's 12% multiplies that floor's own
+        // pace instead of compounding on the pace of the floor before it.
+        Assert.Equal(floor.EnemyStepSeconds * 0.88, state.Config.EnemyStepSeconds, precision: 9);
+        Assert.Equal(floor.MaxHearts + 1, state.MaxHearts);
     }
 
     [Fact]
     public void CreateFloor_WithTheSameSeed_ProducesTheSameFloor()
     {
         var floor = FloorCatalog.ByNumber(2);
-        var first = Factory().CreateFloor(floor, startingHearts: 3);
-        var second = Factory().CreateFloor(floor, startingHearts: 3);
+        var first = Factory().CreateFloor(floor, startingHearts: 3, RunModifiers.None);
+        var second = Factory().CreateFloor(floor, startingHearts: 3, RunModifiers.None);
 
         Assert.Equal(first.Player, second.Player);
         Assert.Equal(first.Enemy, second.Enemy);
@@ -240,8 +266,8 @@ public sealed class GameFactoryTests
     [Fact]
     public void CreateFloor_DifferentFloorsOfASeededRun_GetDifferentMazes()
     {
-        var first = Factory().CreateFloor(FloorCatalog.ByNumber(1), startingHearts: 3);
-        var second = Factory().CreateFloor(FloorCatalog.ByNumber(2), startingHearts: 3);
+        var first = Factory().CreateFloor(FloorCatalog.ByNumber(1), startingHearts: 3, RunModifiers.None);
+        var second = Factory().CreateFloor(FloorCatalog.ByNumber(2), startingHearts: 3, RunModifiers.None);
 
         Assert.NotEqual(MazeSignature(first), MazeSignature(second));
     }

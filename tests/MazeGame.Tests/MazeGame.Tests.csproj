@@ -16,6 +16,14 @@
   <ItemGroup>
     <Using Include="Xunit" />
     <ProjectReference Include="..\..\src\MazeGame.Core\MazeGame.Core.csproj" />
+    <!-- The sprite compiler is tested through its public API, exactly as the tool uses it. -->
+    <ProjectReference Include="..\..\tools\AssetForge\AssetForge.csproj" />
+    <!--
+      The UI's pure rendering helpers (manifest parsing, tile masks, the integer scale) are tested
+      here too: they are the contract with the committed atlases, and a drift between the game and
+      the compiler must be a red test. Nothing in these tests opens a window.
+    -->
+    <ProjectReference Include="..\..\src\MazeGame.UI\MazeGame.UI.csproj" />
   </ItemGroup>
 
 </Project>

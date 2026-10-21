@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MazeGame.Core.Game;
 using MazeGame.Core.Maze;
 using MazeGame.Core.Pathfinding;
@@ -12,12 +13,17 @@ namespace MazeGame.Tests.Game;
 /// victory, hearts carried between floors, and the two ways a run can end.
 /// </summary>
 /// <remarks>
-/// The builder here makes a 1x3 corridor per floor — player (0,0), exit (0,1), killer (0,2) — so a
-/// floor can be cleared by one step east and lost by two ticks. That keeps these tests about the
-/// campaign, not about maze generation.
+/// The builder here makes a 1x6 corridor per floor — player (0,0), exit (0,1), killer (0,5) — so a
+/// floor can be cleared by one step east and the player can be wounded deliberately by ticking.
+/// That keeps these tests about the campaign, not about maze generation. A cleared floor opens a
+/// draft, so every advance here resolves it first; the draft's own rules live in
+/// <see cref="CampaignDraftTests"/>.
 /// </remarks>
 public sealed class CampaignTests
 {
+    /// <summary>The fixed run seed these tests draft from.</summary>
+    private const int RunSeed = 7;
+
     [Fact]
     public void NewCampaign_StartsOnTheFirstFloorWithFullHearts()
     {
@@ -30,6 +36,8 @@ public sealed class CampaignTests
         Assert.Equal(0, campaign.FloorsCleared);
         Assert.False(campaign.IsFloorCleared);
         Assert.Equal(CampaignStatus.InProgress, campaign.Status);
+        Assert.Empty(campaign.Modifiers.Cards);
+        Assert.Null(campaign.Draft);
     }
 
     [Fact]
@@ -42,6 +50,7 @@ public sealed class CampaignTests
         Assert.True(campaign.IsFloorCleared);
         Assert.Equal(1, campaign.FloorsCleared);
         Assert.Equal(3, campaign.MaxHearts);
+        Assert.Equal(CampaignStatus.InProgress, campaign.Status);
     }
 
     [Fact]
@@ -49,18 +58,54 @@ public sealed class CampaignTests
     {
         var campaign = CampaignOf(3);
 
-        // Two ticks: the killer catches the player once, costing one heart.
-        campaign.Floor.Tick(1.0);
-        campaign.Floor.Tick(1.0);
-        Assert.Equal(2, campaign.Hearts);
+        WoundTo(campaign, hearts: 2);
 
         ClearFloor(campaign);
+
+        // Taking a card carries no hearts, so the damage survives the transition.
+        ResolveDraftWithACard(campaign);
 
         Assert.True(campaign.TryAdvanceFloor());
         Assert.Equal(2, campaign.FloorNumber);
         Assert.Equal(2, campaign.Hearts);
         Assert.Equal(3, campaign.MaxHearts);
         Assert.Equal(CampaignStatus.InProgress, campaign.Status);
+    }
+
+    [Fact]
+    public void ASkipHeal_IsNotClippedByTheFloorsOwnCeiling()
+    {
+        // "blood-pact" buys a heart's worth of ceiling; the run must be able to fill it.
+        var campaign = CampaignDrafting("blood-pact");
+
+        Assert.True(campaign.TakeCard(campaign.Draft!.Offers.First(offer => offer.Id == "blood-pact")));
+        Assert.True(campaign.TryAdvanceFloor());
+        Assert.Equal(4, campaign.MaxHearts);
+
+        ClearFloor(campaign);
+        Assert.True(campaign.SkipDraft());
+
+        // The floor definition's own ceiling is 3, so a cap taken from it alone would throw this
+        // heal away and the card's extra slot could never be filled.
+        Assert.Equal(4, campaign.HeartsOnNextFloor);
+        Assert.True(campaign.TryAdvanceFloor());
+
+        Assert.Equal(4, campaign.Hearts);
+        Assert.Equal(4, campaign.MaxHearts);
+    }
+
+    [Fact]
+    public void TryAdvanceFloor_KeepsTheCardsTheRunAlreadyHolds()
+    {
+        var campaign = CampaignOf(3);
+
+        ClearFloor(campaign);
+        var picked = ResolveDraftWithACard(campaign);
+        Assert.True(campaign.TryAdvanceFloor());
+
+        Assert.Single(campaign.Modifiers.Cards);
+        Assert.Equal(Assert.IsType<Card>(picked).Id, campaign.Modifiers.Cards[0].Id);
+        Assert.Equal(2, campaign.FloorNumber);
     }
 
     [Fact]
@@ -79,9 +124,11 @@ public sealed class CampaignTests
         var campaign = CampaignOf(3);
 
         ClearFloor(campaign);
+        ResolveDraftWithACard(campaign);
         Assert.True(campaign.TryAdvanceFloor());
 
         ClearFloor(campaign);
+        ResolveDraftWithACard(campaign);
         Assert.True(campaign.TryAdvanceFloor());
 
         Assert.True(campaign.IsOnLastFloor);
@@ -90,16 +137,19 @@ public sealed class CampaignTests
         Assert.Equal(3, campaign.FloorsCleared);
         Assert.Equal(CampaignStatus.Won, campaign.Status);
         Assert.False(campaign.TryAdvanceFloor());
+        Assert.Null(campaign.Draft);
     }
 
     [Fact]
     public void LosingTheLastHeart_EndsTheRunImmediately()
     {
         var fragileFloor = Floor(1) with { MaxHearts = 1 };
-        var campaign = new Campaign([fragileFloor], BuildFloor);
+        var campaign = new Campaign([fragileFloor], BuildFloor, RunSeed);
 
-        campaign.Floor.Tick(1.0);
-        campaign.Floor.Tick(1.0);
+        for (var tick = 0; tick < 30 && campaign.Floor.Status == GameStatus.InProgress; tick++)
+        {
+            campaign.Floor.Tick(1.0);
+        }
 
         Assert.Equal(GameStatus.Caught, campaign.Floor.Status);
         Assert.Equal(0, campaign.Hearts);
@@ -116,7 +166,7 @@ public sealed class CampaignTests
             Floor(2),
             Floor(3),
         };
-        var campaign = new Campaign(floors, BuildFloor);
+        var campaign = new Campaign(floors, BuildFloor, RunSeed);
 
         floors.Clear();
 
@@ -128,7 +178,7 @@ public sealed class CampaignTests
     public void Campaign_WithNoFloors_Throws()
     {
         Assert.Throws<ArgumentException>(
-            () => new Campaign(Array.Empty<FloorDefinition>(), BuildFloor));
+            () => new Campaign(Array.Empty<FloorDefinition>(), BuildFloor, RunSeed));
     }
 
     [Fact]
@@ -136,7 +186,7 @@ public sealed class CampaignTests
     {
         var floors = new[] { Floor(1), Floor(3), Floor(2) };
 
-        Assert.Throws<ArgumentException>(() => new Campaign(floors, BuildFloor));
+        Assert.Throws<ArgumentException>(() => new Campaign(floors, BuildFloor, RunSeed));
     }
 
     [Fact]
@@ -144,21 +194,21 @@ public sealed class CampaignTests
     {
         var invalid = Floor(1) with { Name = "  " };
 
-        Assert.Throws<ArgumentException>(() => new Campaign([invalid], BuildFloor));
+        Assert.Throws<ArgumentException>(() => new Campaign([invalid], BuildFloor, RunSeed));
     }
 
     [Fact]
     public void Campaign_WhenTheBuilderReturnsNull_Throws()
     {
         Assert.Throws<InvalidOperationException>(
-            () => new Campaign([Floor(1)], (_, _) => null!));
+            () => new Campaign([Floor(1)], (_, _, _) => null!, RunSeed));
     }
 
     [Fact]
     public void Campaign_WithNullArguments_Throws()
     {
-        Assert.Throws<ArgumentNullException>(() => new Campaign(null!, BuildFloor));
-        Assert.Throws<ArgumentNullException>(() => new Campaign([Floor(1)], null!));
+        Assert.Throws<ArgumentNullException>(() => new Campaign(null!, BuildFloor, RunSeed));
+        Assert.Throws<ArgumentNullException>(() => new Campaign([Floor(1)], null!, RunSeed));
     }
 
     /// <summary>A campaign of <paramref name="floorCount"/> corridor floors, each allowing 3 hearts.</summary>
@@ -170,7 +220,31 @@ public sealed class CampaignTests
             floors.Add(Floor(number));
         }
 
-        return new Campaign(floors, BuildFloor);
+        return new Campaign(floors, BuildFloor, RunSeed);
+    }
+
+    /// <summary>
+    /// A three-floor campaign whose first draft is guaranteed to offer <paramref name="cardId"/>,
+    /// with that first floor already cleared so the draft is open.
+    /// </summary>
+    /// <remarks>
+    /// Offers are seeded, so a card a test needs is found by trying seeds rather than by reaching
+    /// into the draft. The floors are 1x6 corridors, so the search is cheap.
+    /// </remarks>
+    private static Campaign CampaignDrafting(string cardId)
+    {
+        for (var seed = 0; seed < 500; seed++)
+        {
+            var campaign = new Campaign([Floor(1), Floor(2), Floor(3)], BuildFloor, seed);
+            ClearFloor(campaign);
+
+            if (campaign.Draft!.Offers.Any(offer => offer.Id == cardId))
+            {
+                return campaign;
+            }
+        }
+
+        throw new InvalidOperationException($"No seed in range offered {cardId}.");
     }
 
     private static FloorDefinition Floor(int number) => new()
@@ -179,32 +253,76 @@ public sealed class CampaignTests
         Name = $"Floor {number}",
         ThemeId = "test",
         Rows = 1,
-        Columns = 3,
+        Columns = 6,
         KeyCount = 0,
         EnemyStepSeconds = 1.0,
         MaxHearts = 3,
     };
 
     /// <summary>
-    /// Builds the 1x3 floor described above with the requested hearts. The exit is open with no
-    /// keys, so stepping east clears it.
+    /// Builds the 1x3 floor described above with the requested hearts and the run's cards applied.
+    /// The exit is open with no keys, so stepping east clears it.
     /// </summary>
-    private static GameState BuildFloor(FloorDefinition floor, int hearts) =>
+    private static GameState BuildFloor(FloorDefinition floor, int hearts, RunModifiers modifiers) =>
         new(
-            new GameConfig
+            modifiers.Apply(new GameConfig
             {
                 Rows = 1,
-                Columns = 3,
+                Columns = 6,
                 KeyCount = 0,
                 StartingHearts = hearts,
                 MaxHearts = floor.MaxHearts,
                 EnemyStepSeconds = 1.0,
                 Seed = null,
-            },
-            TestLevels.Corridor(3),
+            }),
+            TestLevels.Corridor(6),
             new DijkstraPathfinder(),
             new FixedRandom(0));
 
     private static void ClearFloor(Campaign campaign) =>
         Assert.True(campaign.Floor.TryMove(Direction.East));
+
+    /// <summary>
+    /// Lets the killer catch the player until <paramref name="hearts"/> remain, failing the test
+    /// if the run ends first.
+    /// </summary>
+    private static void WoundTo(Campaign campaign, int hearts)
+    {
+        for (var tick = 0; tick < 30 && campaign.Hearts > hearts; tick++)
+        {
+            campaign.Floor.Tick(1.0);
+        }
+
+        Assert.Equal(hearts, campaign.Hearts);
+        Assert.Equal(GameStatus.InProgress, campaign.Floor.Status);
+    }
+
+    /// <summary>
+    /// Resolves the open draft with a card that leaves the heart count alone, or skips when the
+    /// seeded draft has no such offer.
+    /// </summary>
+    /// <remarks>
+    /// Choosing a card that neither heals nor moves the ceiling keeps a test's attention on the
+    /// hearts it wounded, rather than on whether the draft happened to offer <c>second-wind</c> or
+    /// <c>blood-pact</c>.
+    /// </remarks>
+    /// <returns>The card taken, or null when the draft had to be skipped.</returns>
+    private static Card? ResolveDraftWithACard(Campaign campaign)
+    {
+        var draft = Assert.IsType<Draft>(campaign.Draft);
+
+        var card = draft.Offers.FirstOrDefault(
+            offer => offer.Effect.HealNow == 0 &&
+                     offer.Effect.HealOnFloorClear == 0 &&
+                     offer.Effect.MaxHearts == 0);
+
+        if (card is null)
+        {
+            Assert.True(campaign.SkipDraft());
+            return null;
+        }
+
+        Assert.True(campaign.TakeCard(card));
+        return card;
+    }
 }

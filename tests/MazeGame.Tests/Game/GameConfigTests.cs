@@ -299,4 +299,117 @@ public sealed class GameConfigTests
 
         config.Validate();
     }
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Validate_WithInvalidWispStun_Throws(double seconds)
+    {
+        var config = new GameConfig { LureStunSeconds = seconds };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Fact]
+    public void Validate_WithNegativeWispVisionPenalty_Throws()
+    {
+        // A wisp cannot grant sight: the penalty is a cost, never a bonus.
+        var config = new GameConfig { LureVisionPenalty = -1 };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Fact]
+    public void Validate_WithTheDefaultWispRules_IsAllowed()
+    {
+        var config = new GameConfig();
+
+        config.Validate();
+
+        Assert.Equal(0.0, config.LureStunSeconds);
+        Assert.Equal(0, config.LureVisionPenalty);
+    }
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Validate_WithInvalidPlayerStepTime_Throws(double seconds)
+    {
+        var config = new GameConfig { PlayerStepSeconds = seconds };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(0.5)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Validate_WithASprintMultiplierBelowOne_Throws(double multiplier)
+    {
+        // Sprinting that is slower than walking would be a trap, not a trade.
+        var config = new GameConfig { SprintMultiplier = multiplier };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Validate_WithInvalidSprintStamina_Throws(double seconds)
+    {
+        var config = new GameConfig { SprintStaminaSeconds = seconds };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void Validate_WithANonPositiveSprintRecovery_Throws(double seconds)
+    {
+        // An empty bar that never refills would silently remove sprint for the rest of the run.
+        var config = new GameConfig { SprintRecoverySeconds = seconds };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+    }
+
+    [Fact]
+    public void TheDefaultConfig_MovesInstantlyButCanSprintWhenAFloorAsksForSteps()
+    {
+        // The base config is the test/tool seam: instant steps, with sprint numbers ready for any
+        // floor that opts into timed movement.
+        var config = new GameConfig();
+
+        Assert.Equal(0.0, config.PlayerStepSeconds);
+        Assert.Equal(1.4, config.SprintMultiplier);
+        Assert.Equal(1.2, config.SprintStaminaSeconds);
+        Assert.Equal(1.6, config.SprintRecoverySeconds);
+    }
+
+    [Fact]
+    public void ForFloor_TakesTheFloorsPlayerStepAndKeepsTheRunsSprintRules()
+    {
+        var baseConfig = new GameConfig { SprintMultiplier = 2.0, SprintStaminaSeconds = 0.5 };
+        var floor = new FloorDefinition
+        {
+            Number = 1,
+            Name = "Test",
+            ThemeId = "test",
+            PlayerStepSeconds = 0.13,
+        };
+
+        var config = baseConfig.ForFloor(floor, startingHearts: 3);
+
+        // The step is per floor; the sprint rules are run-wide and inherited.
+        Assert.Equal(0.13, config.PlayerStepSeconds, precision: 9);
+        Assert.Equal(2.0, config.SprintMultiplier, precision: 9);
+        Assert.Equal(0.5, config.SprintStaminaSeconds, precision: 9);
+        Assert.Equal(0.0, baseConfig.PlayerStepSeconds);
+    }
 }

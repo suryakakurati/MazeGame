@@ -51,6 +51,18 @@ public sealed record FloorDefinition
     public double EnemyStepSeconds { get; init; } = 0.6;
 
     /// <summary>
+    /// Gets the seconds the player waits between steps on this floor. Defaults to 0.11, about five
+    /// and a half times the killer's 0.6 s pace on the first floor; later floors tighten it so the
+    /// chase keeps the same shape. Zero is allowed and means instant movement, which is what hand-
+    /// built test floors use. Must be finite and not negative.
+    /// </summary>
+    /// <remarks>
+    /// This is the per-floor base that cards may multiply (Light Feet, Momentum, Heavy). It lives
+    /// on the floor rather than the run so the descent can tighten without a card.
+    /// </remarks>
+    public double PlayerStepSeconds { get; init; } = 0.11;
+
+    /// <summary>
     /// Gets the most hearts the player may hold on this floor. Defaults to 3. Hearts carried in
     /// from the previous floor start below this ceiling.
     /// </summary>
@@ -104,6 +116,14 @@ public sealed record FloorDefinition
                 nameof(EnemyStepSeconds),
                 EnemyStepSeconds,
                 "The killer's step time must be a finite, positive number of seconds.");
+        }
+
+        if (!(PlayerStepSeconds >= 0) || double.IsInfinity(PlayerStepSeconds))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(PlayerStepSeconds),
+                PlayerStepSeconds,
+                "The player's step time must be a finite, non-negative number of seconds.");
         }
 
         if (MaxHearts < 1)
