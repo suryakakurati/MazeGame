@@ -139,11 +139,11 @@ public sealed class Palette
         return new Palette(
         [
             new Rgb(0, 0, 0),
-            Hsl(hue, 0.28, 0.20),
-            Hsl(hue, 0.24, 0.13),
-            Hsl(hue + 6, 0.22, 0.40),
-            Hsl(hue + 6, 0.26, 0.58),
-            Hsl(hue + 6, 0.20, 0.07),
+            Hsl(hue, 0.28, 0.18),
+            Hsl(hue, 0.24, 0.12),
+            Hsl(hue + 6, 0.20, 0.50),
+            Hsl(hue + 6, 0.24, 0.68),
+            Hsl(hue + 6, 0.20, 0.05),
             Hsl(hue - 34, 0.45, 0.31),
             Hsl(accent, 0.62, 0.54),
             Hsl(accent, 0.86, 0.72),

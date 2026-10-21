@@ -116,9 +116,10 @@ public sealed class AudioEngineTests
     [Fact]
     public void TheChase_IsLouderThanCalm_OnARealTrack()
     {
-        // The flat-stem test above proves the gating; this one proves the *balance*: the pad alone
-        // must not be so loud that opening the drums and the motif adds nothing.
-        var score = ScoreRenderer.Render(MusicCatalog.For("shallows"), 1, seed: 99);
+        // The flat-stem test above proves the gating; this one proves the *balance*: on a floor
+        // with drums and a lead, the bed alone must not be so loud that opening them adds nothing.
+        // (A drone floor is deliberately the bed, so the chase is only a little louder there.)
+        var score = ScoreRenderer.Render(MusicCatalog.For("ember"), 5, seed: 99);
 
         var calm = LevelOf(score, MusicIntensity.Calm);
         var chase = LevelOf(score, MusicIntensity.Chase);

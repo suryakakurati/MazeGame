@@ -25,6 +25,7 @@ namespace MazeGame.Core.Maze;
 public sealed class Grid
 {
     private readonly Cell[,] _cells;
+    private readonly bool[,] _solid;
 
     /// <summary>
     /// Creates a grid of <paramref name="rows"/> x <paramref name="columns"/> cells, all
@@ -56,6 +57,7 @@ public sealed class Grid
         Rows = rows;
         Columns = columns;
         _cells = new Cell[rows, columns];
+        _solid = new bool[rows, columns];
 
         for (var row = 0; row < rows; row++)
         {
@@ -142,6 +144,13 @@ public sealed class Grid
         var neighbourColumn = column + columnDelta;
         ValidatePosition(neighbourRow, neighbourColumn);
 
+        // Rock that no cell lives in cannot be walked into: a wall between a floor cell and a solid
+        // one is the maze's edge, and every decorator that opens walls works through this method.
+        if (_solid[row, column] || _solid[neighbourRow, neighbourColumn])
+        {
+            return;
+        }
+
         _cells[row, column] = _cells[row, column].WithoutWall(direction);
         _cells[neighbourRow, neighbourColumn] =
             _cells[neighbourRow, neighbourColumn].WithoutWall(direction.Opposite());
@@ -162,6 +171,62 @@ public sealed class Grid
     {
         ValidatePosition(row, column);
         return (row * Columns) + column;
+    }
+
+    /// <summary>
+    /// Determines whether a cell is solid rock: outside the floor's shape, so never walkable.
+    /// </summary>
+    /// <param name="row">Zero-based row index.</param>
+    /// <param name="column">Zero-based column index.</param>
+    /// <returns><see langword="true"/> when no cell lives there.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when the position lies outside the grid.
+    /// </exception>
+    /// <remarks>
+    /// A solid cell keeps all four of its walls forever, because <see cref="RemoveWall"/> refuses
+    /// any wall that has one on either side. That is what lets a floor be an oval or a blob: the
+    /// cells outside the shape are simply rock, and no passage can ever be opened into them.
+    /// </remarks>
+    public bool IsSolid(int row, int column)
+    {
+        ValidatePosition(row, column);
+        return _solid[row, column];
+    }
+
+    /// <summary>Gets how many cells are solid rock rather than floor.</summary>
+    public int SolidCount
+    {
+        get
+        {
+            var count = 0;
+
+            foreach (var solid in _solid)
+            {
+                if (solid)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+    }
+
+    /// <summary>Gets how many cells belong to the floor's shape.</summary>
+    public int OpenCellCount => CellCount - SolidCount;
+
+    /// <summary>
+    /// Marks a cell as solid rock. Called by a <see cref="MazeShape"/> before generation.
+    /// </summary>
+    /// <param name="row">Zero-based row index.</param>
+    /// <param name="column">Zero-based column index.</param>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when the position lies outside the grid.
+    /// </exception>
+    internal void CloseCell(int row, int column)
+    {
+        ValidatePosition(row, column);
+        _solid[row, column] = true;
     }
 
     /// <summary>

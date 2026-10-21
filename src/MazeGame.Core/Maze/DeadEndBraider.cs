@@ -194,9 +194,11 @@ public sealed class DeadEndBraider : IMazeGenerator
             var neighbourRow = deadEnd.Row + rowDelta;
             var neighbourColumn = deadEnd.Column + columnDelta;
 
-            // A wall on the outer boundary has no cell behind it and must stay closed.
+            // A wall on the outer boundary has no cell behind it and must stay closed, and so must
+            // a wall into solid rock: on a shaped floor that rock is the edge of the cave.
             if (neighbourRow < 0 || neighbourRow >= maze.Rows ||
-                neighbourColumn < 0 || neighbourColumn >= maze.Columns)
+                neighbourColumn < 0 || neighbourColumn >= maze.Columns ||
+                maze.IsSolid(neighbourRow, neighbourColumn))
             {
                 continue;
             }

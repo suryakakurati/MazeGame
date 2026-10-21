@@ -3,22 +3,22 @@
 Single source of truth for the state of the project. Update this file at the end of
 every work session (see the handoff protocol in `HANDOFF.md`).
 
-Last updated: 2026-10-21 (Phase 8: every floor is its own place — motif art, weather, HUD, cards,
-and one typeface on every screen)
+Last updated: 2026-10-21 (second playtest: the death card shows the floor reached, and the maze
+grows as the run descends)
 
 ## Current Status
 
-The solution builds with zero warnings, `dotnet test` is green (675 tests), and the game runs
+The solution builds with zero warnings, `dotnet test` is green (703 tests), and the game runs
 **in a Raylib window** as a **twenty-floor campaign with a card draft between floors and timed
-steps**: the title leads to a floor intro card, then a seeded 15x15 maze drawn as a bioluminescent
-cave — fog of war, braided dead ends, keys, an exit, sealed barriers, wisps, and a killer that
+steps**: the title leads to a floor intro card, then a seeded maze (15x15 at the top, 25x25 at the
+bottom) drawn as a bioluminescent cave — fog of war, braided dead ends, keys, an exit, sealed barriers, wisps, and a killer that
 hunts the player with Dijkstra. **The player has three hearts**: a catch costs one, throws the
 killer to a distant cell and stuns it, and keeps every key and barrier; hearts carry from floor to
-floor, so the run is lost only when the last heart is. Walking is now a **cadence** — 0.11 s per
-cell on floor 1, tightening as you descend — with one buffered input and **sprint on Shift** (a
+floor, so the run is lost only when the last heart is. Walking is now a **cadence** — 0.14 s per
+cell on floor 1, tightening within each arc as you descend — with one buffered input and **sprint on Shift** (a
 1.2 s stamina bar). The explorer **snaps to its tile** (one press, one tile, so the grid is
 countable while running) and the killer **slides** between its cells. Clearing an arch opens a **draft of three cards — take one or skip for a heart** — and
-the third arch wins the run. The terminal view offered by `--console` (and used automatically when
+the twentieth arch wins the run. The terminal view offered by `--console` (and used automatically when
 no window can be opened) plays the same campaign in ASCII. The catalog holds **thirteen cards**,
 including the four movement cards. The **sprite compiler is complete to its Phase 5 exit**: every
 committed atlas under `src/MazeGame.UI/Content/Generated` holds the full tileset (floor variants,
@@ -30,11 +30,61 @@ per-floor weather layer, plus a themed HUD with the floor's emblem, name and gim
 screen is set in the compiled pixel face** — title, HUD, footer hints, draft and the four campaign
 cards — so nothing falls back to the system typeface.
 **The game now has sound, and no audio files**: every effect and all twenty floor tracks are
-synthesised from code — a 22-recipe one-shot bank, a four-band sequencer with five shared motifs,
-a Schroeder reverb and an intensity mix that follows the killer. A device is opened through
+synthesised from code — a 22-recipe one-shot bank, twenty pieces with their own melodies, styles
+and meters, a Schroeder reverb and an intensity mix that follows the nearest hunter. A device is
+opened through
 Raylib's stream callback; with no device the game is silent rather than broken.
 
-What changed in this pass (Phase 8 — twenty distinct places):
+What changed in this pass (the run's score, and a maze that grows):
+
+- **The death card names the floor the run ended on.** `PixelCards.Caught` now takes the floor's
+  number, the run's floor count and the floor's name, and prints `YOU MADE IT TO / FLOOR 7 OF 20`
+  with the name under it. The card moved out of `PixelRenderer.Draw` and into the frontend's
+  `DrawFrame`, where the campaign — the only object that knows how long the run was — is in scope;
+  the renderer still draws the world and the HUD underneath, so the death screen shows where the
+  player fell. The console frontend already printed the same two numbers.
+- **The maze grows as the run descends.** The shipped floors step up instead of returning to 15x15
+  after the Gallery: 15x15 for the first arc, then 17, 19, 21 (The Long Gallery), the deliberately
+  tiny 11x11 Warren, then 19, 21, 23 and 25 at the bottom. `FloorCatalogTests` pins the ladder —
+  the first floor is 15x15, the last is 25x25, and exactly one floor (The Warren) is smaller than
+  the one before it — and `ShapedFloorTests` rebuilds every floor and walks to its exit and keys.
+  The largest, The Deep's 25x25 blob, opens 371 cells and builds in about 1 ms.
+
+What changed in the previous pass (Phase 9 — the difficulty curve and the score):
+
+- **The hunt escalates by adding hunters, not by turning one dial.** `GameConfig.HunterCount` and
+  `FloorDefinition.HunterCount` put **one hunter on floors 1–9, two on 10–15, three on 16–20**.
+  `GameState` keeps an internal list; each hunter has its own cell, route, step clock and stun, so
+  two of them are not one faster monster. `GameState.Enemies` publishes `HunterView` snapshots
+  (cell, previous cell, step fraction, stunned) and `Enemy` is kept as the first hunter, so every
+  existing rule test still means what it did. A catch throws only the hunter that made it and
+  stuns all of them; a hunter prices another's cell as four steps so two rarely stack; the music
+  follows the nearest one. The footer draws one red pip per hunter, so the count is visible.
+- **The player's cadence is a sawtooth, not a slide.** Floor 1 is slower (0.14 s a cell), each arc
+  tightens to its own end (0.10 s by the Warren, 0.07 s by the Tide, 0.08 s at the bottom), and
+  the heavy floors reset it. `FloorCatalog` documents the arc; `FloorCatalogTests` scores a floor
+  as hunter-steps per second and requires most floors to raise it and floor 20 to be the highest.
+- **The lantern spills onto the rock.** `GameConfig.NearSightRadius` (default 2, capped by the
+  torch) adds the cells within straight-line distance of the player to the visible set, walls or
+  no walls. That is the missing piece behind the "wall with a hole in it" look: wall faces are
+  drawn by the eastern/southern cell, and a cell across a wall was never visible. The renderer
+  also draws a south/east face itself when that neighbour is unknown, so the two rules together
+  paint every wall once and none not at all. A vision-1 floor gets a one-cell spill; a blind one
+  gets none.
+- **Music is twenty pieces, not one piece twenty times.** `MusicTheme` gained a `MusicStyle`
+  (drone, lullaby, procession, chant, pulse, waltz, nocturne, gamelan, machine, requiem), a
+  **per-floor melody** and a meter (`StepsPerBar`: 16, 12 for 3/4, 20 for 5/4). `ScoreRenderer`
+  arranges each style with its own instruments, bass, percussion and counterline; the shared
+  five-motif cycle is gone. Measured across the twenty: closest pair differs by 0.137 mean per
+  sample, every style is used, no neighbouring floors share one, and the loop seam is now
+  < 0.003 on every track.
+- **A latent culling bug surfaced while adding the pips.** `Raylib.DrawTriangle` culls clockwise
+  winding, and every triangle in the game was wound that way: the heart's point, the explorer's
+  hood and the barrier thorns were never drawn, and both hearts and pips read as blobs. All four
+  calls are counter-clockwise now, so hearts have their point and the footer's hunter pips exist
+  at all (they are drawn as crisp rectangles, not triangles, so they match the pixel face).
+
+What changed in the previous pass (Phase 8 — twenty distinct places):
 
 - **The tile grammar grew past three shape families.** `Theme` now carries a `FloorMotif`
   (boulders, flagstones, roots, ripples, drift, mosaic, bones, shards, web, plates, mire, vents),
@@ -75,7 +125,19 @@ What changed in this pass (Phase 8 — twenty distinct places):
 - **Music was already one track per floor**, and a new test pins that no two of the twenty
   parameter sets are identical, so the guarantee cannot quietly regress.
 
-Verified in this pass:
+Verified in the Phase 9 pass:
+
+- `dotnet build` -> **0 warnings, 0 errors**. `dotnet test` -> **688/688 passing, 0 skipped** (13
+  new: the near-sight rule with it on and off, two-hunter placement and movement, a catch on the
+  second hunter, the throw and the shared stun, floor-10/16 hunter counts, config validation, and
+  the music's per-floor melodies, style spread, adjacent-style rule and three meters).
+- All twenty tracks rendered with no exception: 170–400 ms each in a debug build, peak 0.84–0.93,
+  RMS 0.05–0.23, loop seam < 0.003. The closest pair of tracks differs by 0.137 mean per sample.
+- The window drew all twenty floors (two hunters on 10–15, three on 16–20) and the shipped game
+  ran for eight seconds with an empty log. The footer was read back as a pixel map: two pips on
+  floor 10 and three on 16/20, clear of the hearts and the hints.
+
+Verified in the Phase 8 pass:
 
 - `dotnet build` -> **0 warnings, 0 errors**. `dotnet test` -> **675/675 passing, 0 skipped**
   (14 new: signature features, wall faces and emblems distinct across all twenty floors, every
@@ -526,6 +588,39 @@ Core contains:
 - `GameFactory` — builds one complete game per call (random source, the two maze decorators,
   `GameState`), which is what the title screen and the replay both use.
 
+## Current pass: what a playtest found, and what was changed
+
+Four things came back from a first real playthrough: the music sometimes tore into static, the
+walls blended into the path so the maze read as guesswork, tapping was the only way to move quickly
+because holding did not walk, and every floor was the same rectangle.
+
+- **The music no longer glitches.** Arranging a floor (200–400 ms of synthesis and a few megabytes
+  of stems) used to run on the game thread during the intro card; it now runs on a worker and is
+  adopted on the first frame of play, while the previous track keeps playing. The device callback
+  also clears its buffer instead of returning it untouched when there is no director, and the mixer
+  adopts a published score between blocks. Measured: `PlayFloor` returns in **2.4 ms** (was
+  200–400 ms), the score is live after **0.36 s**, the slowest `Update` is **0.87 ms**, and the
+  device drained **100 % of real time** over 4 s. The calm-hold bug this exposed — the last floor
+  opening at full chase for one block — is fixed and covered by `AudioEngineTests`.
+- **Walls are the loudest thing in the palette after the lantern.** Wall body 0.40 → 0.50, rim
+  0.58 → 0.68, contact shadow 0.07 → 0.05, floor 0.20 → 0.18; the band is 6 px instead of 5 (a
+  corridor still keeps 4 px of floor); remembered (seen, unlit) cells are lit at 0.55 with a
+  brighter tint instead of 0.40 with a 45 % one. Measured on the committed atlases, the drawn band
+  body is now **2.5–8.3x** its floor (was 1.6–3x), and `WallContrastTests` fails if it drops below
+  2.2x, if the rim goes under 5x, or if two bands would leave a corridor with no floor.
+- **Holding a direction walks.** The input gate used to wait 0.15 s on top of the step before it
+  would repeat; now a repeat is due the moment the step that the press caused finishes, at the
+  cadence of that step — so sprint and momentum are felt immediately — and a tap is still exactly
+  one tile because the gate stops sending the moment the key is up. `StepRepeat.Next` takes the
+  last step's duration, and `GameState.LastPlayerStepSeconds` is what the frontend passes it.
+- **Floors are not all rectangles.** `MazeShape` grows a `Blob` or an `Ellipse` over the grid and
+  closes the rest as solid rock *before* generation, so passages can never open into the rock and
+  the cave is exactly as connected as a rectangular one. Eight shipped floors use a shape (Rootbound,
+  The Hush, The Foundry and The Deep are blobs; The Salt Choir, The Long Gallery, The Glass Orchard
+  and The Tide are ovals). `Grid.IsSolid`, `OpenCellCount` and a shape-aware placement rule keep the
+  player, keys, exit and hunters on floor cells; `MazeShapeTests` and `ShapedFloorTests` walk the
+  real catalogue and prove every key and exit stays reachable.
+
 ## Current Task
 
 **The twenty floors are now twenty places.** Each one selects a floor motif, a wall motif, a
@@ -571,6 +666,19 @@ work is chrome (9-slice frames, card art) rather than identity.
 
 ## Next Steps
 
+**Open from the second playtest (2026-10-21):** the player never used a powerup, did not enjoy the
+cards, and wants the later floors to play differently. The death screen and the growing maze from
+that session are shipped. `FUTURE.md` §18 proposes retiring barriers and wisps for a five-verb kit
+(Blink, Veil, Drag, Lantern, Shove) and adding two run-scoped **descent conditions** chosen at
+floors 8 and 14. None of that is implemented yet; its first slice is Blink + Drag + Regrowth.
+
+0. **Play floors 1–4 with a hand on the keys.** The playtest that produced this pass stopped at
+   floor 4, and it reported four things: static, unreadable walls, a hold that did not walk, and
+   rectangular floors. All four are changed and covered by tests, but the judgement — do the walls
+   now read at 3x, does holding a direction feel like walking, is a blob floor more interesting
+   than a rectangle — needs the same human again. If the walls are now *too* loud, the knobs are
+   the palette ladder in `Palette.Derive` and `WallStrips.Thickness`; both need `AssetForge --
+   --all` and a recommit.
 1. **Look at the twenty floors and judge the motifs.** The compiler proves they are different
    pixels; only a human can say whether a mire reads as a mire and a plate floor as a foundry.
    The knobs are the `Theme` records and the routines in `MotifTiles`; a motif change is one file,
@@ -586,14 +694,19 @@ work is chrome (9-slice frames, card art) rather than identity.
    type on a rectangle: `Pictograms` (24x24 card art) and `UiForge` (9-slice panels, card frames)
    in `tools/AssetForge` are the missing pieces. The HUD reads like the floor yet still lives in
    the window's letterbox rather than inside the canvas.
-5. **Play a run and judge the movement and the weather.** The harness measures the canvas and the
-   mixer, but whether 0.11 s per cell plus a 0.6 s killer still allows escape by reflex, and
-   whether 30 particles are visible enough at 3x, needs a human at the window.
-6. **Keep the seams clean.** `GameFactory.CreateFloor` remains the only place a floor is built,
+5. **Play a run and judge the escalation.** Two hunters from floor 10 and three from 16 are the
+   biggest balance risk in the game: each is at 0.72–0.54 s a step, but a pincer in a corridor may
+   still be unwinnable. The knobs are `FloorDefinition.HunterCount`, `EnemyStepSeconds` and
+   `GameConfig.HunterStackCost`; the first thing to try if 10 feels unfair is a slower hunter, not
+   a smaller one.
+6. **Play a run and judge the movement and the weather.** The harness measures the canvas and the
+   mixer, but whether 0.14 s per cell on floor 1 plus a 0.62 s hunter still allows escape by
+   reflex, and whether 30 particles are visible enough at 3x, needs a human at the window.
+7. **Keep the seams clean.** `GameFactory.CreateFloor` remains the only place a floor is built,
    `Campaign` the only place floors, hearts and drafts are sequenced, and `GameState` the only
    source of gameplay events. Movement timing lives in Core, never in a frontend; audio never
    lives in Core.
-7. Re-run `dotnet build`, `dotnet test`, the renderer harness and a window session after every
+8. Re-run `dotnet build`, `dotnet test`, the renderer harness and a window session after every
    phase; update `PROGRESS.md` and the phase table in `FUTURE.md`.
 
 ## Completed
@@ -819,8 +932,11 @@ work is chrome (9-slice frames, card art) rather than identity.
   deviation from `FUTURE.md` §8.3 is that the FX checks live in `MazeGame.Tests` rather than
   `AssetForge --check`: the recipes are in the UI assembly and the tool must not reference the
   game.
-- **A floor's score is rendered on the main thread** (45–150 ms) while the intro card is up, and
-  the old stems become garbage. That is a one-frame hitch between floors, not a per-frame cost.
+- **A floor's track starts a beat after play begins.** The score is arranged on a worker and
+  adopted on the first frame of play (measured 0.36 s after `PlayFloor`), so the previous floor's
+  music is still playing during a floor intro's last moments. A measured 2.4 ms to arrange and
+  0.87 ms slowest frame is the fix for the static, but a human ear still has to confirm that no
+  new glitch appears on a real device at a real buffer size.
 - **The menus are still vector.** The play screen draws from the atlases, but the title, floor
   intro, draft grid and run summary are still the old primitive renderer, because the font atlas
   that would let them be drawn in pixels does not exist yet. The two look different on purpose for
@@ -830,9 +946,15 @@ work is chrome (9-slice frames, card art) rather than identity.
   renderer uses the thin faces instead. They stay compiled and validated for the floors whose
   chasm and veto cells arrive in Phase 8.
 - **The look is measured, not judged.** The harness proves the canvas is painted, the fog does not
-  leak, the lantern is the brightest pixel and the reticle lands (see the numbers above), but
-  nobody has looked at `/tmp/mzgame-pixel-shallows.png` and said whether it reads as a cave. The
-  rig's proportions, the 5 px wall thickness and the light levels are all guesses until then.
+  leak,  the lantern is the brightest pixel and the reticle lands (see the numbers above), but
+  nobody has looked at a rendered frame and said whether it reads as a cave. The rig's proportions,
+  the 6 px wall band (raised from 5 after a playtest said the walls blended into the path) and the
+  new 0.18 floor / 0.50 wall ladder are measured — 2.5–8.3x drawn-band contrast across the twenty
+  themes — not judged.
+- **The shaped floors are unjudged as places.** `MazeShapeTests` and `ShapedFloorTests` prove an
+  oval or blob floor is connected and keeps every key reachable, but whether a blob reads as a
+  cave or as a maze with its corners chewed off needs a human in the window. The knobs are
+  `MazeShape.BlobFill` (0.66) and `EllipseReach` (0.47).
 - **No props or decals layer.** `FUTURE.md` §6.3 asks for mushrooms, puddles, bones and chains on
   their own layer with y-sorting; the atlas has no prop tiles yet, so the floor is bare tiles and
   the cast.

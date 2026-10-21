@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using MazeGame.Core.Maze;
 
 namespace MazeGame.Core.Game;
 
@@ -21,10 +22,13 @@ namespace MazeGame.Core.Game;
 /// keeps the save file and a seeded replay honest.
 /// </para>
 /// <para>
-/// The descent is designed in arcs: the first three teach the loop, four to ten vary the shape and
-/// the light, eleven to fifteen take tools away, sixteen to twenty are the hard floors that assume
-/// the player has cards. Killer pace falls from 0.60 s to 0.38 s and the player's step tightens
-/// from 0.11 s to 0.08 s, so the chase keeps its shape while the floors get meaner.
+/// The descent is designed in arcs, and each arc starts slower than the one before it ends: the
+/// first three teach the loop, four to nine vary the shape and the light, ten to fifteen double the
+/// hunt, sixteen to twenty triple it. A hunter walks slightly faster every floor, but the
+/// **number** of hunters is the real step up — one for nine floors, two for six, three for the last
+/// five — and the player's cadence is a sawtooth around that: 0.14 s on the first floor, tightening
+/// to 0.10 by the Warren, then reset and tightened again in each arc. Speed is the small dial;
+/// another hunter is the big one.
 /// </para>
 /// </remarks>
 public static class FloorCatalog
@@ -41,8 +45,8 @@ public static class FloorCatalog
             ThemeId = "shallows",
             Gimmick = "the lantern reaches three steps",
             KeyCount = 3,
-            EnemyStepSeconds = 0.60,
-            PlayerStepSeconds = 0.11,
+            EnemyStepSeconds = 0.62,
+            PlayerStepSeconds = 0.14,
         },
         new()
         {
@@ -52,9 +56,10 @@ public static class FloorCatalog
             ThemeId = "rootbound",
             Gimmick = "roots drink the light",
             KeyCount = 3,
-            EnemyStepSeconds = 0.56,
-            PlayerStepSeconds = 0.10,
+            EnemyStepSeconds = 0.58,
+            PlayerStepSeconds = 0.13,
             VisionRadius = 2,
+            Shape = ShapeKind.Blob,
         },
         new()
         {
@@ -63,8 +68,8 @@ public static class FloorCatalog
             ThemeId = "drowned",
             Gimmick = "somebody built this, and the sea took it",
             KeyCount = 4,
-            EnemyStepSeconds = 0.52,
-            PlayerStepSeconds = 0.09,
+            EnemyStepSeconds = 0.55,
+            PlayerStepSeconds = 0.13,
         },
         new()
         {
@@ -74,9 +79,12 @@ public static class FloorCatalog
             ThemeId = "saltchoir",
             Gimmick = "it hears you coming: lit, and slow",
             KeyCount = 3,
+            Rows = 17,
+            Columns = 17,
             EnemyStepSeconds = 0.95,
-            PlayerStepSeconds = 0.10,
+            PlayerStepSeconds = 0.12,
             VisionRadius = 5,
+            Shape = ShapeKind.Ellipse,
         },
         new()
         {
@@ -85,8 +93,10 @@ public static class FloorCatalog
             ThemeId = "ember",
             Gimmick = "everything glows, and so do you",
             KeyCount = 2,
-            EnemyStepSeconds = 0.45,
-            PlayerStepSeconds = 0.09,
+            Rows = 17,
+            Columns = 17,
+            EnemyStepSeconds = 0.50,
+            PlayerStepSeconds = 0.12,
         },
         new()
         {
@@ -96,8 +106,10 @@ public static class FloorCatalog
             ThemeId = "gilded",
             Gimmick = "no seals down here",
             KeyCount = 5,
-            EnemyStepSeconds = 0.50,
-            PlayerStepSeconds = 0.09,
+            Rows = 17,
+            Columns = 17,
+            EnemyStepSeconds = 0.54,
+            PlayerStepSeconds = 0.11,
             BarrierBudget = 0,
         },
         new()
@@ -107,9 +119,12 @@ public static class FloorCatalog
             ThemeId = "hush",
             Gimmick = "the dark is absolute",
             KeyCount = 3,
+            Rows = 19,
+            Columns = 19,
             EnemyStepSeconds = 0.62,
-            PlayerStepSeconds = 0.10,
+            PlayerStepSeconds = 0.12,
             VisionRadius = 1,
+            Shape = ShapeKind.Blob,
         },
         new()
         {
@@ -118,10 +133,11 @@ public static class FloorCatalog
             ThemeId = "gallery",
             Gimmick = "too many doors",
             KeyCount = 4,
-            EnemyStepSeconds = 0.50,
-            PlayerStepSeconds = 0.10,
+            EnemyStepSeconds = 0.52,
+            PlayerStepSeconds = 0.11,
             Rows = 21,
             Columns = 21,
+            Shape = ShapeKind.Ellipse,
         },
         new()
         {
@@ -130,8 +146,8 @@ public static class FloorCatalog
             ThemeId = "warren",
             Gimmick = "a maze that fits in your arms",
             KeyCount = 5,
-            EnemyStepSeconds = 0.58,
-            PlayerStepSeconds = 0.09,
+            EnemyStepSeconds = 0.60,
+            PlayerStepSeconds = 0.10,
             Rows = 11,
             Columns = 11,
         },
@@ -140,11 +156,15 @@ public static class FloorCatalog
             Number = 10,
             Name = "The Glass Orchard",
             ThemeId = "orchard",
-            Gimmick = "branches everywhere",
+            Gimmick = "two of them walk the branches",
             KeyCount = 3,
-            EnemyStepSeconds = 0.52,
-            PlayerStepSeconds = 0.09,
+            Rows = 19,
+            Columns = 19,
+            EnemyStepSeconds = 0.72,
+            PlayerStepSeconds = 0.11,
+            HunterCount = 2,
             ExtraLoops = 20,
+            Shape = ShapeKind.Ellipse,
         },
         new()
         {
@@ -152,10 +172,13 @@ public static class FloorCatalog
             Number = 11,
             Name = "The Blind Mile",
             ThemeId = "blindmile",
-            Gimmick = "you hear it late",
+            Gimmick = "two of them, and you hear them late",
             KeyCount = 4,
-            EnemyStepSeconds = 0.46,
+            Rows = 19,
+            Columns = 19,
+            EnemyStepSeconds = 0.66,
             PlayerStepSeconds = 0.10,
+            HunterCount = 2,
             EnemyAuraRadius = 0,
             EnemyAuraDistance = 0,
         },
@@ -164,22 +187,29 @@ public static class FloorCatalog
             Number = 12,
             Name = "The Foundry",
             ThemeId = "foundry",
-            Gimmick = "seal it or die: six seals, no wisps",
+            Gimmick = "two of them, and six seals to spend",
             KeyCount = 3,
-            EnemyStepSeconds = 0.50,
+            Rows = 21,
+            Columns = 21,
+            EnemyStepSeconds = 0.64,
             PlayerStepSeconds = 0.10,
+            HunterCount = 2,
             BarrierBudget = 6,
             LureCount = 0,
+            Shape = ShapeKind.Blob,
         },
         new()
         {
             Number = 13,
             Name = "The Moth Garden",
             ThemeId = "mothgarden",
-            Gimmick = "moths are cheap; light is not",
+            Gimmick = "two of them; moths are cheap, light is not",
             KeyCount = 4,
-            EnemyStepSeconds = 0.48,
-            PlayerStepSeconds = 0.09,
+            Rows = 21,
+            Columns = 21,
+            EnemyStepSeconds = 0.62,
+            PlayerStepSeconds = 0.10,
+            HunterCount = 2,
             LureCount = 4,
             VisionRadius = 2,
         },
@@ -189,10 +219,13 @@ public static class FloorCatalog
             Number = 14,
             Name = "The Ossuary",
             ThemeId = "ossuary",
-            Gimmick = "it keeps what it catches",
+            Gimmick = "two of them, and it keeps what it catches",
             KeyCount = 4,
-            EnemyStepSeconds = 0.46,
+            Rows = 21,
+            Columns = 21,
+            EnemyStepSeconds = 0.60,
             PlayerStepSeconds = 0.09,
+            HunterCount = 2,
             RespawnDistance = 3,
         },
         new()
@@ -201,20 +234,27 @@ public static class FloorCatalog
             Number = 15,
             Name = "The Tide",
             ThemeId = "tide",
-            Gimmick = "fast water, slow hunter",
+            Gimmick = "fast water, slow hunters",
             KeyCount = 3,
-            EnemyStepSeconds = 0.95,
-            PlayerStepSeconds = 0.05,
+            Rows = 23,
+            Columns = 23,
+            EnemyStepSeconds = 0.90,
+            PlayerStepSeconds = 0.07,
+            HunterCount = 2,
+            Shape = ShapeKind.Ellipse,
         },
         new()
         {
             Number = 16,
             Name = "The Bramble",
             ThemeId = "bramble",
-            Gimmick = "nothing ends in a corner",
+            Gimmick = "three of them; nothing ends in a corner",
             KeyCount = 4,
-            EnemyStepSeconds = 0.44,
+            Rows = 23,
+            Columns = 23,
+            EnemyStepSeconds = 0.62,
             PlayerStepSeconds = 0.09,
+            HunterCount = 3,
             DeadEndBraidPercent = 100,
         },
         new()
@@ -222,20 +262,26 @@ public static class FloorCatalog
             Number = 17,
             Name = "The Vault",
             ThemeId = "vault",
-            Gimmick = "heavy doors, heavy steps",
+            Gimmick = "heavy doors, heavy steps, three of them",
             KeyCount = 5,
-            EnemyStepSeconds = 0.44,
-            PlayerStepSeconds = 0.14,
+            Rows = 23,
+            Columns = 23,
+            EnemyStepSeconds = 0.60,
+            PlayerStepSeconds = 0.15,
+            HunterCount = 3,
         },
         new()
         {
             Number = 18,
             Name = "The Loom",
             ThemeId = "loom",
-            Gimmick = "threads of light, everywhere at once",
+            Gimmick = "threads of light, and three of them",
             KeyCount = 4,
-            EnemyStepSeconds = 0.42,
+            Rows = 25,
+            Columns = 25,
+            EnemyStepSeconds = 0.58,
             PlayerStepSeconds = 0.09,
+            HunterCount = 3,
             VisionRadius = 5,
         },
         new()
@@ -244,10 +290,13 @@ public static class FloorCatalog
             Number = 19,
             Name = "The Ash Garden",
             ThemeId = "ashgarden",
-            Gimmick = "it does not tire",
+            Gimmick = "it does not tire, and there are three",
             KeyCount = 4,
-            EnemyStepSeconds = 0.40,
-            PlayerStepSeconds = 0.09,
+            Rows = 25,
+            Columns = 25,
+            EnemyStepSeconds = 0.56,
+            PlayerStepSeconds = 0.085,
+            HunterCount = 3,
             InvulnerabilitySeconds = 0.5,
         },
         new()
@@ -255,13 +304,15 @@ public static class FloorCatalog
             Number = 20,
             Name = "The Deep",
             ThemeId = "deep",
-            Gimmick = "the bottom of everything",
+            Gimmick = "the bottom of everything, and three of them",
             KeyCount = 5,
-            EnemyStepSeconds = 0.38,
+            EnemyStepSeconds = 0.54,
             PlayerStepSeconds = 0.08,
-            Rows = 19,
-            Columns = 19,
+            HunterCount = 3,
+            Rows = 25,
+            Columns = 25,
             VisionRadius = 4,
+            Shape = ShapeKind.Blob,
         },
     ];
 

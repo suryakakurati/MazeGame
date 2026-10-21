@@ -107,7 +107,8 @@ public sealed class FloorCatalogTests
                 floor.DeadEndBraidPercent,
                 floor.EnemyAuraRadius,
                 floor.RespawnDistance,
-                floor.InvulnerabilitySeconds);
+                floor.InvulnerabilitySeconds,
+                floor.HunterCount);
 
             Assert.True(signatures.Add(signature), $"floor {floor.Number} ({floor.Name}) replays floor {floor.Number - 1}.");
         }
@@ -162,7 +163,7 @@ public sealed class FloorCatalogTests
     public void Shipped_TheDescentGetsMeaner()
     {
         var floors = FloorCatalog.Shipped;
-        var tightened = 0;
+        var raised = 0;
 
         for (var index = 1; index < floors.Count; index++)
         {
@@ -170,36 +171,86 @@ public sealed class FloorCatalogTests
                 floors[index].EnemyStepSeconds <= 1.0,
                 $"floor {index + 1} gives the killer {floors[index].EnemyStepSeconds}s a step; only a slow, lit floor is allowed to be a breather.");
 
-            if (floors[index].EnemyStepSeconds < floors[index - 1].EnemyStepSeconds)
+            // Pressure is steps per second times hunters: the number of hunters is the big dial,
+            // and the step time is the small one. A floor that is slower per hunter can still be
+            // meaner because there are more of them.
+            if (Pressure(floors[index]) > Pressure(floors[index - 1]))
             {
-                tightened++;
+                raised++;
             }
         }
 
-        // Most of the descent tightens. A handful of floors are deliberately slow and lit, because
-        // pace is one of the gimmicks; what the run may not do is drift.
-        Assert.True(tightened >= 12, $"Only {tightened} of {floors.Count - 1} floors are faster than the one before.");
+        Assert.True(raised >= 12, $"Only {raised} of {floors.Count - 1} floors raise the pressure.");
 
-        var opening = floors.Take(5).Average(floor => floor.EnemyStepSeconds);
-        var closing = floors.TakeLast(5).Average(floor => floor.EnemyStepSeconds);
+        var opening = floors.Take(5).Average(Pressure);
+        var closing = floors.TakeLast(5).Average(Pressure);
 
         Assert.True(
-            closing < opening - 0.1,
-            $"The last five floors average {closing:0.00}s a killer step against {opening:0.00}s at the start.");
+            closing > opening * 2,
+            $"The last five floors average {closing:0.00} hunter-steps a second against {opening:0.00} at the start.");
 
-        // The last floor is the hardest one: the killer's best pace of the run.
-        var fastest = floors[0];
+        // The last floor is the hardest one: the most hunter-steps per second in the run.
+        var strongest = floors[0];
 
         foreach (var floor in floors)
         {
-            if (floor.EnemyStepSeconds < fastest.EnemyStepSeconds)
+            if (Pressure(floor) > Pressure(strongest))
             {
-                fastest = floor;
+                strongest = floor;
             }
         }
 
-        Assert.Equal(floors[^1], fastest);
+        Assert.Equal(floors[^1], strongest);
     }
+
+    [Fact]
+    public void Shipped_TheHuntersMultiplyAtTenAndSixteen()
+    {
+        var floors = FloorCatalog.Shipped;
+
+        for (var index = 0; index < 9; index++)
+        {
+            Assert.Equal(1, floors[index].HunterCount);
+        }
+
+        for (var index = 9; index < 15; index++)
+        {
+            Assert.Equal(2, floors[index].HunterCount);
+        }
+
+        for (var index = 15; index < 20; index++)
+        {
+            Assert.Equal(3, floors[index].HunterCount);
+        }
+
+        // A second hunter is the biggest step up the descent can take, so it arrives on a floor
+        // that is otherwise no faster than the one before it: the rule changes, not the numbers.
+        Assert.True(
+            floors[9].EnemyStepSeconds > floors[8].EnemyStepSeconds,
+            "floor 10 adds a hunter and speeds the old one up at the same time.");
+    }
+
+    [Fact]
+    public void Shipped_ThePlayerStartsSlowAndEarnsSpeedInEachArc()
+    {
+        var floors = FloorCatalog.Shipped;
+
+        Assert.Equal(0.14, floors[0].PlayerStepSeconds, 3);
+        Assert.True(
+            floors[8].PlayerStepSeconds < floors[0].PlayerStepSeconds,
+            "the first arc never gives the player any speed back.");
+        Assert.True(
+            floors[14].PlayerStepSeconds < floors[9].PlayerStepSeconds - 0.02,
+            "a two-hunter arc has to be faster than its own start, or the new hunters are the only change.");
+        Assert.True(
+            floors[19].PlayerStepSeconds < floors[15].PlayerStepSeconds,
+            "the last arc does not tighten the player's pace.");
+    }
+
+    /// <summary>Returns a floor's danger as hunter-steps per second.</summary>
+    /// <param name="floor">The floor to score.</param>
+    private static double Pressure(FloorDefinition floor) =>
+        floor.HunterCount / floor.EnemyStepSeconds;
 
     [Fact]
     public void Shipped_EveryFloorHasTimedMovementAndOutrunsTheKiller()
@@ -226,6 +277,37 @@ public sealed class FloorCatalogTests
                 floor.PlayerStepSeconds <= 0.15,
                 $"floor {floor.Number} moves at {floor.PlayerStepSeconds}s a cell, which feels stuck rather than heavy.");
         }
+    }
+
+    [Fact]
+    public void Shipped_TheMazeGrowsAsTheRunDescends()
+    {
+        // A bigger cave is a longer hunt: the same killer pace covers more ground, so the floor
+        // gets larger without every number on it having to move. The growth is a ladder, not a
+        // ramp, so a floor is never smaller than the one before it except where the catalogue
+        // says so on purpose.
+        var floors = FloorCatalog.Shipped;
+
+        Assert.Equal(15, floors[0].Rows);
+        Assert.Equal(15, floors[0].Columns);
+        Assert.Equal(25, floors[^1].Rows);
+        Assert.Equal(25, floors[^1].Columns);
+
+        // Exactly one floor shrinks, and it is the Warren: "a maze that fits in your arms" is a
+        // rule, so it is allowed to break the ladder the way no other floor can.
+        var shrunk = new List<int>();
+
+        for (var index = 1; index < floors.Count; index++)
+        {
+            if (floors[index].Rows < floors[index - 1].Rows ||
+                floors[index].Columns < floors[index - 1].Columns)
+            {
+                shrunk.Add(floors[index].Number);
+            }
+        }
+
+        Assert.Equal([9], shrunk);
+        Assert.Equal("The Warren", FloorCatalog.ByNumber(9).Name);
     }
 
     [Fact]

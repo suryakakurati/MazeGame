@@ -219,14 +219,7 @@ public static class WorkedStoneTiles
         // contact shadow that touches the floor. Same geometry as every other family.
         for (var offset = 0; offset < WallStrips.Thickness; offset++)
         {
-            var role = offset switch
-            {
-                3 => PaletteRole.WallTop,
-                4 => PaletteRole.WallEdge,
-                _ => PaletteRole.Wall,
-            };
-
-            WallStrips.Paint(canvas, side, offset, Index(role));
+            WallStrips.Paint(canvas, side, offset, Index(WallStrips.RoleFor(offset)));
         }
 
         // Masonry joints across the band: straight, evenly spaced, so the wall reads as blocks.

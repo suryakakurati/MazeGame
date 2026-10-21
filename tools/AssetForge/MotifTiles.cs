@@ -97,14 +97,7 @@ public static class MotifTiles
         // outer edge, the rim and the foot afterwards, so every family has the same silhouette.
         for (var offset = 0; offset < WallStrips.Thickness; offset++)
         {
-            var role = offset switch
-            {
-                3 => PaletteRole.WallTop,
-                4 => PaletteRole.WallEdge,
-                _ => PaletteRole.Wall,
-            };
-
-            WallStrips.Paint(canvas, side, offset, I(role));
+            WallStrips.Paint(canvas, side, offset, I(WallStrips.RoleFor(offset)));
         }
 
         switch (theme.Wall)

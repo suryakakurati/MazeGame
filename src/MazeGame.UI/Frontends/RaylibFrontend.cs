@@ -350,6 +350,16 @@ internal static class RaylibFrontend
                         RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId),
                         campaign.CurrentFloor.ThemeId);
                     break;
+
+                case Screen.RunLost:
+                    // The run's score is how far it got, so the death card names the floor it
+                    // ended on. The campaign, not the renderer, knows the number.
+                    PixelCards.Caught(
+                        pixels.Font,
+                        campaign.FloorNumber,
+                        campaign.FloorCount,
+                        campaign.CurrentFloor.Name);
+                    break;
             }
         }
 
@@ -454,17 +464,17 @@ internal static class RaylibFrontend
     /// still cooling down, so a tap is worth one tile even when pressed early.
     /// </para>
     /// <para>
-    /// Repeats only start after <see cref="StepRepeat.HoldDelaySeconds"/> and only once the previous step has
-    /// finished, so holding walks at the game's own cadence rather than at the frame rate, and a
-    /// deliberately slow tap is still a tap. Sprint is not read here: holding Shift shortens the
-    /// step in Core, so the same repeat simply runs faster until the stamina bar is empty.
+    /// A hold repeats on the frame the previous step ends, at the cadence of that step, so holding
+    /// down a direction walks continuously from the second tile on — no extra wait, and no rate the
+    /// input invents. Sprint shortens the step in Core, and because the repeat reads the step that
+    /// actually happened it speeds the walk up with it until the stamina bar is empty.
     /// </para>
     /// </remarks>
     private static GameCommand? ReadWalk(GameState state, StepRepeat walk, double now)
     {
         var held = HeldDirection();
 
-        if (walk.Next(held, state.IsPlayerStepping, now) is not { } direction)
+        if (walk.Next(held, state.IsPlayerStepping, now, state.LastPlayerStepSeconds) is not { } direction)
         {
             return null;
         }

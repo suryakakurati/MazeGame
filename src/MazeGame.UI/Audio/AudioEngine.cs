@@ -55,6 +55,7 @@ public sealed class AudioEngine
 
     private readonly float[] _mix = new float[MaxBlockFrames * Channels];
     private ScoreStems? _score;
+    private ScoreStems? _adopted;
     private MusicIntensity _target = MusicIntensity.Calm;
     private MusicIntensity _active = MusicIntensity.Calm;
     private StemGains _gains = MusicMix.Gains(MusicIntensity.Calm);
@@ -97,15 +98,13 @@ public sealed class AudioEngine
     /// Starts playing <paramref name="score"/>, from the top.
     /// </summary>
     /// <param name="score">The looped stems, or null to stop the music.</param>
-    public void SetScore(ScoreStems? score)
-    {
-        Volatile.Write(ref _score, score);
-        _position = 0;
-        _bar = -1;
-        _active = _target;
-        _gains = MusicMix.Gains(_active);
-        _appliedGains = _gains;
-    }
+    /// <remarks>
+    /// The swap is published here but <b>adopted on the audio thread</b>, at the top of the next
+    /// block. Resetting the play position from the game thread raced the mixer that was reading
+    /// it: the loop could jump forward or back mid-block, which is a click at best. One writer, one
+    /// reader, adopted between blocks.
+    /// </remarks>
+    public void SetScore(ScoreStems? score) => Volatile.Write(ref _score, score);
 
     /// <summary>Asks for <paramref name="intensity"/>; it takes effect on the next bar.</summary>
     /// <param name="intensity">The intensity to move to.</param>
@@ -195,8 +194,10 @@ public sealed class AudioEngine
 
         for (var index = 0; index < output.Length; index++)
         {
-            var sample = _mix[index];
-            output[index] = (short)Math.Clamp(sample * 32767.0f, -32768.0f, 32767.0f);
+            // A soft knee above 0.7 instead of a hard clamp at 1: stacked one-shots over a loud
+            // bed used to hit the ceiling and tear into distortion, which reads as static.
+            var sample = Limit(_mix[index]);
+            output[index] = (short)(Math.Clamp(sample, -1.0f, 1.0f) * 32767.0f);
         }
 
         _duckSeconds = Math.Max(0, _duckSeconds - blockSeconds);
@@ -208,7 +209,9 @@ public sealed class AudioEngine
     /// <summary>Mixes the three stems for <paramref name="frames"/> samples.</summary>
     private void MixMusic(int frames, double blockSeconds)
     {
-        var score = Volatile.Read(ref _score);
+        AdoptPublishedScore();
+
+        var score = _adopted;
 
         if (score is null || score.Frames == 0)
         {
@@ -271,6 +274,58 @@ public sealed class AudioEngine
             from.Bed + ((to.Bed - from.Bed) * ramp),
             from.Rhythm + ((to.Rhythm - from.Rhythm) * ramp),
             from.Lead + ((to.Lead - from.Lead) * ramp));
+    }
+
+    /// <summary>
+    /// Keeps a sample inside [-1, 1], compressing only what goes above 0.7.
+    /// </summary>
+    /// <param name="sample">The mixed sample.</param>
+    /// <returns>The limited sample.</returns>
+    /// <remarks>
+    /// Quiet audio is untouched, so the mix has the same shape it had; only a collision between a
+    /// stinger and the music is bent, and it is bent smoothly rather than clipped flat.
+    /// </remarks>
+    private static float Limit(float sample)
+    {
+        var magnitude = MathF.Abs(sample);
+
+        if (magnitude <= 0.7f)
+        {
+            return sample;
+        }
+
+        var bent = 0.7f + (MathF.Tanh((magnitude - 0.7f) * 3.0f) * 0.3f);
+        return sample < 0 ? -bent : bent;
+    }
+
+    /// <summary>
+    /// Adopts a score published by <see cref="SetScore"/>, resetting the loop to its first bar.
+    /// </summary>
+    /// <remarks>
+    /// Called only from the audio thread. The reference comparison is enough because a score is
+    /// only ever published once; re-publishing the same object is a no-op on purpose.
+    /// </remarks>
+    private void AdoptPublishedScore()
+    {
+        var published = Volatile.Read(ref _score);
+
+        if (ReferenceEquals(published, _adopted))
+        {
+            return;
+        }
+
+        _adopted = published;
+        _position = 0;
+        _bar = -1;
+
+        // The calm hold is part of the arrangement, so it decides the first bar just as the bar-line
+        // rule does later. Reading the target here instead made the last floor open at full chase
+        // for one block, which is a burst of drums where the quiet is the point.
+        _active = _calmHoldSeconds > 0 ? MusicIntensity.Calm : _target;
+        _gains = MusicMix.Gains(_active);
+
+        // _appliedGains is deliberately left alone: it is where the previous track's fade had got
+        // to, and starting the new one from there is what keeps a floor change from clicking.
     }
 
     /// <summary>Mixes every active one-shot voice.</summary>

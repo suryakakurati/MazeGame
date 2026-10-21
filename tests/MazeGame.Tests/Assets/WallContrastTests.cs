@@ -23,13 +23,23 @@ namespace MazeGame.Tests.Assets;
 public sealed class WallContrastTests
 {
     /// <summary>How much brighter than the floor a wall's body must be.</summary>
-    private const double MinimumBodyRatio = 1.6;
+    /// <remarks>
+    /// Three times, not one and a half. At the old ratio the palette was technically separated but
+    /// the band still read as a lit line on the path: the floor and the wall sat close enough that
+    /// a dropped frame or a dim remembered cell erased the difference, and the maze turned into
+    /// guesswork. Walls are the thing the player navigates by, so they get the loudest value in the
+    /// palette after the lantern itself.
+    /// </remarks>
+    private const double MinimumBodyRatio = 3.0;
 
     /// <summary>How much brighter the lit rim must be than the floor.</summary>
-    private const double MinimumRimRatio = 2.2;
+    private const double MinimumRimRatio = 5.0;
 
     /// <summary>How much darker than the floor the contact shadow must be.</summary>
-    private const double MaximumFootRatio = 0.7;
+    private const double MaximumFootRatio = 0.4;
+
+    /// <summary>How much brighter the drawn body rows must be than the floor tile.</summary>
+    private const double MinimumDrawnBodyRatio = 2.2;
 
     [Fact]
     public void EveryShippedFloor_HasAWallThatStandsOffItsFloor()
@@ -64,12 +74,29 @@ public sealed class WallContrastTests
             var palette = Palette.Derive(theme);
             var band = WallStrips.Face(theme, WallSide.North);
             var floor = MeanLuminance(TileGrammar.Floor(theme, 0), palette, 0, 16);
-            var wall = MeanLuminance(band, palette, 0, WallStrips.Thickness);
+
+            // The body rows only: the outline and the contact shadow are meant to be dark, and a
+            // mean over the whole band would let a family bury its rock under texture and still
+            // pass, which is how the band became a line in the first place.
+            var wall = MeanLuminance(band, palette, 1, WallStrips.Thickness - 2);
 
             Assert.True(
-                wall / floor >= MinimumBodyRatio,
-                $"{theme.Id}: the drawn band is {wall / floor:0.00}x its floor (need {MinimumBodyRatio}).");
+                wall / floor >= MinimumDrawnBodyRatio,
+                $"{theme.Id}: the drawn band is {wall / floor:0.00}x its floor (need {MinimumDrawnBodyRatio}).");
         }
+    }
+
+    [Fact]
+    public void AWallIsThickEnoughToSee_AndLeavesACorridorFloor()
+    {
+        // A one-cell corridor has a band on each side. The bands must be thick enough to read as
+        // rock and thin enough to leave a path between them, or the maze becomes a solid block of
+        // wall with a hint of floor.
+        var striped = WallStrips.Thickness * 2;
+        var floor = CaveTiles.TileSize - striped;
+
+        Assert.True(WallStrips.Thickness >= 6, $"A {WallStrips.Thickness} px band reads as a line, not a wall.");
+        Assert.True(floor >= 4, $"A corridor between two bands has only {floor} px of floor left.");
     }
 
     [Fact]

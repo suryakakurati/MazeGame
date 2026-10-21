@@ -85,9 +85,16 @@ public static class MusicMix
             return MusicIntensity.Calm;
         }
 
-        var distance = Math.Max(
-            Math.Abs(state.Enemy.Row - state.Player.Row),
-            Math.Abs(state.Enemy.Column - state.Player.Column));
+        // The mix follows the nearest hunter: with two of them, the far one is not the thing that
+        // should decide whether the drums are playing.
+        var distance = int.MaxValue;
+
+        foreach (var hunter in state.Enemies)
+        {
+            distance = Math.Min(distance, Math.Max(
+                Math.Abs(hunter.Cell.Row - state.Player.Row),
+                Math.Abs(hunter.Cell.Column - state.Player.Column)));
+        }
 
         return ForDistance(distance);
     }

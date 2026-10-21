@@ -246,9 +246,14 @@ public sealed class ConsoleRenderer : IRenderer
             return LureSymbol;
         }
 
-        if (cell == state.Enemy)
+        // A hunter is drawn on its own cell; with more than one they are the same glyph, because
+        // the ASCII view is about where the danger is, not which hunter it is.
+        foreach (var hunter in state.Enemies)
         {
-            return EnemySymbol;
+            if (hunter.Cell == cell)
+            {
+                return EnemySymbol;
+            }
         }
 
         if (state.Keys.Contains(cell))

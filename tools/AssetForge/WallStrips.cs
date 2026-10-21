@@ -39,9 +39,31 @@ public enum WallSide
 public static class WallStrips
 {
     /// <summary>How thick a wall band is, in pixels.</summary>
-    public const int Thickness = 5;
+    /// <remarks>
+    /// Six of the sixteen pixels: a wall has to carry more of the cell than the floor it stands on,
+    /// because a corridor one cell wide has two of them. At five the band read as a painted line on
+    /// the path rather than as rock beside it, which is exactly how a maze turns into guesswork.
+    /// </remarks>
+    public const int Thickness = 6;
 
     private const int Size = CaveTiles.TileSize;
+
+    /// <summary>
+    /// Returns the palette role for one row of the shared band cross-section.
+    /// </summary>
+    /// <param name="offset">Distance from the cell's outer edge, 0 to <see cref="Thickness"/> - 1.</param>
+    /// <returns>The body everywhere, a lit rim on the row before the last, a shadow on the last.</returns>
+    /// <remarks>
+    /// The cross-section is stated once here rather than as a <c>switch</c> in every tile family, so
+    /// thickening the band cannot leave one family with its rim in the middle of the rock.
+    /// </remarks>
+    public static PaletteRole RoleFor(int offset) => offset switch
+    {
+        < 0 => PaletteRole.Wall,
+        _ when offset >= Thickness - 1 => PaletteRole.WallEdge,
+        _ when offset == Thickness - 2 => PaletteRole.WallTop,
+        _ => PaletteRole.Wall,
+    };
 
     /// <summary>Returns the four thin wall faces, in the order north, east, south, west.</summary>
     /// <param name="theme">The theme whose palette roles and grit are used.</param>
@@ -98,18 +120,11 @@ public static class WallStrips
         var canvas = new PixelCanvas(Size, Size);
         var random = new SeededRandom(CaveTiles.Seed($"{theme.Id}/strip-{NameOf(side)}"));
 
-        // Offsets run from the outer edge inward, so one loop draws every side: 0..2 are rock,
-        // 3 is the lit rim and 4 is the shadow that touches the floor.
+        // Offsets run from the outer edge inward, so one loop draws every side: rock, then the lit
+        // rim, then the shadow that touches the floor.
         for (var offset = 0; offset < Thickness; offset++)
         {
-            var role = offset switch
-            {
-                3 => PaletteRole.WallTop,
-                4 => PaletteRole.WallEdge,
-                _ => PaletteRole.Wall,
-            };
-
-            Paint(canvas, side, offset, (byte)role);
+            Paint(canvas, side, offset, (byte)RoleFor(offset));
         }
 
         // Chips break the band's silhouette without moving its edge, the same trick the solid wall
@@ -137,11 +152,11 @@ public static class WallStrips
             {
                 var along = random.NextInt(Size);
 
-                Paint(canvas, side, 2, CaveTiles.Index(PaletteRole.Moss), along);
+                Paint(canvas, side, Thickness - 3, CaveTiles.Index(PaletteRole.Moss), along);
 
                 if (drip % 2 == 0)
                 {
-                    Paint(canvas, side, 3, CaveTiles.Index(PaletteRole.Moss), along);
+                    Paint(canvas, side, Thickness - 2, CaveTiles.Index(PaletteRole.Moss), along);
                 }
             }
         }

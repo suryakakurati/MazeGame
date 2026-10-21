@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using MazeGame.Core.Game;
 using Raylib_cs;
 
@@ -25,8 +26,10 @@ namespace MazeGame.UI.Audio;
 /// period (~46 ms) of the key press.
 /// </para>
 /// <para>
-/// The score is still rendered on the main thread before play (during the floor intro), so a
-/// floor's music costs a few tens of milliseconds of setup rather than a synthesis pass per frame.
+/// A floor's score is synthesised on a worker and adopted on the first frame of play, so the
+/// mixer never waits for a track and the game loop never stalls to arrange one. Until the new
+/// track is ready the previous floor's score keeps playing — silence between floors reads as a
+/// bug, a track that arrives a beat late does not.
 /// </para>
 /// </remarks>
 internal sealed class AudioDirector : IDisposable
@@ -34,7 +37,7 @@ internal sealed class AudioDirector : IDisposable
     /// <summary>The device period: 2048 frames, about 46 ms at 44.1 kHz.</summary>
     private const int BlockFrames = 2048;
 
-    /// <summary>How long the last floor plays without its drums and motif.</summary>
+    /// <summary>How long the last floor plays without its rhythm and lead.</summary>
     private const double LastFloorCalmSeconds = 10.0;
 
     /// <summary>
@@ -51,6 +54,7 @@ internal sealed class AudioDirector : IDisposable
     private readonly AudioStream _stream;
 
     private volatile MusicIntensity _intensity = MusicIntensity.Calm;
+    private Task<(ScoreStems Score, double CalmSeconds)>? _render;
     private long _duckUntil;
     private bool _disposed;
     private int _step;
@@ -98,26 +102,59 @@ internal sealed class AudioDirector : IDisposable
     }
 
     /// <summary>
-    /// Renders and arranges the track for a floor and starts it from the top.
+    /// Arranges the track for a floor; it starts when the render finishes.
     /// </summary>
     /// <param name="themeId">The floor's theme id, which is also its atlas id.</param>
-    /// <param name="floorNumber">The floor's number, which selects the motif.</param>
+    /// <param name="floorNumber">The floor's number, which salts the humanisation.</param>
     /// <param name="seed">The run seed, so the same run sounds the same.</param>
+    /// <remarks>
+    /// Arranging a floor is 200-400 ms of synthesis and a few megabytes of arrays. Doing that on
+    /// the game thread was both a visible stall on the intro card and, through the GC pauses it
+    /// caused, a way for the audio callback to miss a deadline — which is heard as a burst of
+    /// static. The previous track keeps playing while the next one is arranged on a worker.
+    /// </remarks>
     public void PlayFloor(string themeId, int floorNumber, int seed)
     {
         var theme = MusicCatalog.For(themeId);
-        var score = ScoreRenderer.Render(theme, floorNumber, seed);
+        var calm = floorNumber >= MusicCatalog.All.Count ? LastFloorCalmSeconds : 0;
 
-        _engine.SetScore(score);
-        _intensity = MusicIntensity.Calm;
-
-        // The last floor opens with the bed alone and brings the arrangement in after ten
-        // seconds: the descent ends quietly before it ends at all.
-        _engine.HoldCalm(floorNumber >= MusicCatalog.All.Count ? LastFloorCalmSeconds : 0);
+        _render = Task.Run(() => (ScoreRenderer.Render(theme, floorNumber, seed), calm));
     }
 
     /// <summary>Stops the music, for a return to the title.</summary>
-    public void StopMusic() => _engine.SetScore(null);
+    public void StopMusic()
+    {
+        _render = null;
+        _engine.SetScore(null);
+    }
+
+    /// <summary>
+    /// Starts the floor's track once its render has finished, without blocking a frame.
+    /// </summary>
+    /// <remarks>
+    /// A failed render is dropped rather than thrown on the game loop: a floor with no music is a
+    /// silent floor, not a crashed run, and the previous score simply keeps playing.
+    /// </remarks>
+    private void AdoptRenderedScore()
+    {
+        if (_render is not { IsCompleted: true } render)
+        {
+            return;
+        }
+
+        _render = null;
+
+        if (!render.IsCompletedSuccessfully)
+        {
+            return;
+        }
+
+        var (score, calm) = render.Result;
+
+        _engine.SetScore(score);
+        _intensity = MusicIntensity.Calm;
+        _engine.HoldCalm(calm);
+    }
 
     /// <summary>Asks the music to move to <paramref name="intensity"/> on the next bar.</summary>
     /// <param name="intensity">The intensity to move to.</param>
@@ -130,6 +167,8 @@ internal sealed class AudioDirector : IDisposable
     public void Update(GameState state, double deltaSeconds)
     {
         ArgumentNullException.ThrowIfNull(state);
+
+        AdoptRenderedScore();
 
         _intensity = MusicMix.From(state);
 
@@ -266,6 +305,13 @@ internal sealed class AudioDirector : IDisposable
 
         if (director is null || buffer is null)
         {
+            // Never leave the device's buffer untouched: a callback that returns early hands the
+            // speaker whatever was in that memory, which is heard as a burst of static.
+            if (buffer is not null)
+            {
+                new Span<byte>(buffer, (int)frames * AudioEngine.Channels * sizeof(short)).Clear();
+            }
+
             return;
         }
 

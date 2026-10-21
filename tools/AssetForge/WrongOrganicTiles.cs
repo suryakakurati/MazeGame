@@ -142,14 +142,7 @@ public static class WrongOrganicTiles
         // same from either family while its surface texture differs.
         for (var offset = 0; offset < WallStrips.Thickness; offset++)
         {
-            var role = offset switch
-            {
-                3 => PaletteRole.WallTop,
-                4 => PaletteRole.WallEdge,
-                _ => PaletteRole.Wall,
-            };
-
-            WallStrips.Paint(canvas, side, offset, Index(role));
+            WallStrips.Paint(canvas, side, offset, Index(WallStrips.RoleFor(offset)));
         }
 
         var fibres = 2 + (int)Math.Round(theme.VeinDensity * 4);
@@ -167,8 +160,8 @@ public static class WrongOrganicTiles
 
         for (var bead = 0; bead < beads; bead++)
         {
-            WallStrips.Paint(canvas, side, 3, Index(PaletteRole.Accent), 1 + random.NextInt(Size - 2));
-            WallStrips.Paint(canvas, side, 4, Index(PaletteRole.Glow), 1 + random.NextInt(Size - 2));
+            WallStrips.Paint(canvas, side, WallStrips.Thickness - 2, Index(PaletteRole.Accent), 1 + random.NextInt(Size - 2));
+            WallStrips.Paint(canvas, side, WallStrips.Thickness - 1, Index(PaletteRole.Glow), 1 + random.NextInt(Size - 2));
         }
 
         return canvas;

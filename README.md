@@ -17,18 +17,22 @@ graph/pathfinding libraries are used.
 > its own light: collect the keys, open the arch, and descend.
 > **You have three hearts**: a catch costs one, throws the killer to a distant dead end and stuns
 > it, and **hearts carry between floors**, so only the third catch on the whole run ends it. Walking
-> is a cadence (0.11 s per cell, tightening as you descend), one press is buffered, **Shift
-> sprints** on a stamina bar. The explorer snaps to its tile (one press, one tile) while the killer
-> slides between cells. All twenty floors differ in **shape, weather, light and music**, not only in
+> is a cadence (0.14 s per cell on floor 1, tightening within each arc as you descend), one press is
+> buffered, **Shift sprints** on a stamina bar. The explorer snaps to its tile (one press, one tile)
+> while the killer slides between cells. The hunt itself escalates: **one hunter for nine floors,
+> two from floor 10, three from floor 16**, each with its own route and clock. All twenty floors
+> differ in **shape, weather, light and music**, not only in
 > colour: twelve floor motifs, ten wall motifs, eleven signature objects, twelve kinds of drifting
 > weather, a per-floor HUD and card emblem, and a gimmick (a closed lantern, no barriers, a killer
 > without its glow). Each has an intro card, a floor-cleared card, **a draft of three cards
 > between floors — take one or skip for a heart** — from a catalog of thirteen, including four
-> movement cards, and a run summary (675 unit tests; the sprite compiler has produced 2,264
+> movement cards, and a run summary (688 unit tests; the sprite compiler has produced 2,264
 > validated pixel-art tiles across twenty themes, and the game draws the floor from them).
 > **It has a score and effects, and no audio files**: every sound is synthesised from code — 22
-> one-shots and twenty floor tracks arranged from five shared motifs, mixed as stems so the chase
-> arrives on the next bar. The phased plan to a full roguelike is in [`FUTURE.md`](FUTURE.md);
+> one-shots and twenty floor pieces, each with its own melody, key, meter and style, mixed as stems
+> so the chase arrives on the next bar. The styles are different kinds of music (drone, lullaby,
+> procession, chant, pulse, waltz, nocturne, gamelan, machine, requiem), and some floors are in
+> 3/4 or 5/4, so no two floors sound like the same track at a new pitch. The phased plan to a full roguelike is in [`FUTURE.md`](FUTURE.md);
 > current state in [`PROGRESS.md`](PROGRESS.md).
 
 ## Requirements
@@ -112,6 +116,11 @@ shows the run's totals underneath the title. Then the next floor begins with the
 left. The third arch wins the run and shows a summary; there is no draft after it. Losing all
 three hearts ends the run whichever floor you are on.
 
+Not every floor is a rectangle: eight of the twenty are carved as a blob or an oval, with the cells
+outside the outline left as solid rock, so the cave itself changes shape as you descend. Walls are
+drawn as a thick band of rock with a lit rim and a black foot against a darker floor, and cells you
+have already seen stay readable once the lantern has moved on.
+
 The window is an underground descent where each floor is a different place. The Shallows are
 wet boulders and drifting motes; Rootbound is matted root and spore; Drowned Halls are laid
 flagstones under falling water; The Salt Choir is tessellated stone, ribbed walls and dust; The
@@ -120,15 +129,17 @@ ripples, ash and rain, and each carries one large signature object — a pool, a
 stopped clock, a mirror, a bone pile, a beating heart — that is scattered a few times per maze.
 The HUD names the floor and its gimmick, and the cards carry its emblem and palette.
 
-You are a small hooded figure carrying a lantern; the killer is a tall, spindly silhouette with
-pink rim light and two pale eyes; keys are magenta beacons — a pool of light on the floor, a shaft
+You are a small hooded figure carrying a lantern; the hunters are tall, spindly silhouettes with
+pink rim light and two pale eyes (two of them on floor 10, three from floor 16); keys are magenta beacons — a pool of light on the floor, a shaft
 rising out of the cell, a pulsing ring and glowing fungus at the core, so they read at the edge of
 the torch; the exit is a stone arch (cyan once open); barriers are thorny barricades of cave moss.
 The terminal view uses `@` for you, `K` for the killer, `k` for a key, `E` for the exit, `#` for a
 sealed barrier, `=` for a spent one, `*` for a wisp and `X` for the aiming cursor.
 
 Walking is timed rather than instant: a step takes about a tenth of a second, a press during that
-window is remembered for the next step, and holding a direction keeps walking at that cadence.
+window is remembered for the next step, and holding a direction keeps walking at that cadence — the
+repeat starts on the frame the previous step ends, so a hold is one continuous walk rather than a
+tap rhythm.
 Hold Shift to sprint for 40% more speed while the stamina bar lasts (it only drains while you are
 actually moving, so holding Shift on the spot costs nothing); when it runs dry you have to wait for
 a quarter of it to come back. Sprint is for breaking line of sight, not for going fast.

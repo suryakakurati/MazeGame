@@ -30,7 +30,8 @@ game is finished without you drawing anything.
 [Build plan](#11-build-plan-and-milestones) · [Scope ladder](#12-scope-ladder-if-time-runs-out) ·
 [Risks](#13-risks) · [Decisions](#14-open-decisions-recommended-defaults-in-bold) ·
 [Done](#15-definition-of-done-does-it-feel-like-an-indie-game) ·
-[Appendix](#16-appendix-the-generation-stack-at-a-glance) · [What I need](#17-what-i-need-from-you)
+[Appendix](#16-appendix-the-generation-stack-at-a-glance) · [What I need](#17-what-i-need-from-you) ·
+[Powerups and variance](#18-second-playtest-a-new-powerup-kit-and-descent-variance)
 
 ---
 
@@ -1178,3 +1179,130 @@ Almost nothing — that is the point of this revision.
   automated checks still catch the broken cases — the game will not be missing art, it just may
   not be to your taste on the first pass.
 - **Nothing else.** No sprites, no fonts, no music, no licences, no downloads.
+
+---
+
+## 18. Second playtest: a new powerup kit and descent variance
+
+**Status:** proposals from the 2026-10-21 playthrough, revised after the first set was rejected.
+Nothing in this section is built. The two concrete asks from that session (the floor reached on the
+death card, and a maze that grows with the descent) are shipped; see `PROGRESS.md`.
+
+The first set of ideas tried to make barriers, wisps and sprint easier to use. That was the wrong
+move: all three ask the player to place something and hope, so making them cheaper would not make
+them interesting. This revision replaces the powerups instead of tuning them, and adds a run-level
+system that makes the later floors play differently from run to run.
+
+### What the player reported
+
+- The barriers, wisps and sprint were never used in a full run.
+- The cards did not feel fun.
+- Later floors should feel different, not just faster.
+
+### The new kit: five verbs, one key each, no aiming
+
+Each powerup is one key, has an effect that is visible on the next screen, and costs a rule rather
+than a menu. Charges refill when a floor starts; there is no shared budget to hoard.
+
+| Key | Powerup | What it does | The price | Charges |
+| --- | --- | --- | --- | --- |
+| **SPACE** | **Blink** | Step through the wall you face and land one cell beyond it. | The wall stays open: you have made a shortcut the hunters can use too. | 2 |
+| **V** | **Veil** | Stand still for half a second to go unseen for 3 s; hunters keep walking to where they last saw you. | Your lantern dims one step and any step breaks it. | 3 |
+| **T** | **Drag** | The hunt runs at 40% for 3 s while you move normally. | When it ends, hunters are 10% faster for 5 s. | 1 |
+| **L** | **Lantern** | Throw your light up to four cells; for 5 s you see from where it lands and the hunters walk toward it. | Your own cell is dark until you walk onto the lantern or the 5 s end. | 1 |
+| **F** | **Shove** | Shove the hunter in the cell you face two cells back and stun it for 2 s. | It is loud: every other hunter targets your cell for 3 s. | 1 |
+
+- **Blink is the traversal verb.** It turns a dead end into a door and leaves the door open. That
+  is a spatial decision with a permanent consequence, not a combat trick.
+- **Veil is the patience verb.** It rewards standing still and reading the hunt, and it is the
+  opposite of sprint; the player has to choose which one the moment wants.
+- **Drag is the panic verb.** It is the one button a new player will press when the aura is on
+  them, and its hangover stops it from being a free reset.
+- **Lantern is the bait verb.** It separates "where I am" from "where my light is", which is the
+  most interesting idea in a game about darkness; it is also the most expensive to build.
+- **Shove is the contact verb.** It is the only answer to a hunter already in the next cell, and
+  its noise makes it a last resort rather than a rotation.
+
+**Charges are per floor and visible.** The HUD replaces the `SEALS`/`WISPS` chips with five small
+slots, each showing its key and a pip count. A floor's charges come from the floor definition, so
+the first floors can give one or two and the last floors can give the full kit. Nothing is
+unlocked by a key, a card or a currency: a powerup is available because the floor is.
+
+**Teaching is the floor's job.** Each verb arrives on a floor that needs it, announced in the
+intro card's existing gimmick line and with a one-time prompt the first time it is useful:
+
+- Floor 1: Blink, beside a dead end one wall from the path.
+- Floor 2: Veil, with a hunter crossing a corridor ahead.
+- Floor 4: Drag, on a long straight with a hunter closing.
+- Floor 6: Lantern, on a floor where the light has to go first.
+- Floor 8: Shove, in a corridor where the only way out is through.
+
+### Descent variance: two conditions per run, chosen at the gates
+
+Later floors should not be "the same floor with more hunters". A run now draws **descent
+conditions**: rules that change the space or the hunt for the rest of the run. They are the
+variance, and they arrive at gates the player can see.
+
+- At **floor 8** and **floor 14**, the run offers **two conditions** from the pool (seeded, no
+  repeats) and the player picks one. The pick is permanent for the run.
+- Floors 1-7 carry none; 8-13 carry one; 14-20 carry two, so the bottom of the run is the
+  player's two choices combined with each floor's own gimmick.
+- A pick uses the draft screen's shape (two cards, one choice) but no skip: the run has to change.
+- The chosen condition is shown as an icon and a line on the HUD and on every later intro card, so
+  the player always knows which rules are in force.
+
+| Condition | Rule | How it changes the play |
+| --- | --- | --- |
+| **Regrowth** | Every 18 s the mouth of one dead end seals. Never the player's cell, never a cell holding a key, exit or hunter. | The maze slowly stops forgiving backtracking; you commit earlier and stop treating dead ends as free hiding places. |
+| **Fracture** | Every 22 s one wall opens and a different one closes, both telegraphed. A close that would disconnect the maze is skipped. | Routes are provisional. The map you learned is not the map you leave. |
+| **Eclipse** | Vision -1 for 6 s every 16 s. | The floor breathes; you learn to move in the dark half and to time the lit half. |
+| **The Listener** | Hunters step only when you step; sprinting gives them two steps. | Standing still becomes a move. The chase is turn-based instead of a clock. |
+| **Pack** | Hunters share one target and step on the same clock. | They commit together, so they can be baited around a loop, but they cannot be split or staggered. |
+| **Hunted** | One hunter always knows your cell; the others hunt as normal. | There is no hiding from that one, only outrunning it, and the other hunters use the panic. |
+| **Mute** | On each floor after the gate, one powerup (rotating) is unavailable, and that floor starts with one extra heart. | You adapt the kit instead of leaning on a favourite button, and the heal makes the loss a trade rather than a punishment. |
+| **Drift** | The exit moves to a far cell after each key, announced by a bell. | The last leg is never the one you planned. |
+
+- **Conditions compose with the floor, not replace it.** The Vault + Fracture is a different floor
+  from The Vault + Listener, and neither is the authored Vault. With eight conditions and two
+  choices, every run's late game is a different pair.
+- **The gates are the drama.** Floor 8 is the first time the run asks the player to choose a rule;
+  floor 14 is the second, and by then the player knows what the floor's gimmick costs. The choice
+  should be legible in one sentence per card.
+- **A cheaper alternative** is to draw both conditions automatically and show them on the intro
+  card. That is less agency and less UI, but it keeps the variance.
+
+### What happens to the old kit and its floor gimmicks
+
+- **Sprint stays.** It is movement, not a powerup, and it is the one existing verb the new kit does
+  not replace.
+- **Barriers and wisps are retired from the player's hands.** Their rules can stay in `GameState`
+  for a floor that places a pre-built seal, but the inputs, the aim mode and the two HUD chips go.
+  The code should be left behind a flag for one pass so the two kits can be compared, then deleted.
+- **Three floors need new gimmicks.** The Gilded Cage ("no seals") and The Foundry ("six seals")
+  are about a retired verb, and The Moth Garden ("moths are cheap") is about the other. They become
+  floors about the new verbs: no Blink, extra Shove, a free Lantern, and so on.
+- **The card catalog needs a matching pass.** Deep Roots, Thornwright, Bait, Smoke Wisp and the two
+  wisp knobs are built on the retired verbs. Do not leave them in the pool as dead cards; either
+  rewrite them around the new verbs or cut them until the card pass. This is content work, not a
+  rule change, and it should land in the same pass as the kit.
+
+### Cost and the first slice
+
+- **The kit** is medium: five small additions to `GameState` (a breach, a veil state, a hunter
+  time scale, a light origin, a shove) plus renderer and sound states. Blink, Veil, Drag and Shove
+  are local; Lantern is the one that touches visibility and should be built last.
+- **The conditions** are medium-to-large: Regrowth and Fracture need a maze-mutation API with a
+  connectivity check and tests; Eclipse, Listener, Hunted and Mute are rule flags; Drift is a
+  placement rule. Build two of them first, not eight.
+- **The first slice is Blink + Drag + Regrowth on floors 1-10**, with the old kit unmapped and the
+  conditions drawn automatically. The Gilded Cage's gimmick becomes "no Blink" for that slice.
+  Two buttons and one mutation is enough to answer whether the new direction is fun; do not build
+  the other three verbs until that slice has been played.
+
+### Recommendation
+
+Start with the slice above, not with the full five-verb kit. If Blink + Drag + Regrowth does not
+make the powerups something the player reaches for, the other three verbs will not save it, and
+the condition pool can be cut back to Regrowth and Eclipse. If it does, the next pass adds Veil,
+Lantern and Shove and the floor-8/floor-14 choice screen, and the card catalog is rewritten around
+the verbs that survived.

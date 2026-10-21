@@ -139,7 +139,12 @@ public sealed class GameFactory
             random,
             config.ExtraLoops);
 
-        var maze = generator.Generate(new MazeOptions(config.Rows, config.Columns, seed));
+        var maze = generator.Generate(new MazeOptions(config.Rows, config.Columns, seed)
+        {
+            Shape = config.Shape == ShapeKind.Rect
+                ? null
+                : MazeShape.Create(config.Shape, config.Rows, config.Columns, random),
+        });
 
         // The same random source drives placement, so one seed reproduces the whole floor.
         return new GameState(config, maze, _pathfinder, random);
@@ -167,7 +172,12 @@ public sealed class GameFactory
             random,
             _config.ExtraLoops);
 
-        var maze = generator.Generate(new MazeOptions(_config.Rows, _config.Columns, _config.Seed));
+        var maze = generator.Generate(new MazeOptions(_config.Rows, _config.Columns, _config.Seed)
+        {
+            Shape = _config.Shape == ShapeKind.Rect
+                ? null
+                : MazeShape.Create(_config.Shape, _config.Rows, _config.Columns, random),
+        });
 
         // The same random source drives placement, so one seed reproduces the whole game.
         return new GameState(_config, maze, _pathfinder, random);

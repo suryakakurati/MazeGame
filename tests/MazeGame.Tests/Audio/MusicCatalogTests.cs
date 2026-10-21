@@ -26,9 +26,13 @@ public sealed class MusicCatalogTests
         foreach (var theme in MusicCatalog.All)
         {
             Assert.InRange(theme.RootMidi, 24, 60);
-            Assert.InRange(theme.Tempo, 40.0, 130.0);
+            Assert.InRange(theme.Tempo, 40.0, 140.0);
+            Assert.InRange(theme.StepsPerBar, 12, 20);
             Assert.InRange(theme.BarsPerLoop, 4, 8);
             Assert.InRange(theme.Band, 1, 4);
+            Assert.NotEmpty(theme.Melody.Degrees);
+            Assert.InRange(theme.Melody.Spacing, 1, 8);
+            Assert.True(Enum.IsDefined(theme.Style), $"{theme.ThemeId} has no style.");
             Assert.InRange(theme.Density, 0.0, 1.0);
             Assert.InRange(theme.Tension, 0.0, 1.0);
             Assert.InRange(theme.ReverbWet, 0.0, 1.0);
@@ -76,6 +80,10 @@ public sealed class MusicCatalogTests
                 theme.Tempo,
                 theme.BarsPerLoop,
                 string.Join(',', theme.Progression),
+                theme.Style,
+                theme.StepsPerBar,
+                string.Join(',', theme.Melody.Degrees),
+                theme.Melody.Spacing,
                 theme.Mix.Pad,
                 theme.Mix.Bass,
                 theme.Mix.Lead,
@@ -109,16 +117,53 @@ public sealed class MusicCatalogTests
     }
 
     [Fact]
-    public void TheFiveMotifs_CycleAcrossTheTwentyFloors()
+    public void EveryFloor_HasItsOwnMelody()
     {
-        Assert.Equal(5, MusicCatalog.Motifs.Count);
+        // The complaint this answers was that twenty floors sounded like one tune at twenty
+        // pitches. A shared melody is exactly how that happens, so no two floors may have one.
+        var melodies = new HashSet<string>(StringComparer.Ordinal);
 
-        for (var floor = 1; floor <= 20; floor++)
+        foreach (var theme in MusicCatalog.All)
         {
-            Assert.Same(MusicCatalog.Motifs[(floor - 1) % 5], MusicCatalog.MotifFor(floor));
+            var signature = $"{string.Join(',', theme.Melody.Degrees)}|{theme.Melody.Spacing}";
+
+            Assert.True(melodies.Add(signature), $"{theme.ThemeId} reuses another floor's melody.");
+        }
+    }
+
+    [Fact]
+    public void TheDescent_ChangesTheKindOfMusicNotOnlyItsNumbers()
+    {
+        var styles = new HashSet<MusicStyle>();
+
+        foreach (var theme in MusicCatalog.All)
+        {
+            styles.Add(theme.Style);
         }
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => MusicCatalog.MotifFor(0));
+        Assert.True(styles.Count >= 8, $"The twenty floors only use {styles.Count} styles.");
+
+        // Neighbouring floors never share a style: the player should hear the next floor as a new
+        // piece, not as the previous one in a different key.
+        for (var index = 1; index < MusicCatalog.All.Count; index++)
+        {
+            Assert.NotEqual(MusicCatalog.All[index - 1].Style, MusicCatalog.All[index].Style);
+        }
+    }
+
+    [Fact]
+    public void TheDescent_UsesMoreThanOneMeter()
+    {
+        var meters = new HashSet<int>();
+
+        foreach (var theme in MusicCatalog.All)
+        {
+            meters.Add(theme.StepsPerBar);
+        }
+
+        Assert.Contains(16, meters);
+        Assert.Contains(12, meters);
+        Assert.Contains(20, meters);
     }
 
     [Fact]

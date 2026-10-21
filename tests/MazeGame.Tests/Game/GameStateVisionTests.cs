@@ -7,7 +7,9 @@ namespace MazeGame.Tests.Game;
 
 /// <summary>
 /// Verifies the fog-of-war rule: the player sees their own cell plus everything within
-/// <c>VisionRadius</c> walking steps through open passages, and a wall blocks sight.
+/// <c>VisionRadius</c> walking steps through open passages, and the lantern also spills onto the
+/// cells within <c>NearSightRadius</c> of the player — walls or no walls — so a wall's near face is
+/// never missing.
 /// </summary>
 /// <remarks>
 /// Visibility lives in Core rather than in a renderer because it decides what the player is
@@ -41,22 +43,61 @@ public sealed class GameStateVisionTests
     }
 
     [Fact]
-    public void IsVisible_ThroughAWall_IsFalse()
+    public void IsVisible_ThroughAWall_IsTrueWithinTheNearSightRadius()
     {
-        // A 2x2 grid with every wall standing: the neighbouring cells are one step away but
-        // there is no passage, so the player cannot see into them.
+        // The lantern spills onto the rock around the player, walls or no walls. That is what draws
+        // the near face of a wall you are standing against: without it the wall belongs to a cell
+        // nobody has seen and the corridor looks like it has a gap in it.
+        var config = new GameConfig
+        {
+            Rows = 2,
+            Columns = 2,
+            KeyCount = 0,
+            VisionRadius = 3,
+            NearSightRadius = 2,
+            EnemyAuraDistance = 0,
+            EnemyAuraRadius = 0,
+            EnemyStepSeconds = 1000.0,
+        };
+        var state = new GameState(config, new Grid(2, 2), new DijkstraPathfinder(), new FixedRandom(0));
+
+        Assert.True(state.IsVisible(state.Maze.GetCell(0, 1)));
+        Assert.True(state.IsVisible(state.Maze.GetCell(1, 0)));
+        Assert.Equal(2, state.NearSightRadius);
+    }
+
+    [Fact]
+    public void IsVisible_WithNearSightOff_ThroughAWall_IsFalse()
+    {
+        // The spill is a setting, not a replacement for sight: with it at zero the old rule
+        // returns, which is what proves the wall still blocks the torch itself.
         var config = new GameConfig
         {
             Rows = 2,
             Columns = 2,
             KeyCount = 0,
             VisionRadius = 1,
+            NearSightRadius = 0,
+            EnemyAuraDistance = 0,
+            EnemyAuraRadius = 0,
             EnemyStepSeconds = 1000.0,
         };
         var state = new GameState(config, new Grid(2, 2), new DijkstraPathfinder(), new FixedRandom(0));
+        var player = state.Player;
+        var killer = state.Enemy;
 
-        Assert.False(state.IsVisible(state.Maze.GetCell(0, 1)));
-        Assert.False(state.IsVisible(state.Maze.GetCell(1, 0)));
+        foreach (var row in new[] { 0, 1 })
+        {
+            foreach (var column in new[] { 0, 1 })
+            {
+                var cell = state.Maze.GetCell(row, column);
+
+                if (cell != player && cell != killer)
+                {
+                    Assert.False(state.IsVisible(cell));
+                }
+            }
+        }
     }
 
     [Fact]
@@ -70,6 +111,7 @@ public sealed class GameStateVisionTests
             Columns = 3,
             KeyCount = 0,
             VisionRadius = 10,
+            NearSightRadius = 0,
             EnemyStepSeconds = 1000.0,
         };
         var maze = new Grid(2, 3);

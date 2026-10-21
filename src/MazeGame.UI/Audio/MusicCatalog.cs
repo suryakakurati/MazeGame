@@ -5,14 +5,14 @@ using System.Collections.ObjectModel;
 namespace MazeGame.UI.Audio;
 
 /// <summary>
-/// One of the five melodic ideas every floor is built from.
+/// One melodic idea: scale degrees and how many sixteenths each note lasts.
 /// </summary>
 /// <param name="Degrees">Scale degrees, in order; negative degrees sit below the tonic.</param>
 /// <param name="Spacing">How many sixteenth notes each note lasts.</param>
 public sealed record Motif(int[] Degrees, int Spacing);
 
 /// <summary>
-/// The score's content: twenty floor themes and the five motifs they are arranged from.
+/// The score's content: twenty floor pieces, one per floor, each its own tune, key, meter and style.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,142 +21,190 @@ public sealed record Motif(int[] Degrees, int Spacing);
 /// for exactly that reason.
 /// </para>
 /// <para>
-/// The arrangement escalates in four bands: 1–5 is pad and one motif, 6–10 adds bass and a
-/// second voice, 11–15 adds choir and bells, and 16–20 adds the distorted lead and driving
-/// percussion. Floor 20 is the exception the plan asks for: slow, wide, and carrying the title
-/// motif in canon.
+/// Twenty floors are twenty pieces, not twenty takes on one: every entry has its own
+/// <see cref="MusicTheme.Melody"/>, its own <see cref="MusicStyle"/> (drone, lullaby, procession,
+/// chant, pulse, waltz, nocturne, gamelan, machine, requiem), and some change the meter as well
+/// (3/4 on the waltzes and the last floor, 5/4 in the Foundry and the Bramble). The descent is a
+/// sequence of different kinds of music that all share a palette, which is what makes each floor
+/// announce itself the moment the intro card drops.
+/// </para>
+/// <para>
+/// Loudness still rises: <see cref="MusicTheme.Band"/> goes from 1 on the Shallows to 4 at the
+/// bottom, and the mix opens up the choir and the percussion as it goes.
 /// </para>
 /// </remarks>
 public static class MusicCatalog
 {
-    private const double BandOneBass = 0.45;
-    private const double BandOneLead = 0.42;
-    private const double BandOnePerc = 0.4;
-
-    /// <summary>Gets the five motifs, shared by every floor.</summary>
-    public static IReadOnlyList<Motif> Motifs { get; } = new ReadOnlyCollection<Motif>(
-    [
-        new Motif([0, 2, 4, 3, 2, 0], 2),
-        new Motif([0, 4, 2, 6, 4, 2], 2),
-        new Motif([0, 3, 4, 2, 0, -1], 3),
-        new Motif([0, 2, 0, 5, 4, 2], 2),
-        new Motif([0, 6, 4, 3, 1, 0], 2),
-    ]);
-
-    /// <summary>Gets the twenty floor themes, in floor order.</summary>
+    /// <summary>Gets the twenty floor pieces, in floor order.</summary>
     public static IReadOnlyList<MusicTheme> All { get; } = new ReadOnlyCollection<MusicTheme>(
     [
-        // 1-5: the descent begins. One motif, a pad, and as much silence as notes.
+        // 1 — Drone. A held low fifth with one slow voice over it: the room before the room.
         new MusicTheme(
-            "shallows", 45, MusicMode.Aeolian, 72, 4, [0, 5, 3, 4],
-            new InstrumentMix(1.0, BandOneBass, BandOneLead, BandOnePerc, 0.0),
-            Density: 0.34, Tension: 0.12, ReverbWet: 0.30, Band: 1),
+            "shallows", 45, MusicMode.Aeolian, MusicStyle.Drone,
+            Tempo: 54, StepsPerBar: 16, BarsPerLoop: 4, Progression: [0, 0, 5, 0],
+            Melody: new Motif([0, 2, 4, 2, 0, -1], 4),
+            Mix: new InstrumentMix(1.0, 0.18, 0.55, 0.0, 0.0),
+            Density: 0.22, Tension: 0.08, ReverbWet: 0.62, Band: 1),
 
+        // 2 — Lullaby. A music box in 6/8, no drums, swaying.
         new MusicTheme(
-            "rootbound", 45, MusicMode.Dorian, 68, 4, [0, 3, 5, 4],
-            new InstrumentMix(1.0, 0.50, 0.46, 0.44, 0.0),
-            Density: 0.38, Tension: 0.18, ReverbWet: 0.34, Band: 1),
+            "rootbound", 45, MusicMode.Dorian, MusicStyle.Lullaby,
+            Tempo: 88, StepsPerBar: 12, BarsPerLoop: 6, Progression: [0, 5, 3, 4],
+            Melody: new Motif([0, 2, 3, 2, 0, 4], 3),
+            Mix: new InstrumentMix(0.9, 0.0, 0.78, 0.0, 0.0),
+            Density: 0.30, Tension: 0.12, ReverbWet: 0.55, Band: 1),
 
+        // 3 — Procession. A slow march through a flooded nave: heavy feet and a walking bass.
         new MusicTheme(
-            "drowned", 38, MusicMode.Aeolian, 70, 4, [0, 5, 4, 3],
-            new InstrumentMix(1.0, 0.46, 0.40, 0.34, 0.12),
-            Density: 0.32, Tension: 0.20, ReverbWet: 0.44, Band: 1),
+            "drowned", 38, MusicMode.Aeolian, MusicStyle.Procession,
+            Tempo: 64, StepsPerBar: 16, BarsPerLoop: 4, Progression: [0, 5, 4, 3],
+            Melody: new Motif([0, -1, 2, 4, 2, 0], 4),
+            Mix: new InstrumentMix(0.85, 0.72, 0.50, 0.42, 0.30),
+            Density: 0.40, Tension: 0.26, ReverbWet: 0.66, Band: 1),
 
+        // 4 — Chant. Voices first: a choir over an organ bed and a frame drum.
         new MusicTheme(
-            "saltchoir", 43, MusicMode.Dorian, 76, 4, [0, 4, 5, 3],
-            new InstrumentMix(1.0, 0.52, 0.52, 0.48, 0.30),
-            Density: 0.42, Tension: 0.24, ReverbWet: 0.40, Band: 1),
+            "saltchoir", 43, MusicMode.Dorian, MusicStyle.Chant,
+            Tempo: 58, StepsPerBar: 16, BarsPerLoop: 4, Progression: [0, 4, 5, 3],
+            Melody: new Motif([0, 3, 4, 3, 2, 0], 4),
+            Mix: new InstrumentMix(0.80, 0.35, 0.42, 0.16, 0.95),
+            Density: 0.34, Tension: 0.22, ReverbWet: 0.74, Band: 1),
 
+        // 5 — Pulse. Embers: a filtered arpeggio, four on the floor, the first real drive.
         new MusicTheme(
-            "ember", 41, MusicMode.Phrygian, 84, 4, [0, 1, 5, 4],
-            new InstrumentMix(1.0, 0.58, 0.55, 0.54, 0.10),
-            Density: 0.46, Tension: 0.30, ReverbWet: 0.28, Band: 1),
+            "ember", 41, MusicMode.Phrygian, MusicStyle.Pulse,
+            Tempo: 112, StepsPerBar: 16, BarsPerLoop: 4, Progression: [0, 1, 5, 4],
+            Melody: new Motif([0, 4, 2, 5, 4, 2], 2),
+            Mix: new InstrumentMix(0.85, 0.78, 0.72, 0.80, 0.0),
+            Density: 0.62, Tension: 0.40, ReverbWet: 0.30, Band: 1),
 
-        // 6-10: a bass ostinato and a second voice arrive.
+        // 6 — Waltz. Gilded and hollow: three beats, a plucked tune, a light kick.
         new MusicTheme(
-            "gilded", 47, MusicMode.Lydian, 88, 4, [0, 4, 5, 2],
-            new InstrumentMix(1.0, 0.66, 0.60, 0.62, 0.22),
-            Density: 0.50, Tension: 0.34, ReverbWet: 0.36, Band: 2),
+            "gilded", 47, MusicMode.Lydian, MusicStyle.Waltz,
+            Tempo: 132, StepsPerBar: 12, BarsPerLoop: 8, Progression: [0, 4, 5, 2],
+            Melody: new Motif([0, 2, 4, 6, 4, 2], 3),
+            Mix: new InstrumentMix(0.92, 0.55, 0.80, 0.34, 0.20),
+            Density: 0.46, Tension: 0.30, ReverbWet: 0.44, Band: 2),
 
+        // 7 — Nocturne. The Hush: a piano in a sealed room, no drums, almost no light.
         new MusicTheme(
-            "hush", 40, MusicMode.Aeolian, 62, 4, [0, 5, 3, 4],
-            new InstrumentMix(1.0, 0.60, 0.44, 0.26, 0.18),
-            Density: 0.26, Tension: 0.22, ReverbWet: 0.52, Band: 2),
+            "hush", 40, MusicMode.Aeolian, MusicStyle.Nocturne,
+            Tempo: 62, StepsPerBar: 16, BarsPerLoop: 4, Progression: [0, 5, 3, 4],
+            Melody: new Motif([0, 2, 1, 0, -1, 0], 6),
+            Mix: new InstrumentMix(0.70, 0.22, 0.86, 0.0, 0.0),
+            Density: 0.18, Tension: 0.18, ReverbWet: 0.78, Band: 2),
 
+        // 8 — Procession. The Long Gallery: a processional with bells in the empty bays.
         new MusicTheme(
-            "gallery", 45, MusicMode.Mixolydian, 82, 4, [0, 3, 4, 5],
-            new InstrumentMix(1.0, 0.68, 0.62, 0.66, 0.28),
-            Density: 0.52, Tension: 0.36, ReverbWet: 0.46, Band: 2),
+            "gallery", 45, MusicMode.Mixolydian, MusicStyle.Procession,
+            Tempo: 76, StepsPerBar: 16, BarsPerLoop: 4, Progression: [0, 3, 4, 5],
+            Melody: new Motif([0, 4, 3, 2, 4, 6], 3),
+            Mix: new InstrumentMix(0.90, 0.66, 0.74, 0.50, 0.34),
+            Density: 0.50, Tension: 0.32, ReverbWet: 0.58, Band: 2),
 
+        // 9 — Pulse. The Warren: tight, fast, claustrophobic; the melody climbs and never rests.
         new MusicTheme(
-            "warren", 43, MusicMode.Dorian, 94, 4, [0, 5, 6, 4],
-            new InstrumentMix(1.0, 0.74, 0.66, 0.72, 0.16),
-            Density: 0.60, Tension: 0.40, ReverbWet: 0.30, Band: 2),
+            "warren", 43, MusicMode.Dorian, MusicStyle.Pulse,
+            Tempo: 124, StepsPerBar: 16, BarsPerLoop: 4, Progression: [0, 5, 6, 4],
+            Melody: new Motif([0, 2, 4, 6, 7, 6], 2),
+            Mix: new InstrumentMix(0.80, 0.86, 0.84, 0.92, 0.18),
+            Density: 0.72, Tension: 0.48, ReverbWet: 0.26, Band: 2),
 
+        // 10 — Gamelan. The Glass Orchard: metal, interlocking parts, no drum kit at all.
         new MusicTheme(
-            "orchard", 48, MusicMode.Lydian, 86, 4, [0, 6, 4, 5],
-            new InstrumentMix(1.0, 0.70, 0.64, 0.60, 0.32),
-            Density: 0.54, Tension: 0.38, ReverbWet: 0.38, Band: 2),
+            "orchard", 48, MusicMode.Lydian, MusicStyle.Gamelan,
+            Tempo: 92, StepsPerBar: 16, BarsPerLoop: 6, Progression: [0, 6, 4, 5],
+            Melody: new Motif([0, 5, 2, 4, 1, 3], 2),
+            Mix: new InstrumentMix(0.72, 0.30, 0.90, 0.0, 0.28),
+            Density: 0.56, Tension: 0.36, ReverbWet: 0.60, Band: 2),
 
-        // 11-15: choir and bells, wider and more wrong.
+        // 11 — Drone. The Blind Mile: lower, wider, no rhythm to follow, just pressure.
         new MusicTheme(
-            "blindmile", 41, MusicMode.Locrian, 78, 4, [0, 1, 6, 3],
-            new InstrumentMix(1.0, 0.76, 0.72, 0.78, 0.50),
-            Density: 0.56, Tension: 0.54, ReverbWet: 0.48, Band: 3),
+            "blindmile", 36, MusicMode.Locrian, MusicStyle.Drone,
+            Tempo: 48, StepsPerBar: 16, BarsPerLoop: 4, Progression: [0, 1, 0, 6],
+            Melody: new Motif([0, -1, -2, -1, 0, 2], 6),
+            Mix: new InstrumentMix(1.0, 0.22, 0.62, 0.0, 0.58),
+            Density: 0.20, Tension: 0.60, ReverbWet: 0.82, Band: 3),
 
+        // 12 — Machine. The Foundry in 5/4: press hits, a distorted bass, a clanking line.
         new MusicTheme(
-            "foundry", 38, MusicMode.Phrygian, 102, 4, [0, 6, 1, 5],
-            new InstrumentMix(1.0, 0.84, 0.74, 0.86, 0.34),
-            Density: 0.70, Tension: 0.60, ReverbWet: 0.30, Band: 3),
+            "foundry", 38, MusicMode.Phrygian, MusicStyle.Machine,
+            Tempo: 104, StepsPerBar: 20, BarsPerLoop: 4, Progression: [0, 6, 1, 5],
+            Melody: new Motif([0, 0, 3, 0, 5, 3], 2),
+            Mix: new InstrumentMix(0.78, 0.92, 0.80, 0.96, 0.0),
+            Density: 0.80, Tension: 0.66, ReverbWet: 0.24, Band: 3),
 
+        // 13 — Lullaby. The Moth Garden: a soft box tune under a flutter, five beats of sway.
         new MusicTheme(
-            "mothgarden", 46, MusicMode.Dorian, 84, 4, [0, 4, 2, 5],
-            new InstrumentMix(1.0, 0.78, 0.80, 0.74, 0.56),
-            Density: 0.58, Tension: 0.46, ReverbWet: 0.50, Band: 3),
+            "mothgarden", 46, MusicMode.Dorian, MusicStyle.Lullaby,
+            Tempo: 96, StepsPerBar: 12, BarsPerLoop: 6, Progression: [0, 4, 2, 5],
+            Melody: new Motif([0, 2, 4, 7, 4, 2], 3),
+            Mix: new InstrumentMix(0.88, 0.0, 0.84, 0.10, 0.40),
+            Density: 0.34, Tension: 0.28, ReverbWet: 0.62, Band: 3),
 
+        // 14 — Requiem. The Ossuary: an organ, a bell, and a tune that keeps falling.
         new MusicTheme(
-            "ossuary", 39, MusicMode.Aeolian, 74, 4, [0, 3, 6, 4],
-            new InstrumentMix(1.0, 0.80, 0.70, 0.72, 0.62),
-            Density: 0.50, Tension: 0.50, ReverbWet: 0.56, Band: 3),
+            "ossuary", 39, MusicMode.Aeolian, MusicStyle.Requiem,
+            Tempo: 56, StepsPerBar: 16, BarsPerLoop: 4, Progression: [0, 3, 6, 4],
+            Melody: new Motif([0, 3, 2, 3, 0, -2], 6),
+            Mix: new InstrumentMix(0.95, 0.30, 0.66, 0.12, 0.86),
+            Density: 0.30, Tension: 0.54, ReverbWet: 0.80, Band: 3),
 
+        // 15 — Nocturne. The Tide: flowing right-hand figures over a slow bass, no drums.
         new MusicTheme(
-            "tide", 43, MusicMode.Mixolydian, 72, 4, [0, 5, 3, 6],
-            new InstrumentMix(1.0, 0.82, 0.76, 0.80, 0.48),
-            Density: 0.62, Tension: 0.52, ReverbWet: 0.54, Band: 3),
+            "tide", 43, MusicMode.Mixolydian, MusicStyle.Nocturne,
+            Tempo: 84, StepsPerBar: 16, BarsPerLoop: 4, Progression: [0, 5, 3, 6],
+            Melody: new Motif([0, 4, 5, 4, 2, 4], 2),
+            Mix: new InstrumentMix(0.76, 0.40, 0.90, 0.0, 0.22),
+            Density: 0.44, Tension: 0.34, ReverbWet: 0.70, Band: 3),
 
-        // 16-20: the driving band. Floor 20 is half-time, with everything on it.
+        // 16 — Machine. The Bramble in 5/4: snapping, unlaced, nothing resolves.
         new MusicTheme(
-            "bramble", 40, MusicMode.Dorian, 98, 4, [0, 6, 4, 1],
-            new InstrumentMix(1.0, 0.88, 0.90, 0.92, 0.58),
-            Density: 0.74, Tension: 0.66, ReverbWet: 0.36, Band: 4),
+            "bramble", 40, MusicMode.Dorian, MusicStyle.Machine,
+            Tempo: 108, StepsPerBar: 20, BarsPerLoop: 4, Progression: [0, 6, 4, 1],
+            Melody: new Motif([0, 2, 1, 4, 3, 0], 3),
+            Mix: new InstrumentMix(0.80, 0.90, 0.86, 0.94, 0.26),
+            Density: 0.78, Tension: 0.70, ReverbWet: 0.30, Band: 4),
 
+        // 17 — Requiem. The Vault: heavier and slower, an organ under a stone ceiling.
         new MusicTheme(
-            "vault", 38, MusicMode.Locrian, 90, 4, [0, 1, 4, 6],
-            new InstrumentMix(1.0, 0.90, 0.96, 0.88, 0.52),
-            Density: 0.68, Tension: 0.74, ReverbWet: 0.42, Band: 4),
+            "vault", 34, MusicMode.Locrian, MusicStyle.Requiem,
+            Tempo: 50, StepsPerBar: 16, BarsPerLoop: 4, Progression: [0, 1, 4, 6],
+            Melody: new Motif([0, -1, 0, 2, 0, -1], 6),
+            Mix: new InstrumentMix(1.0, 0.36, 0.60, 0.20, 0.92),
+            Density: 0.32, Tension: 0.72, ReverbWet: 0.84, Band: 4),
 
+        // 18 — Gamelan. The Loom: two interlocking metal parts weaving around each other.
         new MusicTheme(
-            "loom", 45, MusicMode.Phrygian, 106, 4, [0, 5, 1, 4],
-            new InstrumentMix(1.0, 0.92, 0.94, 0.98, 0.60),
-            Density: 0.80, Tension: 0.78, ReverbWet: 0.32, Band: 4),
+            "loom", 45, MusicMode.Phrygian, MusicStyle.Gamelan,
+            Tempo: 116, StepsPerBar: 16, BarsPerLoop: 6, Progression: [0, 5, 1, 4],
+            Melody: new Motif([0, 4, 6, 4, 2, 5], 2),
+            Mix: new InstrumentMix(0.70, 0.44, 0.94, 0.0, 0.30),
+            Density: 0.66, Tension: 0.58, ReverbWet: 0.54, Band: 4),
 
+        // 19 — Chant. The Ash Garden: three voices, a frame drum, and nothing that tires.
         new MusicTheme(
-            "ashgarden", 41, MusicMode.Aeolian, 82, 4, [0, 6, 3, 5],
-            new InstrumentMix(1.0, 0.86, 0.98, 0.86, 0.66),
-            Density: 0.66, Tension: 0.70, ReverbWet: 0.48, Band: 4),
+            "ashgarden", 41, MusicMode.Aeolian, MusicStyle.Chant,
+            Tempo: 66, StepsPerBar: 16, BarsPerLoop: 4, Progression: [0, 6, 3, 5],
+            Melody: new Motif([0, 2, 0, 3, 2, 0], 4),
+            Mix: new InstrumentMix(0.84, 0.44, 0.40, 0.30, 1.0),
+            Density: 0.38, Tension: 0.68, ReverbWet: 0.76, Band: 4),
 
+        // 20 — Requiem in 3/4, in canon: the floor that ends the descent.
         new MusicTheme(
-            "deep", 36, MusicMode.Aeolian, 58, 4, [0, 5, 3, 6],
-            new InstrumentMix(1.0, 0.80, 1.0, 0.62, 0.80),
-            Density: 0.44, Tension: 0.88, ReverbWet: 0.62, Band: 4, Canon: true),
+            "deep", 36, MusicMode.Aeolian, MusicStyle.Requiem,
+            Tempo: 48, StepsPerBar: 12, BarsPerLoop: 4, Progression: [0, 5, 3, 6],
+            Melody: new Motif([0, 4, 2, 0, -1, 0], 6),
+            Mix: new InstrumentMix(1.0, 0.34, 0.58, 0.26, 1.0),
+            Density: 0.30, Tension: 0.86, ReverbWet: 0.90, Band: 4, Canon: true),
     ]);
 
     /// <summary>
-    /// Finds the track for a floor theme.
+    /// Finds the piece for a floor theme.
     /// </summary>
     /// <param name="themeId">The floor's theme id, as used by the atlas.</param>
     /// <returns>The matching theme.</returns>
-    /// <exception cref="ArgumentException">Thrown when there is no track for that id.</exception>
+    /// <exception cref="ArgumentException">Thrown when there is no piece for that id.</exception>
     public static MusicTheme For(string themeId)
     {
         foreach (var theme in All)
@@ -168,25 +216,5 @@ public static class MusicCatalog
         }
 
         throw new ArgumentException($"No music theme for '{themeId}'.", nameof(themeId));
-    }
-
-    /// <summary>
-    /// Gets the motif a floor is arranged from: floors cycle through the five, so a run hears
-    /// each of them four times in increasingly wrong shapes.
-    /// </summary>
-    /// <param name="floorNumber">The floor's number, starting at 1.</param>
-    /// <returns>The motif for that floor.</returns>
-    /// <exception cref="ArgumentOutOfRangeException">Thrown when the floor number is below 1.</exception>
-    public static Motif MotifFor(int floorNumber)
-    {
-        if (floorNumber < 1)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(floorNumber),
-                floorNumber,
-                "Floors are numbered from 1.");
-        }
-
-        return Motifs[(floorNumber - 1) % Motifs.Count];
     }
 }

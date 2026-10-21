@@ -47,9 +47,20 @@ public sealed class PixelRenderer : IRenderer, IDisposable
 
     private static readonly Color CanvasColour = new(3, 9, 11, 255);
 
-    private static readonly Color Remembered = new(104, 118, 122, 255);
+    /// <summary>
+    /// How a seen-but-not-lit cell is tinted.
+    /// </summary>
+    /// <remarks>
+    /// Brighter than the lantern's memory used to be: the maze is read from the part of the screen
+    /// the torch is not on — the wall you just walked past, the passage you turned out of — and at
+    /// 45% the floor and its walls both sank into the same black.
+    /// </remarks>
+    private static readonly Color Remembered = new(152, 167, 172, 255);
 
     private static readonly Color Cursor = new(210, 255, 225, 255);
+
+    /// <summary>How a stunned hunter is tinted: cold and half-lit, so the reprieve is legible.</summary>
+    private static readonly Color Stunned = new(150, 172, 205, 255);
 
     private PixelView _view;
 
@@ -85,7 +96,8 @@ public sealed class PixelRenderer : IRenderer, IDisposable
 
     private Direction _playerFacing = Direction.South;
 
-    private Direction _enemyFacing = Direction.South;
+    // One facing per hunter, in placement order, so two killers never share a walk direction.
+    private readonly List<Direction> _enemyFacings = [];
 
     private bool _disposed;
 
@@ -183,7 +195,7 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         _explored.Clear();
         _lightStamp = int.MinValue;
         _playerFacing = Direction.South;
-        _enemyFacing = Direction.South;
+        _enemyFacings.Clear();
         _chrome.Reset();
     }
 
@@ -216,13 +228,6 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         var fit = _view.Present(RaylibLayout.HudHeight, RaylibLayout.FooterHeight, Margin, Backdrop());
         DrawAimCursor(state, fit);
         _chrome.DrawOverlay(state, _floorChrome);
-
-        // A lost run ends on a card, like the campaign screens do, so the last thing the player
-        // sees is in the same type as everything else.
-        if (state.Status == GameStatus.Caught)
-        {
-            PixelCards.Caught(Font);
-        }
     }
 
     /// <summary>Releases the canvas, the light texture and every loaded atlas.</summary>
@@ -370,24 +375,33 @@ public sealed class PixelRenderer : IRenderer, IDisposable
 
     /// <summary>
     /// Draws the wall faces that belong to this cell: the north and west ones always, and the south
-    /// and east ones only on the floor's edge.
+    /// and east ones when no neighbour will draw them.
     /// </summary>
     /// <remarks>
     /// A wall between two cells is both the eastern cell's west face and the western cell's east
-    /// face. Drawing only the north and west faces — plus the outer rim on the last row and column —
-    /// paints each wall exactly once, so two neighbours cannot draw it twice at two positions.
+    /// face. Drawing only the north and west faces paints each wall exactly once — but it also means
+    /// a wall facing a cell that has never been seen is drawn by nobody, so the corridor shows a
+    /// gap where its wall should be. When the southern or eastern neighbour is unknown this cell
+    /// therefore draws that face itself; the two rules together paint every wall once and none
+    /// not at all.
     /// </remarks>
     private void DrawWalls(GameState state, TileAtlas atlas, Cell cell, int x, int y, Color tint)
     {
         DrawFace(atlas, state, cell, Direction.North, x, y, tint);
         DrawFace(atlas, state, cell, Direction.West, x, y, tint);
 
-        if (cell.Row == _rows - 1)
+        var southKnown = cell.Row + 1 < _rows &&
+            Known(state, state.Maze.GetCell(cell.Row + 1, cell.Column));
+
+        if (!southKnown)
         {
             DrawFace(atlas, state, cell, Direction.South, x, y, tint);
         }
 
-        if (cell.Column == _columns - 1)
+        var eastKnown = cell.Column + 1 < _columns &&
+            Known(state, state.Maze.GetCell(cell.Row, cell.Column + 1));
+
+        if (!eastKnown)
         {
             DrawFace(atlas, state, cell, Direction.East, x, y, tint);
         }
@@ -480,7 +494,7 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     /// <summary>Returns whether a cell holds something that must not be covered by scenery.</summary>
     private static bool IsBusy(GameState state, Cell cell) =>
         cell == state.Player ||
-        cell == state.Enemy ||
+        HunterOn(state, cell) ||
         cell == state.Exit ||
         cell == state.Lure ||
         state.Keys.Contains(cell) ||
@@ -546,12 +560,24 @@ public sealed class PixelRenderer : IRenderer, IDisposable
                 CanvasY(exit.Row));
         }
 
-        if (OnScreen(state.Enemy))
+        var hunters = state.Enemies;
+
+        for (var index = 0; index < hunters.Count; index++)
         {
+            var hunter = hunters[index];
+
+            if (!OnScreen(hunter.Cell))
+            {
+                continue;
+            }
+
+            var facing = index < _enemyFacings.Count ? _enemyFacings[index] : Direction.South;
+
             atlas.Draw(
-                $"killer-{NameOf(_enemyFacing)}-{EnemyFrame(state)}",
-                CanvasX(state.Enemy.Column),
-                CanvasY(state.Enemy.Row));
+                $"killer-{NameOf(facing)}-{EnemyFrame(hunter)}",
+                CanvasX(hunter.Cell.Column),
+                CanvasY(hunter.Cell.Row),
+                hunter.Stunned ? Stunned : Color.White);
         }
 
         atlas.Draw(
@@ -576,16 +602,12 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         };
     }
 
-    /// <summary>Returns the frame the killer is on: its gait only moves while it is stepping.</summary>
-    private static string EnemyFrame(GameState state)
-    {
-        if (state.PreviousEnemy == state.Enemy)
-        {
-            return "idle";
-        }
-
-        return state.EnemyStepFraction < 0.5 ? "walk0" : "walk1";
-    }
+    /// <summary>Returns the frame a hunter is on: its gait only moves while it is stepping.</summary>
+    /// <param name="hunter">The hunter to draw.</param>
+    private static string EnemyFrame(HunterView hunter) =>
+        hunter.From == hunter.Cell
+            ? "idle"
+            : hunter.StepFraction < 0.5 ? "walk0" : "walk1";
 
     /// <summary>Returns the name a facing is spelled with inside a tile name.</summary>
     private static string NameOf(Direction direction) => direction switch
@@ -599,6 +621,22 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     /// <summary>Returns whether a cell has been seen, so an entity there may be drawn.</summary>
     private bool Known(GameState state, Cell cell) =>
         state.IsVisible(cell) || _explored.Contains(cell);
+
+    /// <summary>Returns whether any hunter is standing on <paramref name="cell"/>.</summary>
+    /// <param name="state">The floor being drawn.</param>
+    /// <param name="cell">The cell to check.</param>
+    private static bool HunterOn(GameState state, Cell cell)
+    {
+        foreach (var hunter in state.Enemies)
+        {
+            if (hunter.Cell == cell)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Multiplies the scene by one texel per cell: lantern falloff, remembered cells, and the
@@ -647,11 +685,19 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     /// </summary>
     private int LightStamp(GameState state)
     {
+        // Every hunter carries light, so every hunter's cell belongs in the stamp. Folding them
+        // into one number keeps the combine below to the arguments it already had.
+        var hunters = 17;
+
+        foreach (var hunter in state.Enemies)
+        {
+            hunters = unchecked((hunters * 31) + HashCode.Combine(hunter.Cell.Row, hunter.Cell.Column));
+        }
+
         return HashCode.Combine(
             state.Player.Row,
             state.Player.Column,
-            state.Enemy.Row,
-            state.Enemy.Column,
+            hunters,
             _explored.Count,
             state.EnemyGlow.Count,
             state.EffectiveVisionRadius,
@@ -726,11 +772,11 @@ public sealed class PixelRenderer : IRenderer, IDisposable
                 {
                     var distance = Math.Max(Math.Abs(cell.Row - player.Row), Math.Abs(cell.Column - player.Column));
                     var falloff = 1.0 - (distance / (radius + 1.0));
-                    level = 0.62 + (Math.Clamp(falloff, 0.0, 1.0) * 0.38);
+                    level = 0.70 + (Math.Clamp(falloff, 0.0, 1.0) * 0.30);
                 }
                 else if (_explored.Contains(cell))
                 {
-                    level = 0.40;
+                    level = 0.55;
                 }
                 else
                 {
@@ -939,7 +985,19 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     private void TrackFacing(GameState state)
     {
         _playerFacing = Facing(state.PreviousPlayer, state.Player, _playerFacing);
-        _enemyFacing = Facing(state.PreviousEnemy, state.Enemy, _enemyFacing);
+
+        var hunters = state.Enemies;
+
+        while (_enemyFacings.Count < hunters.Count)
+        {
+            _enemyFacings.Add(Direction.South);
+        }
+
+        for (var index = 0; index < hunters.Count; index++)
+        {
+            var hunter = hunters[index];
+            _enemyFacings[index] = Facing(hunter.From, hunter.Cell, _enemyFacings[index]);
+        }
     }
 
     /// <summary>Returns the direction from one cell to another, or <paramref name="fallback"/>.</summary>

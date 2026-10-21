@@ -1369,3 +1369,176 @@ caught a real crash when the HUD moved to the face. Text is only crisp at intege
 layouts measure and pick 1, 2, 3 or 4 instead of scaling to fit; the footer centres its hints in
 the room the hearts leave, and the HUD name truncates at a glyph boundary so a long name cannot
 run into the status chips.
+
+## 2026-10-21 — The lantern spills onto the rock, and a wall is drawn by whoever can see it
+
+**Decision:** `GameConfig.NearSightRadius` (default 2, clamped to the torch in force) adds the cells
+within straight-line distance of the player to the visible set, ignoring walls. The pixel renderer
+additionally draws a cell's south and east wall face when the neighbour on that side has never been
+seen, instead of relying on that neighbour to draw its own north/west face.
+
+**Reason:** Sight is a walking-distance flood fill, and wall faces are owned by the eastern/southern
+cell. A wall you were standing against therefore belonged to a cell nobody had seen, so nothing
+drew it: the corridor read as a hole with the wall floating at its end. Players described it as
+"walls don't render because you can't reach the other side", which is exactly what it was.
+
+**Consequences:** The visible set is no longer purely "what the corridor reaches", so the rule's doc
+says what the spill is for: the rock around you, not the corridors beyond it. It is capped by the
+torch, so a vision-1 floor gets one cell and a blind floor none, and `NearSightRadius = 0` restores
+the old behaviour for a test or a card. The wall-ownership fallback stays even with the spill on,
+because a corner diagonal can still be seen from one side only.
+
+## 2026-10-21 — More hunters, not a faster hunter; the hunt is a list
+
+**Decision:** `GameConfig.HunterCount` / `FloorDefinition.HunterCount` put one hunter on floors
+1–9, two on 10–15 and three on 16–20. `GameState` holds a private list of `Hunter` objects, each
+with its own cell, step clock, stun, cached route and route index. `Enemies` publishes a reused
+array of `HunterView` snapshots; `Enemy`, `PreviousEnemy` and `EnemyStepFraction` remain as the
+first hunter. A catch throws only the culprit and stuns every hunter; another hunter's cell costs
+four extra steps to enter.
+
+**Reason:** The old curve turned one dial, the killer's step time, and the result read as "the same
+chase, faster". A second hunter changes the shape of the floor: a wisp only distracts one of them,
+two corridors have to be read at once, and the player's route has to account for a pincer. It is the
+largest difficulty step the game can take without a new rule, and it is visible on screen.
+
+**Consequences:** Every rule that touched `_enemy` now loops, including visibility, the aim cursor,
+the catch, respawn and the route cache. `IsEnemyStunned` means *all* hunters are held, which is what
+makes a catch a reprieve; the music follows the nearest hunter for the same reason. The HUD keeps
+its four chips and the footer grows one pip per hunter, because a fifth chip does not fit a 640 px
+window. Hunters may still share a cell when the maze leaves no route around, but the four-step
+surcharge makes it rare and `HunterView` keeps the renderer honest when it happens.
+
+## 2026-10-21 — Twenty pieces, not twenty takes: a style and a melody per floor
+
+**Decision:** `MusicTheme` carries a `MusicStyle` (drone, lullaby, procession, chant, pulse, waltz,
+nocturne, gamelan, machine, requiem), its own `Melody`, and a `StepsPerBar` (16, 12 for 3/4, 20 for
+5/4). `MusicCatalog` holds twenty hand-written pieces; the shared five-motif cycle and `MotifFor`
+are gone. `ScoreRenderer` dispatches the bed, bass, rhythm, lead timbre, bells and counterline on
+the style, so the same stems hold a gong cycle, a march and a 5/4 clank.
+
+**Reason:** The parameters varied but the piece did not: one progression shape, one motif per five
+floors, the same pad and the same drums meant every floor was recognisably the same track at a
+slightly different pitch. That is precisely what "completely different music on every floor" must
+not mean, and no amount of retuning the numbers fixes a shared arrangement.
+
+**Consequences:** The catalog is content, so a new floor now needs a melody and a style as well as
+numbers, and the tests enforce it: twenty distinct melodies, at least eight styles, no two adjacent
+floors sharing one, and three meters in use. Render cost rose to 170–400 ms per track (debug,
+measured), still once per floor during the intro card. Long loops were shortened (30 s → 15 s) and
+the rhythm and lead get a 2 ms fade at the loop point, because a staccato lead or a drum could end
+mid-hit and step at the seam; every track now seams under 0.003.
+
+## 2026-10-21 — A floor's music is arranged off the game thread, and adopted between blocks
+
+**Decision:** `AudioDirector.PlayFloor` publishes a `Task<(ScoreStems, double)>` and returns; the
+first `Update` of the floor adopts the finished score, or drops it if the render faulted. The mixer
+adopts a published score at the top of a block (`AdoptPublishedScore`) and keeps its current fade
+position (`_appliedGains`) across the swap. The device callback clears its buffer instead of
+returning early with stale memory.
+
+**Reason:** The playtest reported "the audio randomly glitches out into static". Arranging a floor
+is 200–400 ms of synthesis that allocates several megabytes of stems; doing it on the game thread
+stopped the loop dead on the intro card and then handed the garbage collector a large object graph
+to collect *while the previous track was playing*, which is exactly how an audio callback misses a
+deadline. The stack of defences is now: no render on the game thread, no ring-buffer state touched
+from the game thread, no allocation in the mix path, and a buffer that is always written.
+
+**Consequences:** A floor's track starts a fraction of a second after play begins (measured 0.36 s)
+rather than at the exact intro frame, and the previous floor's music keeps playing until then —
+silence between floors would read as a bug. The render task is fire-and-forget by design, so a
+failed render is a silent floor rather than a crashed run, which is also why `AdoptRenderedScore`
+checks `IsCompletedSuccessfully` instead of awaiting.
+
+## 2026-10-21 — A wall is the loudest value after the lantern, and remembered cells are readable
+
+**Decision:** The palette ladder is floor 0.18, wall 0.50, rim 0.68, contact shadow 0.05; the band
+is 6 px of a 16 px cell; remembered cells are lit at 0.55 with a brighter tint (152/167/172) instead
+of 0.40 with 104/118/122. `WallStrips.RoleFor(offset)` states the band's cross-section once, so all
+four tile families share it.
+
+**Reason:** "The walls blend in too much into the actual path — it's more like clicking randomly."
+The measured wall body was already 1.6x the floor, which passed the old test while still reading as
+a lit line: five of sixteen pixels, two of them near-black by design, over a floor that the lightmap
+also dimmed to 62 %. Contrast that only holds in the atlas is not contrast the player sees. Raising
+the drawn body to 2.5–8.3x and giving the unlit memory a readable level fixes the *thing the player
+navigates by*, rather than decorating it.
+
+**Consequences:** Walls now dominate the frame, so a theme that wants a soft look has to earn it
+with moss and texture inside the band, not by lowering its value. `WallContrastTests` holds three
+thresholds plus a thickness invariant (two bands must leave at least 4 px of corridor floor), so
+thickening the band cannot quietly wall the maze in. Every atlas had to be regenerated; `--check`
+compares the committed PNGs, so a palette change without a recompile is a red test.
+
+## 2026-10-21 — Holding a direction walks; the step, not a timer, is the cadence
+
+**Decision:** `StepRepeat.Next(held, stepping, now, stepSeconds)` sends the direction on the frame it
+is first held, then again on the frame the previous step finishes — no fixed hold delay. When the
+floor has no step time at all it falls back to `MinRepeatSeconds` (0.05 s). The frontend passes
+`GameState.LastPlayerStepSeconds`.
+
+**Reason:** The old gate waited 0.15 s *plus* the step, so holding produced a stutter and the
+fastest way across a room was a tap rhythm. The delay was there to stop a slow tap leaving a queued
+second tile behind, but the `stepping` flag already does that: a repeat is only sent while the key
+is still down, and a key released during the step is never sent.
+
+**Consequences:** Sprint and momentum are now felt immediately, because the repeat follows the step
+that actually happened rather than the floor's base time. A tap that is held longer than one step is
+a hold by definition, which is what every grid roguelike does. The instant-step fallback keeps a
+debug floor from walking one cell per frame.
+
+## 2026-10-21 — The death card is the run's score, drawn where the campaign is in scope
+
+**Decision:** `PixelCards.Caught(font, floorNumber, floorCount, floorName)` draws "YOU MADE IT TO /
+FLOOR 7 OF 20" and the floor's name, and `RaylibFrontend.DrawFrame` draws it on `Screen.RunLost`.
+`PixelRenderer.Draw` no longer draws the caught card itself.
+
+**Reason:** A lost run's only number is how far it got, and the renderer is handed one floor's
+`GameState`, not the run. The campaign knows `FloorNumber` and `FloorCount`; keeping the card in the
+renderer would have meant pushing a run summary into a class that is otherwise a view of one maze.
+The other campaign cards (intro, cleared, complete) were already drawn by the frontend for the same
+reason, so this makes the four screens consistent rather than adding a special case.
+
+**Consequences:** Any future frontend that draws a lost run must supply those three values; the
+compiler enforces it. The renderer's contract narrows to "world + HUD", which is what its tests and
+the render harness already exercise. The card still sits over the dimmed world, so the last frame
+shows where the player was standing when the killer reached them.
+
+## 2026-10-21 — The maze grows with the descent, with one deliberate exception
+
+**Decision:** The shipped floors' sizes step up across the run (15x15 for the first arc, 17, 19,
+21 at the Gallery, 11x11 for The Warren, then 19, 21, 23 and 25 at the bottom), and
+`FloorCatalogTests.Shipped_TheMazeGrowsAsTheRunDescends` pins that exactly one floor shrinks.
+
+**Reason:** After the Long Gallery the catalogue fell back to 15x15 for ten floors, so the descent
+felt like it stopped growing. Size is a difficulty dial that costs no new rule: the same hunter pace
+covers more ground, and a bigger cave makes each key a longer commitment. The Warren stays tiny
+because "a maze that fits in your arms" is the floor's gimmick; a monotonic ladder would have
+deleted the one floor whose identity is its size.
+
+**Consequences:** The last floors are 25x25 (371 open cells on The Deep's blob), which is about 2.8
+times the floor area of the first: the late floors take longer and are harder to cross in one chase,
+so they are a balance risk that only play can settle. The camera already follows the player and the
+renderer reads `GameState.Maze`'s dimensions every frame, so no drawing code changed. The test fails
+if a future floor is smaller than its predecessor without being named the Warren, which is the
+property a content edit could silently break.
+
+## 2026-10-21 — Floors have outlines, and the rock is closed before generation
+
+**Decision:** `MazeShape` grows a `Rect`, `Blob` or `Ellipse` and keeps only its largest connected
+piece; `MazeOptions.Shape` carries it, `MazeGenerator` applies it to a fresh `Grid` before any wall
+moves, and `Grid.IsSolid` makes the rock part of the model (`RemoveWall` refuses a wall with rock on
+either side). `GameConfig.Shape` is the rule, `FloorDefinition.Shape` the per-floor content override,
+and `GameState` places the player, hunters, exit and keys only on floor cells.
+
+**Reason:** "The mazes don't need to be perfect grids, they can be different shapes to be
+interesting." A rectangle with different wall noise still feels like the same place, and the shape is
+free difficulty-of-perception: the silhouette of a floor tells you what kind of floor it is before
+you read a card. Shaping *before* generation is the only order that is safe — masking afterwards
+carves passages into rock and can cut the cave in two.
+
+**Consequences:** The maze's walkable area is now smaller than `Rows * Columns` on eight floors, so
+every size check that used the rectangle had to become shape-aware (`GameState` validates the open
+cell count and throws with the count in the message). `ShapedFloorTests` builds all twenty shipped
+floors and proves the exit and every key are reachable, which is the invariant this feature could
+silently break.

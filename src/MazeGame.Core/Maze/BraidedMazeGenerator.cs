@@ -122,12 +122,21 @@ public sealed class BraidedMazeGenerator : IMazeGenerator
         {
             for (var column = 0; column < maze.Columns; column++)
             {
-                if (column + 1 < maze.Columns && maze.HasWall(row, column, Direction.East))
+                // Solid rock has walls on all four sides and must keep them: only a wall between
+                // two floor cells is a wall the braider is allowed to open.
+                if (maze.IsSolid(row, column))
+                {
+                    continue;
+                }
+
+                if (column + 1 < maze.Columns && !maze.IsSolid(row, column + 1) &&
+                    maze.HasWall(row, column, Direction.East))
                 {
                     candidates.Add((row, column, Direction.East));
                 }
 
-                if (row + 1 < maze.Rows && maze.HasWall(row, column, Direction.South))
+                if (row + 1 < maze.Rows && !maze.IsSolid(row + 1, column) &&
+                    maze.HasWall(row, column, Direction.South))
                 {
                     candidates.Add((row, column, Direction.South));
                 }

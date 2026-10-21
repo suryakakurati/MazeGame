@@ -297,10 +297,19 @@ public static class PixelCards
 
     /// <summary>Draws the card shown when the killer catches the player.</summary>
     /// <param name="font">The loaded font.</param>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="font"/> is null.</exception>
-    public static void Caught(PixelFont font)
+    /// <param name="floorNumber">The floor the run ended on, one-based.</param>
+    /// <param name="floorCount">How many floors the run had.</param>
+    /// <param name="floorName">The name of the floor the run ended on.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="font"/> or <paramref name="floorName"/> is null.</exception>
+    /// <remarks>
+    /// A lost run has to say how far it got: the floor reached is the score, so it is the one
+    /// number on the card and it is drawn larger than the heading's own supporting line. The
+    /// floor's name sits under it so the run ends on a place, not just a count.
+    /// </remarks>
+    public static void Caught(PixelFont font, int floorNumber, int floorCount, string floorName)
     {
         ArgumentNullException.ThrowIfNull(font);
+        ArgumentNullException.ThrowIfNull(floorName);
 
         var width = Raylib.GetScreenWidth();
         var height = Raylib.GetScreenHeight();
@@ -308,9 +317,17 @@ public static class PixelCards
 
         Begin(width, height);
 
-        Heading(font, "THE THING FOUND YOU", width / 2, centreY - 40, width - 96, Danger);
-        Rule(width / 2, centreY + 4, Danger);
-        font.DrawCentered("R / ENTER: NEW RUN      ESC: QUIT", width / 2, centreY + 20, 2, Dim);
+        Heading(font, "THE THING FOUND YOU", width / 2, centreY - 74, width - 96, Danger);
+        font.DrawCentered("YOU MADE IT TO", width / 2, centreY - 28, 2, Dim);
+        font.DrawCentered(
+            FormattableString.Invariant($"FLOOR {floorNumber} OF {floorCount}"),
+            width / 2,
+            centreY - 4,
+            3,
+            Text);
+        font.DrawCentered(Fit(floorName.ToUpperInvariant(), 2, width - 96), width / 2, centreY + 28, 2, Dim);
+        Rule(width / 2, centreY + 58, Danger);
+        font.DrawCentered("R / ENTER: NEW RUN      ESC: QUIT", width / 2, centreY + 74, 2, Dim);
     }
 
     /// <summary>

@@ -79,7 +79,6 @@ public sealed class GameState
     private readonly Queue<GameEvent> _events = new();
 
     private Cell _player;
-    private Cell _enemy;
     private Cell _aimCursor;
     private Cell? _lure;
     private double _lureSecondsLeft;
@@ -88,9 +87,7 @@ public sealed class GameState
     private int _hearts;
     private readonly int _maxHearts;
     private double _invulnerableSeconds;
-    private double _stunSecondsLeft;
     private GameStatus _status = GameStatus.InProgress;
-    private double _elapsedSeconds;
     private PlacementMode _aiming;
 
     // Timed steps. The player's cell changes the instant a step is accepted; this cooldown only
@@ -113,19 +110,12 @@ public sealed class GameState
     private int _straightSteps;
     private double _turnPenaltyLeft;
 
-    // The killer's last step, kept for the same visual slide. Its step length varies (a barriered
-    // cell costs several steps' worth of time), so the duration is recorded per step.
-    private Cell _enemyFrom;
-    private double _enemyStepLeft;
-    private double _enemyStepTotal;
+    // The hunters. Most floors have one and the deep floors have two or three; the rule is the
+    // same for each, so everything below loops rather than special-casing a second monster.
+    private readonly List<Hunter> _hunters = [];
 
-    // The killer's route to its chosen target, cached so it is only recomputed when something
-    // invalidates it (the player moves, an item is placed, a seal cracks, or a wisp goes).
-    private IReadOnlyList<Cell>? _enemyRoute;
-
-    // Index into _enemyRoute of the next cell the killer will step onto. Starts at 1
-    // because index 0 is the cell the killer is already standing on.
-    private int _nextStepIndex;
+    // Reused by Enemies, so a renderer reading the hunters every frame allocates nothing.
+    private readonly HunterView[] _enemyViews;
 
     /// <summary>
     /// Builds a game over <paramref name="maze"/>, placing the player, the killer, the exit
@@ -171,27 +161,48 @@ public sealed class GameState
         _maxHearts = config.MaxHearts;
         _sprintStaminaLeft = config.SprintStaminaSeconds;
 
-        // Shuffle every cell once, then take the first unused ones. Because the list holds
+        // Shuffle every floor cell once, then take the first unused ones. Because the list holds
         // each cell exactly once, the player, killer, exit and keys are guaranteed to be on
-        // different cells without any retry loop.
-        var cells = new List<Cell>(maze.CellCount);
+        // different cells without any retry loop. Solid rock is not a cell anything can stand on:
+        // on a shaped floor the maze's rectangle is bigger than the cave inside it.
+        var cells = new List<Cell>(maze.OpenCellCount);
         for (var row = 0; row < maze.Rows; row++)
         {
             for (var column = 0; column < maze.Columns; column++)
             {
-                cells.Add(maze.GetCell(row, column));
+                if (!maze.IsSolid(row, column))
+                {
+                    cells.Add(maze.GetCell(row, column));
+                }
             }
+        }
+
+        var requiredCells = 2 + config.HunterCount + config.KeyCount;
+
+        if (cells.Count < requiredCells)
+        {
+            throw new ArgumentException(
+                $"The floor has {cells.Count} walkable cells, but the player, {config.HunterCount} " +
+                $"hunter(s), the exit and {config.KeyCount} key(s) need {requiredCells} different ones.",
+                nameof(maze));
         }
 
         random.Shuffle(cells);
 
         _player = cells[0];
-        _enemy = ChooseKillerStart(maze, _player, pathfinder);
 
-        var available = new List<Cell>(cells.Count - 2);
+        var hunterCells = ChooseHunterStarts(maze, _player, pathfinder, config.HunterCount);
+        _enemyViews = new HunterView[config.HunterCount];
+
+        foreach (var cell in hunterCells)
+        {
+            _hunters.Add(new Hunter(cell));
+        }
+
+        var available = new List<Cell>(cells.Count - hunterCells.Count);
         foreach (var cell in cells)
         {
-            if (cell != _player && cell != _enemy)
+            if (cell != _player && !hunterCells.Contains(cell))
             {
                 available.Add(cell);
             }
@@ -202,64 +213,141 @@ public sealed class GameState
         _exit = available[0];
         _keys = new HashSet<Cell>(available.GetRange(1, config.KeyCount));
 
-        // Nothing is mid-step at the start, so both figures are drawn exactly on their cells.
+        // Nothing is mid-step at the start, so every figure is drawn exactly on its cell.
         _playerFrom = _player;
-        _enemyFrom = _enemy;
 
         RecomputeVisibility();
     }
 
     /// <summary>
-    /// Chooses where the killer starts: the dead end that is furthest from the player.
+    /// Chooses where the hunters start: the furthest dead ends from the player, one per hunter.
     /// </summary>
     /// <remarks>
     /// <para>
     /// The dead-end rule matters for playability, not just atmosphere. A perfect maze is a
     /// tree, so a killer standing in a corridor sits on the only route between the player
-    /// and everything behind it — and since the player cannot walk through the killer, those
+    /// and everything behind it — and since the player cannot walk through the killers, those
     /// cells would be permanently unreachable. A dead-end cell has exactly one opening, so
     /// removing it from a tree leaves the rest connected: every key and the exit stay
-    /// reachable without ever stepping on the killer.
+    /// reachable without ever stepping on a hunter.
     /// </para>
     /// <para>
-    /// Distance is measured through the maze (a path search), not as the crow flies, so the
-    /// killer starts genuinely far away. The scan is row-major, so ties resolve the same way
-    /// on every run.
+    /// Distance is measured through the maze (a breadth-first walk), not as the crow flies, so
+    /// the hunters start genuinely far away. Ties go to dead ends, then to row-major order, so
+    /// the same seed always places them on the same cells. Later hunters are measured from the
+    /// player as well, so two of them are never stacked in the same corner.
     /// </para>
     /// </remarks>
-    private static Cell ChooseKillerStart(Grid maze, Cell player, IPathfinder pathfinder)
+    private static List<Cell> ChooseHunterStarts(
+        Grid maze,
+        Cell player,
+        IPathfinder pathfinder,
+        int count)
     {
-        Cell? furthestDeadEnd = null;
-        var furthestDistance = -1;
+        var starts = new List<Cell>(count);
+        var distances = DistancesFrom(maze, player, maze.CellCount);
 
+        for (var index = 0; index < count; index++)
+        {
+            Cell? best = null;
+            var bestDistance = -1;
+            var bestIsDeadEnd = false;
+
+            for (var row = 0; row < maze.Rows; row++)
+            {
+                for (var column = 0; column < maze.Columns; column++)
+                {
+                    var cell = maze.GetCell(row, column);
+
+                    if (cell == player || starts.Contains(cell) ||
+                        !distances.TryGetValue(cell, out var distance))
+                    {
+                        continue;
+                    }
+
+                    // Three walls means exactly one opening: a dead end, and so a leaf. The first
+                    // hunter must take one, or it can wall the player off; a second may take any
+                    // far cell once the good leaves are gone.
+                    var isDeadEnd = cell.WallCount == 3;
+                    var better = best is null || distance > bestDistance ||
+                        (distance == bestDistance && isDeadEnd && !bestIsDeadEnd);
+
+                    if (!better)
+                    {
+                        continue;
+                    }
+
+                    best = cell;
+                    bestDistance = distance;
+                    bestIsDeadEnd = isDeadEnd;
+                }
+            }
+
+            // A maze with no dead ends (for example a closed loop, which the generator never
+            // makes but a hand-built test maze can) has no safe leaf to use. Fall back to the
+            // furthest unused cell instead, so two hunters can never be placed on one cell — a
+            // corridor of bare cells is exactly where that would happen.
+            if (best is null)
+            {
+                foreach (var (cell, _) in distances)
+                {
+                    if (cell == player || starts.Contains(cell))
+                    {
+                        continue;
+                    }
+
+                    if (best is null || distances[cell] > distances[best.Value])
+                    {
+                        best = cell;
+                    }
+                }
+            }
+
+            // A hand-built floor can be disconnected, in which case the walk above never reaches the
+            // cells behind the break and there is no "furthest" cell to pick. Any floor cell that is
+            // not already taken keeps the constructor total; the original rule (the mirrored cell)
+            // stays as the last resort for a maze with exactly as many cells as figures.
+            if (best is null)
+            {
+                best = FindUnusedCell(maze, player, starts);
+            }
+
+            starts.Add(best ?? maze.GetCell(
+                Math.Clamp(maze.Rows - 1 - player.Row, 0, maze.Rows - 1),
+                Math.Clamp(maze.Columns - 1 - player.Column, 0, maze.Columns - 1)));
+        }
+
+        return starts;
+    }
+
+    /// <summary>
+    /// Returns the first floor cell that is neither the player nor an already placed hunter.
+    /// </summary>
+    /// <param name="maze">The floor to search.</param>
+    /// <param name="player">The cell to skip.</param>
+    /// <param name="starts">The cells the earlier hunters took.</param>
+    /// <returns>An unused cell, or null when every cell is taken.</returns>
+    private static Cell? FindUnusedCell(Grid maze, Cell player, List<Cell> starts)
+    {
         for (var row = 0; row < maze.Rows; row++)
         {
             for (var column = 0; column < maze.Columns; column++)
             {
-                var cell = maze.GetCell(row, column);
-
-                // Three walls means exactly one opening: a dead end, and so a leaf.
-                if (cell == player || cell.WallCount != 3)
+                if (maze.IsSolid(row, column))
                 {
                     continue;
                 }
 
-                var distance = pathfinder.FindPath(maze, player, cell, _ => 1).Count;
-                if (distance > furthestDistance)
+                var cell = maze.GetCell(row, column);
+
+                if (cell != player && !starts.Contains(cell))
                 {
-                    furthestDistance = distance;
-                    furthestDeadEnd = cell;
+                    return cell;
                 }
             }
         }
 
-        // A maze with no dead ends (for example a closed loop, which the generator never
-        // makes but a hand-built test maze can) has no safe leaf to use. Fall back to the
-        // diagonally opposite corner: still never the player's own cell, because a playable
-        // maze has at least three cells.
-        return furthestDeadEnd ?? maze.GetCell(
-            maze.Rows - 1 - player.Row,
-            maze.Columns - 1 - player.Column);
+        return null;
     }
 
     /// <summary>
@@ -278,9 +366,44 @@ public sealed class GameState
     public Cell Player => _player;
 
     /// <summary>
-    /// Gets the cell the killer currently occupies.
+    /// Gets the cell the first hunter currently occupies.
     /// </summary>
-    public Cell Enemy => _enemy;
+    /// <remarks>
+    /// Kept as the single-hunter spelling of <see cref="Enemies"/>: every screen still draws the
+    /// first hunter, and a one-hunter floor reads exactly as it did before there were more.
+    /// </remarks>
+    public Cell Enemy => _hunters[0].Cell;
+
+    /// <summary>
+    /// Gets every hunter on the floor, in the order they were placed.
+    /// </summary>
+    /// <remarks>
+    /// The list is a snapshot of the current frame: each entry has the hunter's cell, the cell it
+    /// stepped from and how far through that step it is, so a renderer can slide every one of them
+    /// without touching the rule. The array behind it is reused, so reading this every frame costs
+    /// no allocation.
+    /// </remarks>
+    public IReadOnlyList<HunterView> Enemies
+    {
+        get
+        {
+            for (var index = 0; index < _hunters.Count; index++)
+            {
+                var hunter = _hunters[index];
+
+                _enemyViews[index] = new HunterView(
+                    hunter.Cell,
+                    hunter.From,
+                    StepFraction(hunter.StepLeft, hunter.StepTotal),
+                    hunter.StunSeconds > 0);
+            }
+
+            return _enemyViews;
+        }
+    }
+
+    /// <summary>Gets how many hunters are on the floor.</summary>
+    public int HunterCount => _hunters.Count;
 
     /// <summary>
     /// Gets the cell that wins the game once every key is collected.
@@ -430,18 +553,53 @@ public sealed class GameState
     public double InvulnerabilitySecondsRemaining => _invulnerableSeconds;
 
     /// <summary>
-    /// Gets a value indicating whether the killer is still stunned by the last catch.
+    /// Gets a value indicating whether every hunter is still stunned by the last catch.
     /// </summary>
     /// <remarks>
-    /// A stunned killer neither moves nor builds up its next step, so the stun is a genuine
-    /// window in which the player can put distance between the two of them.
+    /// <para>
+    /// A stunned hunter neither moves nor builds up its next step, so the stun is a genuine
+    /// window in which the player can put distance between the two of them. A catch stuns all of
+    /// them for that reason: a reprieve that leaves one hunter walking is not a reprieve.
+    /// </para>
+    /// <para>
+    /// With more than one hunter the quiet reads as false the moment any of them recovers, which
+    /// is exactly what the music should say.
+    /// </para>
     /// </remarks>
-    public bool IsEnemyStunned => _stunSecondsLeft > 0;
+    public bool IsEnemyStunned
+    {
+        get
+        {
+            foreach (var hunter in _hunters)
+            {
+                if (hunter.StunSeconds <= 0)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }
 
     /// <summary>
-    /// Gets how many seconds of the killer's post-catch stun remain, or 0 when it is awake.
+    /// Gets how many seconds of the longest post-catch stun remain, or 0 when every hunter is
+    /// awake.
     /// </summary>
-    public double EnemyStunSecondsRemaining => _stunSecondsLeft;
+    public double EnemyStunSecondsRemaining
+    {
+        get
+        {
+            var longest = 0.0;
+
+            foreach (var hunter in _hunters)
+            {
+                longest = Math.Max(longest, hunter.StunSeconds);
+            }
+
+            return longest;
+        }
+    }
 
     /// <summary>
     /// Gets what the player is aiming, or <see cref="PlacementMode.None"/> when they are just
@@ -477,7 +635,8 @@ public sealed class GameState
     /// <param name="cell">The cell to test.</param>
     /// <returns>
     /// <see langword="true"/> when the cell is the player's own cell or lies within
-    /// <see cref="GameConfig.VisionRadius"/> steps through open passages.
+    /// <see cref="GameConfig.VisionRadius"/> steps through open passages, or within
+    /// <see cref="NearSightRadius"/> of the player's own cell.
     /// </returns>
     /// <remarks>
     /// <para>
@@ -487,10 +646,15 @@ public sealed class GameState
     /// UI could set.
     /// </para>
     /// <para>
-    /// Sight travels along open passages, so a wall really does block it: a cell on the far
-    /// side of a wall stays hidden even when it is one step away. Distance is counted in
-    /// steps of walking, which makes the radius a torch range rather than a circle drawn
-    /// through rock.
+    /// Sight travels along open passages, so a wall really does block it: the corridor on the
+    /// far side of a wall stays hidden until there is a way round. Distance is counted in steps
+    /// of walking, which makes the radius a torch range rather than a circle drawn through rock.
+    /// </para>
+    /// <para>
+    /// The one exception is <see cref="NearSightRadius"/>: the lantern also spills onto the stone
+    /// within two cells of the player, whether or not a wall stands between them. That is what
+    /// draws the near side of a wall you are standing against — without it the wall's face belongs
+    /// to a cell you have never seen and the corridor looks like it has a gap in it.
     /// </para>
     /// <para>
     /// The killer carries its own light. Once it is within
@@ -514,8 +678,37 @@ public sealed class GameState
     public int EffectiveVisionRadius =>
         Math.Max(0, _config.VisionRadius - (_lure is not null ? _config.LureVisionPenalty : 0));
 
+    /// <summary>
+    /// Gets the radius of the lantern spill that ignores walls: the configured
+    /// <see cref="GameConfig.NearSightRadius"/>, capped so it can never see further than the
+    /// torch itself in a straight line.
+    /// </summary>
+    /// <remarks>
+    /// One cell is the floor when the torch is down to a single step (The Hush), and nothing when
+    /// the torch is out entirely, so the rule cannot be used as a way to keep seeing on a blind
+    /// floor.
+    /// </remarks>
+    public int NearSightRadius
+    {
+        get
+        {
+            var torch = EffectiveVisionRadius;
+            return torch <= 0 ? 0 : Math.Min(_config.NearSightRadius, torch);
+        }
+    }
+
     /// <summary>Gets a value indicating whether a step's cooldown is still running.</summary>
     public bool IsPlayerStepping => _playerStepLeft > 0;
+
+    /// <summary>
+    /// Gets how long the player's last step took, in seconds; zero before the first step.
+    /// </summary>
+    /// <remarks>
+    /// This is the cadence the input layer should repeat a held direction at. It is the step that
+    /// actually happened, after sprint, momentum and any turn penalty, so holding walks exactly as
+    /// fast as the floor allows instead of at a rate the input invents.
+    /// </remarks>
+    public double LastPlayerStepSeconds => _playerStepTotal;
 
     /// <summary>Gets the cell the player stepped from.</summary>
     /// <remarks>
@@ -531,11 +724,11 @@ public sealed class GameState
     /// window draws the explorer on its cell and uses this only to pick a walk frame.</remarks>
     public double PlayerStepFraction => StepFraction(_playerStepLeft, _playerStepTotal);
 
-    /// <summary>Gets the cell the killer stepped from, for the renderer's slide.</summary>
-    public Cell PreviousEnemy => _enemyFrom;
+    /// <summary>Gets the cell the first hunter stepped from, for the renderer's slide.</summary>
+    public Cell PreviousEnemy => _hunters[0].From;
 
-    /// <summary>Gets how far through its step the killer's figure is, from 0 to 1.</summary>
-    public double EnemyStepFraction => StepFraction(_enemyStepLeft, _enemyStepTotal);
+    /// <summary>Gets how far through its step the first hunter's figure is, from 0 to 1.</summary>
+    public double EnemyStepFraction => StepFraction(_hunters[0].StepLeft, _hunters[0].StepTotal);
 
     /// <summary>Gets a value indicating whether the player is sprinting right now.</summary>
     /// <remarks>
@@ -643,8 +836,8 @@ public sealed class GameState
         // Walking into the killer is a mistake, not a free pass. During the post-catch window the
         // creature cannot be shoved through, so the step is simply refused rather than dealing
         // a second hit for the same mistake.
-        var ontoKiller = destination == _enemy;
-        if (ontoKiller && _invulnerableSeconds > 0)
+        var caughtBy = HunterAt(destination);
+        if (caughtBy is not null && _invulnerableSeconds > 0)
         {
             return false;
         }
@@ -673,9 +866,9 @@ public sealed class GameState
             Raise(GameEvent.KeyPicked);
         }
 
-        if (ontoKiller)
+        if (caughtBy is not null)
         {
-            TakeHit();
+            TakeHit(caughtBy);
             return true;
         }
 
@@ -857,7 +1050,7 @@ public sealed class GameState
     private bool ConfirmLure()
     {
         if (!IsPlacingLure || _luresRemaining <= 0 || _lure is not null ||
-            _aimCursor == _player || _aimCursor == _enemy)
+            _aimCursor == _player || HunterAt(_aimCursor) is not null)
         {
             return false;
         }
@@ -936,24 +1129,36 @@ public sealed class GameState
             return;
         }
 
-        // A stunned killer neither moves nor banks progress towards its next step: the stun has
-        // to be a real window, not a step that lands the instant the player stops running.
-        if (_stunSecondsLeft > 0)
+        // Every hunter keeps its own clock, so two of them with different step times interleave
+        // instead of moving in lockstep. A stunned one neither moves nor banks progress towards
+        // its next step: the stun has to be a real window, not a step that lands the instant the
+        // player stops running.
+        foreach (var hunter in _hunters)
         {
-            _elapsedSeconds = 0;
-            return;
+            if (hunter.StunSeconds > 0)
+            {
+                hunter.Elapsed = 0;
+                continue;
+            }
+
+            var interval = SecondsUntilNextStep(hunter);
+
+            hunter.Elapsed = Math.Min(hunter.Elapsed + deltaSeconds, interval);
+            if (hunter.Elapsed < interval)
+            {
+                continue;
+            }
+
+            hunter.Elapsed -= interval;
+            AdvanceEnemy(hunter, interval);
+
+            // A catch or a cleared floor stops the rest of the loop: the remaining hunters have no
+            // business taking a step in the same frame.
+            if (_status != GameStatus.InProgress)
+            {
+                return;
+            }
         }
-
-        var interval = SecondsUntilNextStep();
-
-        _elapsedSeconds = Math.Min(_elapsedSeconds + deltaSeconds, interval);
-        if (_elapsedSeconds < interval)
-        {
-            return;
-        }
-
-        _elapsedSeconds -= interval;
-        AdvanceEnemy(interval);
     }
 
     /// <summary>
@@ -1096,9 +1301,12 @@ public sealed class GameState
             _invulnerableSeconds = Math.Max(0, _invulnerableSeconds - deltaSeconds);
         }
 
-        if (_stunSecondsLeft > 0)
+        foreach (var hunter in _hunters)
         {
-            _stunSecondsLeft = Math.Max(0, _stunSecondsLeft - deltaSeconds);
+            if (hunter.StunSeconds > 0)
+            {
+                hunter.StunSeconds = Math.Max(0, hunter.StunSeconds - deltaSeconds);
+            }
         }
 
         if (_turnPenaltyLeft > 0)
@@ -1115,9 +1323,12 @@ public sealed class GameState
             _playerStepLeft = Math.Max(0, _playerStepLeft - deltaSeconds);
         }
 
-        if (_enemyStepLeft > 0)
+        foreach (var hunter in _hunters)
         {
-            _enemyStepLeft = Math.Max(0, _enemyStepLeft - deltaSeconds);
+            if (hunter.StepLeft > 0)
+            {
+                hunter.StepLeft = Math.Max(0, hunter.StepLeft - deltaSeconds);
+            }
         }
 
         UpdateSprint(deltaSeconds, stepping);
@@ -1203,10 +1414,11 @@ public sealed class GameState
     }
 
     /// <summary>
-    /// Returns how long the killer needs before its next step: one normal step, times the
-    /// cost of the cell it is about to enter, or the full tear-down time when that cell holds
-    /// a sealed barrier.
+    /// Returns how long <paramref name="hunter"/> needs before its next step: one normal step,
+    /// times the cost of the cell it is about to enter, or the full tear-down time when that cell
+    /// holds a sealed barrier.
     /// </summary>
+    /// <param name="hunter">The hunter whose next step is being timed.</param>
     /// <remarks>
     /// Charging the delay before the move (rather than after) is what makes a barrier read
     /// correctly: the killer stalls at the barrier, then forces its way through, instead of
@@ -1214,16 +1426,16 @@ public sealed class GameState
     /// priced at <see cref="GameConfig.BarrierBreakSeconds"/> rather than a multiple of the step
     /// time because tearing it apart is a different action from walking.
     /// </remarks>
-    private double SecondsUntilNextStep()
+    private double SecondsUntilNextStep(Hunter hunter)
     {
-        var route = EnemyRouteToTarget();
+        var route = EnemyRouteToTarget(hunter);
 
-        if (route.Count <= _nextStepIndex)
+        if (route.Count <= hunter.NextStep)
         {
             return _config.EnemyStepSeconds;
         }
 
-        var next = route[_nextStepIndex];
+        var next = route[hunter.NextStep];
 
         return _barrierSeals.ContainsKey(next)
             ? _config.BarrierBreakSeconds
@@ -1231,11 +1443,12 @@ public sealed class GameState
     }
 
     /// <summary>
-    /// Moves the killer one cell along its route, ending the game if that brings it onto the
+    /// Moves one hunter a cell along its route, ending the game if that brings it onto the
     /// player's cell, or tears apart a sealed barrier that stands in the way.
     /// </summary>
+    /// <param name="hunter">The hunter that is stepping.</param>
     /// <param name="interval">
-    /// How long the step that just completed took. Recorded so the renderer can slide the killer
+    /// How long the step that just completed took. Recorded so the renderer can slide the hunter
     /// over the same time, whatever cell it walked into.
     /// </param>
     /// <remarks>
@@ -1243,18 +1456,18 @@ public sealed class GameState
     /// route is computed over plain floor. That is what makes a sealed barrier read as an
     /// obstacle the killer deals with, rather than something it walks through after a pause.
     /// </remarks>
-    private void AdvanceEnemy(double interval)
+    private void AdvanceEnemy(Hunter hunter, double interval)
     {
-        var route = EnemyRouteToTarget();
+        var route = EnemyRouteToTarget(hunter);
 
-        // A single-cell route means the killer is already on its destination, which either has
+        // A single-cell route means the hunter is already on its destination, which either has
         // already ended the game or is the wisp it just consumed; nothing left to do.
-        if (route.Count <= 1 || _nextStepIndex >= route.Count)
+        if (route.Count <= 1 || hunter.NextStep >= route.Count)
         {
             return;
         }
 
-        var next = route[_nextStepIndex];
+        var next = route[hunter.NextStep];
 
         if (_barrierSeals.ContainsKey(next))
         {
@@ -1270,37 +1483,37 @@ public sealed class GameState
             return;
         }
 
-        _enemyFrom = _enemy;
-        _enemy = next;
-        _enemyStepLeft = interval;
-        _enemyStepTotal = interval;
-        _nextStepIndex++;
+        hunter.From = hunter.Cell;
+        hunter.Cell = next;
+        hunter.StepLeft = interval;
+        hunter.StepTotal = interval;
+        hunter.NextStep++;
         Raise(GameEvent.KillerStep);
 
-        // The killer carries its own light, so what the player can see changes as it moves
+        // The hunters carry their own light, so what the player can see changes as they move
         // even when the player stands still.
         RecomputeVisibility();
 
         // The rest of the cached route is still the best way to a player who has not moved,
         // so it is reused rather than recomputed every step.
-        if (_enemy == _player)
+        if (hunter.Cell == _player)
         {
-            TakeHit();
+            TakeHit(hunter);
             return;
         }
 
         // Reaching the wisp spends it: the decoy has done its job and the chase resumes.
-        if (_enemy == _lure)
+        if (hunter.Cell == _lure)
         {
             Raise(GameEvent.WispConsumed);
             ClearLure();
 
-            // A card may make the wisp cost the killer real time. The stun is the same window a
+            // A card may make the wisp cost the hunter real time. The stun is the same window a
             // catch buys, so it cannot be shortened by a frame landing mid-step.
             if (_config.LureStunSeconds > 0)
             {
-                _stunSecondsLeft = Math.Max(_stunSecondsLeft, _config.LureStunSeconds);
-                _elapsedSeconds = 0;
+                hunter.StunSeconds = Math.Max(hunter.StunSeconds, _config.LureStunSeconds);
+                hunter.Elapsed = 0;
             }
         }
     }
@@ -1309,14 +1522,19 @@ public sealed class GameState
     /// Spends one heart on a catch and resets the chase, or ends the run when that was the last
     /// heart.
     /// </summary>
+    /// <param name="culprit">The hunter that reached the player.</param>
     /// <remarks>
-    /// The player keeps their cell and everything they have collected; only the killer is moved.
+    /// The player keeps their cell and everything they have collected; only the culprit is thrown.
     /// That is what makes a mistake cost tempo instead of progress, which is the whole point of
     /// hearts in a 20-floor run. The invulnerability guard belongs here as well as at the two
-    /// call sites, so a future third way to be caught cannot deal two hearts at once.
+    /// call sites, so a future third way to be caught cannot deal two hearts at once. Every hunter
+    /// is stunned, not just the one that fed: a reprieve that leaves a second monster walking is
+    /// not a reprieve, and the deep floors would otherwise be unwinnable after one mistake.
     /// </remarks>
-    private void TakeHit()
+    private void TakeHit(Hunter culprit)
     {
+        ArgumentNullException.ThrowIfNull(culprit);
+
         if (_invulnerableSeconds > 0)
         {
             return;
@@ -1335,16 +1553,22 @@ public sealed class GameState
 
         Raise(GameEvent.HeartLost);
 
-        _enemy = ChooseRespawnCell();
-
-        // A respawn is a throw, not a walk: snap the figure instead of sliding it across the map.
-        _enemyFrom = _enemy;
-        _enemyStepLeft = 0;
-        _enemyStepTotal = 0;
+        // The search skips the other hunters: a throw has to be a throw, not a stack of two
+        // monsters on one cell.
+        var landing = ChooseRespawnCell(culprit);
+        culprit.From = landing;
+        culprit.Cell = landing;
+        culprit.StepLeft = 0;
+        culprit.StepTotal = 0;
 
         _invulnerableSeconds = _config.InvulnerabilitySeconds;
-        _stunSecondsLeft = _config.RespawnStunSeconds;
-        _elapsedSeconds = 0;
+
+        foreach (var hunter in _hunters)
+        {
+            hunter.StunSeconds = Math.Max(hunter.StunSeconds, _config.RespawnStunSeconds);
+            hunter.Elapsed = 0;
+        }
+
         InvalidateEnemyRoute();
         RecomputeVisibility();
     }
@@ -1359,12 +1583,12 @@ public sealed class GameState
     /// parking the killer on something the player still needs; the second pass drops that
     /// preference so an extremely small or cluttered floor still produces a legal cell.
     /// </remarks>
-    private Cell ChooseRespawnCell()
+    private Cell ChooseRespawnCell(Hunter culprit)
     {
-        var reachable = DistancesFrom(_player, _maze.CellCount);
+        var reachable = DistancesFrom(_maze, _player, _maze.CellCount);
 
-        return FindFurthest(reachable, avoidObjectives: true)
-            ?? FindFurthest(reachable, avoidObjectives: false)
+        return FindFurthest(reachable, avoidObjectives: true, culprit)
+            ?? FindFurthest(reachable, avoidObjectives: false, culprit)
             ?? _player;
     }
 
@@ -1376,7 +1600,8 @@ public sealed class GameState
     /// <param name="avoidObjectives">
     /// When true, keys, the exit, the wisp and barriers are skipped.
     /// </param>
-    private Cell? FindFurthest(Dictionary<Cell, int> distances, bool avoidObjectives)
+    /// <param name="culprit">The hunter being thrown; every other hunter's cell is skipped.</param>
+    private Cell? FindFurthest(Dictionary<Cell, int> distances, bool avoidObjectives, Hunter culprit)
     {
         Cell? best = null;
         var bestDistance = -1;
@@ -1384,7 +1609,9 @@ public sealed class GameState
 
         foreach (var (cell, distance) in distances)
         {
-            if (cell == _player || (avoidObjectives && IsObjectiveCell(cell)))
+            if (cell == _player ||
+                (avoidObjectives && IsObjectiveCell(cell)) ||
+                (HunterAt(cell) is { } occupant && occupant != culprit))
             {
                 continue;
             }
@@ -1450,30 +1677,31 @@ public sealed class GameState
     /// options.
     /// </para>
     /// </remarks>
-    private IReadOnlyList<Cell> EnemyRouteToTarget()
+    private IReadOnlyList<Cell> EnemyRouteToTarget(Hunter hunter)
     {
-        if (_enemyRoute is not null)
+        if (hunter.Route is not null)
         {
-            return _enemyRoute;
+            return hunter.Route;
         }
 
-        _enemyRoute = _pathfinder.FindPath(_maze, _enemy, _player, CostOfEntering);
+        var toPlayer = _pathfinder.FindPath(_maze, hunter.Cell, _player, cell => CostOfEnteringFor(hunter, cell));
+        hunter.Route = toPlayer;
 
-        // A wisp under the killer's own feet is not a target: its route would be a single
+        // A wisp under the hunter's own feet is not a target: its route would be a single
         // cell, which would stall the hunt instead of redirecting it. Placement refuses that
         // cell as well; this is the belt-and-braces half of the same rule.
-        if (_lure is { } lure && lure != _enemy)
+        if (_lure is { } lure && lure != hunter.Cell)
         {
-            var toLure = _pathfinder.FindPath(_maze, _enemy, lure, CostOfEntering);
+            var toLure = _pathfinder.FindPath(_maze, hunter.Cell, lure, cell => CostOfEnteringFor(hunter, cell));
 
-            if (toLure.Count > 0 && RouteCost(toLure) < RouteCost(_enemyRoute))
+            if (toLure.Count > 0 && RouteCost(toLure) < RouteCost(toPlayer))
             {
-                _enemyRoute = toLure;
+                hunter.Route = toLure;
             }
         }
 
-        _nextStepIndex = 1;
-        return _enemyRoute;
+        hunter.NextStep = 1;
+        return hunter.Route;
     }
 
     /// <summary>
@@ -1524,7 +1752,7 @@ public sealed class GameState
         // floor's own number.
         var visionRadius = EffectiveVisionRadius;
         var searchRadius = Math.Max(visionRadius, _config.EnemyAuraDistance);
-        var playerDistances = DistancesFrom(_player, searchRadius);
+        var playerDistances = DistancesFrom(_maze, _player, searchRadius);
 
         foreach (var (cell, distance) in playerDistances)
         {
@@ -1534,28 +1762,80 @@ public sealed class GameState
             }
         }
 
+        // The lantern spills onto the rock around the player, walls or no walls. Walking distance
+        // alone leaves the far side of a wall undrawn, which reads as a hole in the corridor
+        // rather than as stone; this is the one place sight is allowed to ignore a wall.
+        foreach (var cell in CellsWithin(_player, NearSightRadius))
+        {
+            _visible.Add(cell);
+        }
+
         // A wisp is a beacon the player placed, so its own pool of light is visible even where
         // the torch does not reach. It is deliberately not part of EnemyGlow: it reveals the
         // wisp, nothing about where the killer is.
         if (_lure is { } lure)
         {
-            foreach (var cell in DistancesFrom(lure, LureGlowRadius).Keys)
+            foreach (var cell in DistancesFrom(_maze, lure, LureGlowRadius).Keys)
             {
                 _visible.Add(cell);
             }
         }
 
-        // Far away the killer is invisible, and so is the light it carries.
-        if (!playerDistances.TryGetValue(_enemy, out var enemyDistance) ||
-            enemyDistance > _config.EnemyAuraDistance)
+        // A hunter further away than its aura is invisible, and so is the light it carries. Each
+        // hunter is asked separately, so one that has just been thrown into the dark does not dim
+        // the one standing three cells behind you.
+        foreach (var hunter in _hunters)
         {
-            return;
+            if (!playerDistances.TryGetValue(hunter.Cell, out var enemyDistance) ||
+                enemyDistance > _config.EnemyAuraDistance)
+            {
+                continue;
+            }
+
+            foreach (var cell in DistancesFrom(_maze, hunter.Cell, _config.EnemyAuraRadius).Keys)
+            {
+                _enemyGlow.Add(cell);
+                _visible.Add(cell);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns every cell whose straight-line distance from <paramref name="origin"/> is at most
+    /// <paramref name="radius"/>, clipped to the maze.
+    /// </summary>
+    /// <param name="origin">The centre of the circle.</param>
+    /// <param name="radius">The circle's radius in cells; zero yields the origin alone.</param>
+    /// <returns>The cells in no particular order.</returns>
+    private IEnumerable<Cell> CellsWithin(Cell origin, int radius)
+    {
+        if (radius <= 0)
+        {
+            yield return origin;
+            yield break;
         }
 
-        foreach (var cell in DistancesFrom(_enemy, _config.EnemyAuraRadius).Keys)
+        var squared = radius * radius;
+
+        for (var rowDelta = -radius; rowDelta <= radius; rowDelta++)
         {
-            _enemyGlow.Add(cell);
-            _visible.Add(cell);
+            for (var columnDelta = -radius; columnDelta <= radius; columnDelta++)
+            {
+                if ((rowDelta * rowDelta) + (columnDelta * columnDelta) > squared)
+                {
+                    continue;
+                }
+
+                var row = origin.Row + rowDelta;
+                var column = origin.Column + columnDelta;
+
+                if (row < 0 || row >= _maze.Rows || column < 0 || column >= _maze.Columns)
+                {
+                    continue;
+                }
+
+                yield return _maze.GetCell(row, column);
+            }
         }
     }
 
@@ -1568,8 +1848,10 @@ public sealed class GameState
     /// <paramref name="radius"/> is exact: nothing beyond the radius is explored, and every
     /// cell that is reached is genuinely that many steps away.
     /// </remarks>
-    private Dictionary<Cell, int> DistancesFrom(Cell origin, int radius)
+    private static Dictionary<Cell, int> DistancesFrom(Grid maze, Cell origin, int radius)
     {
+        ArgumentNullException.ThrowIfNull(maze);
+
         var distances = new Dictionary<Cell, int> { [origin] = 0 };
 
         if (radius == 0)
@@ -1592,13 +1874,13 @@ public sealed class GameState
 
             foreach (var direction in NeighbourDirections)
             {
-                if (_maze.HasWall(cell.Row, cell.Column, direction))
+                if (maze.HasWall(cell.Row, cell.Column, direction))
                 {
                     continue;
                 }
 
                 var (rowDelta, columnDelta) = direction.Delta();
-                var neighbour = _maze.GetCell(cell.Row + rowDelta, cell.Column + columnDelta);
+                var neighbour = maze.GetCell(cell.Row + rowDelta, cell.Column + columnDelta);
 
                 // Already reached means it was found on a shorter or equal route.
                 if (distances.ContainsKey(neighbour))
@@ -1613,6 +1895,24 @@ public sealed class GameState
 
         return distances;
     }
+
+    /// <summary>How many normal steps a hunter will pay to avoid standing on another one.</summary>
+    private const int HunterStackCost = 4;
+
+    /// <summary>
+    /// The cost for <paramref name="hunter"/> to enter <paramref name="cell"/>: the normal price,
+    /// plus a surcharge for a cell another hunter is standing on.
+    /// </summary>
+    /// <param name="hunter">The hunter that is routing.</param>
+    /// <param name="cell">The cell it would enter.</param>
+    /// <returns>The price in normal steps.</returns>
+    /// <remarks>
+    /// The surcharge is finite on purpose. Two hunters may share a cell when the maze leaves them
+    /// no alternative, but they should look for a way around first: a stack of two monsters reads
+    /// as one, and the player cannot tell there are two of them in the corridor.
+    /// </remarks>
+    private int CostOfEnteringFor(Hunter hunter, Cell cell) =>
+        CostOfEntering(cell) + (HunterAt(cell) is { } occupant && occupant != hunter ? HunterStackCost : 0);
 
     /// <summary>
     /// The killer's cost to enter a cell: prohibitive for a sealed barrier, expensive for a
@@ -1635,11 +1935,73 @@ public sealed class GameState
     }
 
     /// <summary>
-    /// Marks the cached killer route as out of date; the next step recomputes it.
+    /// Returns the hunter standing on <paramref name="cell"/>, or <see langword="null"/> when
+    /// the cell is empty.
+    /// </summary>
+    /// <param name="cell">The cell to inspect.</param>
+    /// <returns>The hunter on that cell, or null.</returns>
+    private Hunter? HunterAt(Cell cell)
+    {
+        foreach (var hunter in _hunters)
+        {
+            if (hunter.Cell == cell)
+            {
+                return hunter;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Marks every cached hunter route as out of date; the next step recomputes them.
     /// </summary>
     private void InvalidateEnemyRoute()
     {
-        _enemyRoute = null;
-        _nextStepIndex = 0;
+        foreach (var hunter in _hunters)
+        {
+            hunter.Route = null;
+            hunter.NextStep = 0;
+        }
+    }
+
+    /// <summary>
+    /// One hunter's private state: where it is, where it stepped from, how long that step is
+    /// taking, and the route it is following. Kept as a mutable class rather than a record so the
+    /// rules can update it in place, and private so the only way to read it is <see cref="Enemies"/>.
+    /// </summary>
+    private sealed class Hunter
+    {
+        /// <summary>Creates a hunter standing on <paramref name="cell"/>, going nowhere yet.</summary>
+        /// <param name="cell">The cell it starts on.</param>
+        public Hunter(Cell cell)
+        {
+            Cell = cell;
+            From = cell;
+        }
+
+        /// <summary>Gets or sets the cell it is on.</summary>
+        public Cell Cell { get; set; }
+
+        /// <summary>Gets or sets the cell it stepped from, for the renderer's slide.</summary>
+        public Cell From { get; set; }
+
+        /// <summary>Gets or sets the seconds left in its current step.</summary>
+        public double StepLeft { get; set; }
+
+        /// <summary>Gets or sets how long that step was, so the slide can be a fraction.</summary>
+        public double StepTotal { get; set; }
+
+        /// <summary>Gets or sets how far it has banked towards its next step.</summary>
+        public double Elapsed { get; set; }
+
+        /// <summary>Gets or sets the seconds of stun left, during which it neither moves nor banks.</summary>
+        public double StunSeconds { get; set; }
+
+        /// <summary>Gets or sets the cached route to its chosen target.</summary>
+        public IReadOnlyList<Cell>? Route { get; set; }
+
+        /// <summary>Gets or sets the index of the next cell on that route.</summary>
+        public int NextStep { get; set; }
     }
 }

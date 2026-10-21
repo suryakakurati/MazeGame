@@ -62,6 +62,11 @@ public sealed class MazeGenerator : IMazeGenerator
         // size is, so this class does not repeat the bounds checks.
         var grid = new Grid(options.Rows, options.Columns);
 
+        // The floor's outline is decided before a single wall moves: cells outside it are rock,
+        // and every candidate wall below is between two floor cells. Shaping afterwards would
+        // carve passages into the rock and could cut the maze in two.
+        options.Shape?.ApplyTo(grid);
+
         // One set per cell. The index arithmetic comes from Grid so that the mapping
         // between (row, column) and set index lives in exactly one place.
         var sets = new DisjointSet(grid.CellCount);
@@ -71,13 +76,6 @@ public sealed class MazeGenerator : IMazeGenerator
 
         foreach (var wall in candidates)
         {
-            // One set left means every cell is connected; the remaining walls would only
-            // create loops, so there is nothing useful left to do.
-            if (sets.Count == 1)
-            {
-                break;
-            }
-
             var (rowDelta, columnDelta) = wall.Direction.Delta();
             var firstIndex = grid.GetIndex(wall.Row, wall.Column);
             var secondIndex = grid.GetIndex(wall.Row + rowDelta, wall.Column + columnDelta);
@@ -100,7 +98,9 @@ public sealed class MazeGenerator : IMazeGenerator
     /// <remarks>
     /// Only the south and east walls of each cell are collected. Each of those is shared
     /// with exactly one neighbour, so the list holds every interior wall exactly once and
-    /// never includes the outer boundary, which must stay closed.
+    /// never includes the outer boundary, which must stay closed. A wall with solid rock on either
+    /// side is not a candidate at all: it is the edge of the floor's shape, and opening it would
+    /// walk into the rock.
     /// </remarks>
     private static List<CandidateWall> CollectCandidateWalls(Grid grid)
     {
@@ -111,12 +111,17 @@ public sealed class MazeGenerator : IMazeGenerator
         {
             for (var column = 0; column < grid.Columns; column++)
             {
-                if (row + 1 < grid.Rows)
+                if (grid.IsSolid(row, column))
+                {
+                    continue;
+                }
+
+                if (row + 1 < grid.Rows && !grid.IsSolid(row + 1, column))
                 {
                     candidates.Add(new CandidateWall(row, column, Direction.South));
                 }
 
-                if (column + 1 < grid.Columns)
+                if (column + 1 < grid.Columns && !grid.IsSolid(row, column + 1))
                 {
                     candidates.Add(new CandidateWall(row, column, Direction.East));
                 }

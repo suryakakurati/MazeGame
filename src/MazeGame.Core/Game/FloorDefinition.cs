@@ -1,4 +1,5 @@
 using System;
+using MazeGame.Core.Maze;
 
 namespace MazeGame.Core.Game;
 
@@ -63,6 +64,17 @@ public sealed record FloorDefinition
     public double PlayerStepSeconds { get; init; } = 0.11;
 
     /// <summary>
+    /// Gets how many hunters stalk this floor. Defaults to 1; the deep floors carry 2 or 3.
+    /// </summary>
+    /// <remarks>
+    /// More hunters is not "the same floor but faster": each one chooses its own target and walks
+    /// its own route, so a wisp buys less, the corridors have to be read in two directions, and a
+    /// catch only throws the hunter that made it. It is the single biggest step up the descent can
+    /// take, which is why it arrives on a floor that already announces itself (see floor 10).
+    /// </remarks>
+    public int HunterCount { get; init; } = 1;
+
+    /// <summary>
     /// Gets the most hearts the player may hold on this floor. Defaults to 3. Hearts carried in
     /// from the previous floor start below this ceiling.
     /// </summary>
@@ -102,6 +114,16 @@ public sealed record FloorDefinition
 
     /// <summary>Gets the percentage of dead ends the braider opens on this floor, or null to inherit.</summary>
     public int? DeadEndBraidPercent { get; init; }
+
+    /// <summary>
+    /// Gets the outline this floor's maze is carved into, or null to inherit the run's shape.
+    /// </summary>
+    /// <remarks>
+    /// Content in the same sense as the theme: "The Salt Choir" is an oval and "The Brick Vault" is
+    /// a rectangle because the place is those things, and the player reads the difference from the
+    /// first frame without a line of text explaining it.
+    /// </remarks>
+    public ShapeKind? Shape { get; init; }
 
     /// <summary>
     /// Gets how far the killer's cold glow reaches on this floor, or null to inherit. Zero hides
@@ -188,6 +210,14 @@ public sealed record FloorDefinition
                 nameof(MaxHearts),
                 MaxHearts,
                 "A floor must allow at least one heart.");
+        }
+
+        if (HunterCount < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(HunterCount),
+                HunterCount,
+                "A floor needs at least one hunter.");
         }
 
         // The optional knobs are validated where they land (the composed GameConfig), but a

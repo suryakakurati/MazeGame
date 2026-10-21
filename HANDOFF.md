@@ -24,7 +24,45 @@ If they are not green, fixing that is the first task, not the new feature.
 
 ## Project state at handoff (2026-10-21)
 
-**The latest pass (twenty distinct floors, sound, one typeface) is in:** every floor is drawn as its
+**The latest pass (the score on the death screen, and a growing maze) is in:** a lost run now
+ends on `PixelCards.Caught(font, floorNumber, floorCount, floorName)`, which prints "YOU MADE IT TO /
+FLOOR 7 OF 20" and the floor's name. The card is drawn by `RaylibFrontend.DrawFrame` on
+`Screen.RunLost` instead of by `PixelRenderer.Draw`, because only the campaign knows the run's
+length; the renderer still draws the world and HUD under it. The shipped floors now grow across
+the run — 15x15 for the first arc, 17, 19, 21 (The Long Gallery), the deliberately tiny 11x11
+Warren, then 19, 21, 23 and 25 at the bottom — and
+`FloorCatalogTests.Shipped_TheMazeGrowsAsTheRunDescends` pins that the Warren is the only shrink.
+The suite is **703 tests**, all green, and `ShapedFloorTests` rebuilds every floor at its new size
+and proves the exit and keys stay reachable.
+
+**The pass before that (a playtest fix) is in:** the music no longer glitches — `AudioDirector.PlayFloor`
+starts a worker instead of synthesising on the game thread, `Update` adopts the finished score
+without blocking (measured 2.4 ms to arrange, 0.87 ms slowest frame), and the device callback
+clears its buffer when there is no director. Walls are readable: the palette ladder moved to floor
+0.18 / wall 0.50 / rim 0.68 / shadow 0.05, the band is 6 px (`WallStrips.Thickness`, with
+`WallStrips.RoleFor` stating the cross-section once), and remembered cells are lit at 0.55 instead
+of 0.40 — `WallContrastTests` now demands a 2.2x drawn-band ratio and a floor left between two
+bands. Holding a direction walks as soon as the step ends, because `StepRepeat.Next` takes the
+last step's duration (`GameState.LastPlayerStepSeconds`) and no longer waits out an extra 0.15 s;
+a tap is still one tile. Finally, floors have outlines: `MazeShape` grows a `Blob` or an `Ellipse`,
+`Grid` marks the rest solid (`IsSolid`, `OpenCellCount`, `RemoveWall` refuses rock), the generator
+only opens walls between floor cells, and `GameState` places everything on floor cells. Eight
+floors use a shape; `MazeShapeTests` and `ShapedFloorTests` prove every key and the exit stay
+reachable on the real catalogue.
+
+**The pass before that (the hunt escalates, and so does the music) is in:** floors 1–9 carry one hunter,
+10–15 two and 16–20 three, each with its own cell, route, clock and stun (`GameState.Enemies`,
+`HunterView`; a catch throws only the culprit and stuns them all, and the footer grows one pip per
+hunter). The player's cadence is a sawtooth — 0.14 s a cell on floor 1, tightening within each arc
+and resetting on the heavy floors — and `FloorCatalogTests` scores a floor as hunter-steps per
+second, so difficulty is a product of pace and hunter count. `GameConfig.NearSightRadius` (default
+2, clamped by the torch) lights the cells around the player through walls, and the pixel renderer
+draws a south/east wall face itself when the neighbour is unknown; that pair is the fix for the
+"wall with a gap in it" look. The score is twenty pieces now: `MusicTheme` carries a `MusicStyle`,
+its own `Melody` and a `StepsPerBar`, and `ScoreRenderer` arranges each style with its own
+instruments, rhythm and counterline. The five-motif cycle is gone.
+
+**The pass before that (twenty distinct floors, sound, one typeface) is in:** every floor is drawn as its
 own place rather than a recolour — `Theme` carries a `FloorMotif`, a `WallMotif`, a `FeatureKind`
 and an `AmbientKind`, `MotifTiles` draws the new grammars, and every floor's atlas holds its own
 signature object and carved emblem with a maker's mark. `--check` requires six structural
@@ -282,8 +320,10 @@ visible inconsistency left in the phase. `PROGRESS.md` → **Next Steps** has th
   a corridor would cut off everything behind it (the player cannot walk through it). The
   dead end is a leaf, so it never disconnects the maze. Do not "simplify" this to an
   opposite-corner rule; a test (`AWholeGame_CanBeWonOnAGeneratedMaze`) caught that bug.
-- **`Tick` performs at most one killer step** and banks at most one step interval, so a
-  long frame cannot teleport the killer. Tests advance time with repeated `Tick(1.0)`.
+- **`Tick` performs at most one step per hunter** and banks at most one interval for each, in
+  placement order, so a long frame cannot teleport any of them. With two or three hunters a frame
+  may move each of them once; the loop stops early if a catch or a cleared floor ended the game.
+  Tests advance time with repeated `Tick(1.0)`.
 - **Both frontends share one key mapping.** Keys are translated into `GameCommand` values and
   applied by `GameCommands`; add a new control there once, and both the window and the
   terminal get it. Escape cancels while aiming and quits otherwise, in both frontends.
@@ -362,6 +402,26 @@ visible inconsistency left in the phase. `PROGRESS.md` → **Next Steps** has th
   vision cap (`DraftFactory`).
 - **The UI must not contain game rules.** If the UI needs data, add a read-only
   member to `GameState`; do not reach into maze internals.
+- **The lantern is a rule, not a drawing decision.** `GameState` owns `IsVisible`, including the
+  near-sight spill; a renderer may only darken what it is told. If a wall looks wrong, the first
+  question is whether the cell on its other side is visible — the renderer paints a wall from the
+  eastern/southern cell's north/west face, and falls back to painting it from the near side when
+  that neighbour is unknown. Do not fix a rendering gap by widening `NearSightRadius` in the
+  renderer: the constant lives in `GameConfig` for a reason.
+- **`Raylib.DrawTriangle` culls clockwise winding.** Every triangle in the old renderer was wound
+  that way, so the heart's point, the explorer's hood and the barrier thorns were invisible — a
+  bug that survived several passes because the shapes around them still read as the object. Wind
+  them counter-clockwise (left, point, right) and be suspicious of any triangle that draws
+  nothing.
+- **Hunters are a list, and every rule loops.** `GameState.Enemies` is the snapshot renderers read;
+  `Enemy` is only the first hunter kept for older callers. `IsEnemyStunned` means *all* of them are
+  held. A catch throws only the culprit and stuns everyone, and another hunter's cell costs
+  `HunterStackCost` so two rarely stand together. A new rule that touches the killer has to be
+  written per hunter, not against `_hunters[0]`.
+- **Music is content per floor.** A new floor needs a `MusicStyle`, a `Melody` and (optionally) a
+  meter; the tests refuse a reused melody, fewer than eight styles, two adjacent floors sharing a
+  style, or a meter other than 12/16/20. Render cost is 170–400 ms (debug) once per floor, during
+  the intro card; the loop's rhythm and lead are edge-faded because a drum can end mid-hit.
 - **Walls are changed only through `Grid`.** `Cell` is an immutable value type with no
   public constructor; `Grid.RemoveWall` updates the cell *and* its neighbour so a
   passage is never open from one side only. Read walls with `Cell.HasWall` / `Grid.HasWall`.

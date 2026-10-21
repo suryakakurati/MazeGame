@@ -51,7 +51,8 @@ public sealed class ScoreRendererTests
         foreach (var theme in MusicCatalog.All)
         {
             var stems = ScoreRenderer.Render(theme, 1, seed: 3);
-            var expected = theme.BarsPerLoop * 4 * 60.0 / theme.Tempo;
+            var beats = theme.StepsPerBar / 4.0;
+            var expected = theme.BarsPerLoop * beats * 60.0 / theme.Tempo;
 
             Assert.InRange(stems.LoopSeconds, expected * 0.99, expected * 1.01);
         }
@@ -84,9 +85,10 @@ public sealed class ScoreRendererTests
     }
 
     [Fact]
-    public void TheDeeperFloors_UseAllThreeStems()
+    public void TheDrivingFloors_UseAllThreeStems()
     {
-        var stems = ScoreRenderer.Render(MusicCatalog.For("deep"), 20, seed: 5);
+        // A pulse floor has a bed, a rhythm (bass and drums) and a lead (melody and arpeggio).
+        var stems = ScoreRenderer.Render(MusicCatalog.For("warren"), 9, seed: 5);
 
         Assert.True(Synth.Rms(stems.Bed) > 0.03, "the bed is silent");
         Assert.True(Synth.Rms(stems.Rhythm) > 0.02, "the rhythm is silent");
@@ -119,16 +121,14 @@ public sealed class ScoreRendererTests
     }
 
     [Fact]
-    public void TheFloorNumber_SelectsTheMotif()
+    public void TheTheme_SelectsItsOwnMelody()
     {
-        var theme = MusicCatalog.For("gallery");
+        // Two floors can share a loop length and still be different pieces: the tune lives on the
+        // theme, so the lead cannot be the same line twice.
+        var gallery = ScoreRenderer.Render(MusicCatalog.For("gallery"), 8, seed: 8);
+        var foundry = ScoreRenderer.Render(MusicCatalog.For("foundry"), 12, seed: 8);
 
-        // Floor 1 and floor 2 are the same theme with different motifs, so only the lead differs.
-        var first = ScoreRenderer.Render(theme, 1, seed: 8);
-        var second = ScoreRenderer.Render(theme, 2, seed: 8);
-
-        Assert.Equal(first.Frames, second.Frames);
-        Assert.False(first.Lead.AsSpan().SequenceEqual(second.Lead));
+        Assert.False(gallery.Lead.AsSpan().SequenceEqual(foundry.Lead));
     }
 
     /// <summary>Mixes the three stems into one buffer, which is what a listener hears.</summary>

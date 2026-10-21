@@ -1,4 +1,5 @@
 using System;
+using MazeGame.Core.Maze;
 
 namespace MazeGame.Core.Game;
 
@@ -200,11 +201,41 @@ public sealed record GameConfig
     public double TurnPenaltySeconds { get; init; }
 
     /// <summary>
+    /// Gets how many hunters stalk the floor. Defaults to 1. Must be at least 1, and the maze must
+    /// hold the player, every hunter, the exit and the keys.
+    /// </summary>
+    /// <remarks>
+    /// Every hunter runs the same rule — target the cheaper of the player and a wisp, walk the
+    /// cheapest route, tear seals — but each keeps its own cell, route and timers, so two of them
+    /// are not one faster monster. See <see cref="GameState.Enemies"/>.
+    /// </remarks>
+    public int HunterCount { get; init; } = 1;
+
+    /// <summary>
     /// Gets the radius, in walking steps, that the player can see. Defaults to 3. Zero means
     /// the player sees only their own cell, and walls block sight, so this is a torch range
     /// down corridors rather than a circle. Must not be negative.
     /// </summary>
     public int VisionRadius { get; init; } = 3;
+
+    /// <summary>
+    /// Gets the radius, in straight-line cells, of the light that falls on the rock around the
+    /// player regardless of walls. Defaults to 2. Must not be negative.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Sight itself travels down corridors, which is what makes a wall block a view — but it also
+    /// means the far side of a wall was never drawn, so a wall you were standing against had no
+    /// face and the corridor read as a hole. This radius is the spill of the lantern onto the
+    /// stone immediately around the player: it reveals the cells pressed against the walls, not the
+    /// corridors beyond them.
+    /// </para>
+    /// <para>
+    /// It is capped by the torch in force (see <see cref="GameState.EffectiveVisionRadius"/>), so a
+    /// blind floor stays blind; it is not a way to see through the maze.
+    /// </para>
+    /// </remarks>
+    public int NearSightRadius { get; init; } = 2;
 
     /// <summary>
     /// Gets how many extra interior walls the generator removes to create loops. Defaults to
@@ -230,6 +261,17 @@ public sealed record GameConfig
     /// loops add shortcuts across the map.
     /// </remarks>
     public int DeadEndBraidPercent { get; init; } = 55;
+
+    /// <summary>
+    /// Gets the outline the mazes are carved into. Defaults to the full rectangle.
+    /// </summary>
+    /// <remarks>
+    /// A floor's silhouette is a rule, not decoration: rock outside the shape cannot be walked or
+    /// seen, so an oval or a blob changes which routes exist and how much of the floor a barrier
+    /// can be used to cut off. It is the cheapest way to make two floors with the same size and the
+    /// same key count feel like different places.
+    /// </remarks>
+    public ShapeKind Shape { get; init; } = ShapeKind.Rect;
 
     /// <summary>
     /// Gets the radius, in cells, lit by the killer itself. Defaults to 2. Zero means only the
@@ -531,12 +573,28 @@ public sealed record GameConfig
                 "The turn penalty must last a finite, non-negative number of seconds.");
         }
 
+        if (HunterCount < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(HunterCount),
+                HunterCount,
+                "A floor needs at least one hunter.");
+        }
+
         if (VisionRadius < 0)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(VisionRadius),
                 VisionRadius,
                 "The vision radius cannot be negative.");
+        }
+
+        if (NearSightRadius < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(NearSightRadius),
+                NearSightRadius,
+                "The near-sight radius cannot be negative.");
         }
 
         if (ExtraLoops < 0)
@@ -564,12 +622,12 @@ public sealed record GameConfig
         }
 
         // long arithmetic: a huge row count must not overflow into a "big enough" answer.
-        var requiredCells = 3L + KeyCount;
+        var requiredCells = 2L + HunterCount + KeyCount;
         if ((long)Rows * Columns < requiredCells)
         {
             throw new ArgumentException(
-                $"A {Rows}x{Columns} maze has {Rows * (long)Columns} cells, but the player, killer, exit and " +
-                $"{KeyCount} key(s) need {requiredCells} different cells.",
+                $"A {Rows}x{Columns} maze has {Rows * (long)Columns} cells, but the player, {HunterCount} hunter(s), " +
+                $"the exit and {KeyCount} key(s) need {requiredCells} different cells.",
                 nameof(KeyCount));
         }
     }
@@ -598,6 +656,7 @@ public sealed record GameConfig
             Rows = floor.Rows,
             Columns = floor.Columns,
             KeyCount = floor.KeyCount,
+            HunterCount = floor.HunterCount,
             EnemyStepSeconds = floor.EnemyStepSeconds,
             PlayerStepSeconds = floor.PlayerStepSeconds,
             StartingHearts = startingHearts,
@@ -608,8 +667,10 @@ public sealed record GameConfig
             LureCount = floor.LureCount ?? LureCount,
             LureSeconds = floor.LureSeconds ?? LureSeconds,
             VisionRadius = floor.VisionRadius ?? VisionRadius,
+            NearSightRadius = NearSightRadius,
             ExtraLoops = floor.ExtraLoops ?? ExtraLoops,
             DeadEndBraidPercent = floor.DeadEndBraidPercent ?? DeadEndBraidPercent,
+            Shape = floor.Shape ?? Shape,
             EnemyAuraRadius = floor.EnemyAuraRadius ?? EnemyAuraRadius,
             EnemyAuraDistance = floor.EnemyAuraDistance ?? EnemyAuraDistance,
             RespawnDistance = floor.RespawnDistance ?? RespawnDistance,

@@ -537,9 +537,14 @@ public sealed partial class RaylibRenderer : IRenderer
     /// </remarks>
     private static void DrawFigures(GameState state)
     {
-        if (state.IsVisible(state.Enemy))
+        foreach (var hunter in state.Enemies)
         {
-            var killer = FigureCenter(state.PreviousEnemy, state.Enemy, state.EnemyStepFraction);
+            if (!state.IsVisible(hunter.Cell))
+            {
+                continue;
+            }
+
+            var killer = FigureCenter(hunter.From, hunter.Cell, hunter.StepFraction);
             DrawKiller(killer.X, killer.Y);
         }
 
@@ -595,12 +600,13 @@ public sealed partial class RaylibRenderer : IRenderer
         var hoodRim = new Vector2(centerX, centerY - 17);
         var hoodLeftRim = new Vector2(centerX - 10, centerY - 2);
         var hoodRightRim = new Vector2(centerX + 10, centerY - 2);
-        Raylib.DrawTriangle(hoodLeftRim, hoodRightRim, hoodRim, Rgba(PlayerRim.R, PlayerRim.G, PlayerRim.B, 55));
+        // Counter-clockwise, as raylib culls the other order (see DrawHeart).
+        Raylib.DrawTriangle(hoodLeftRim, hoodRim, hoodRightRim, Rgba(PlayerRim.R, PlayerRim.G, PlayerRim.B, 55));
 
         var hoodTip = new Vector2(centerX, centerY - 15);
         var hoodLeft = new Vector2(centerX - 8, centerY - 2);
         var hoodRight = new Vector2(centerX + 8, centerY - 2);
-        Raylib.DrawTriangle(hoodLeft, hoodRight, hoodTip, PlayerCloak);
+        Raylib.DrawTriangle(hoodLeft, hoodTip, hoodRight, PlayerCloak);
 
         // The face inside the hood, and the lantern hanging by the right hand.
         Raylib.DrawCircle(centerX, centerY - 3, 3.6f, PlayerFace);
@@ -808,8 +814,8 @@ public sealed partial class RaylibRenderer : IRenderer
 
             Raylib.DrawTriangle(
                 new Vector2(baseX + wingX, baseY + wingY),
-                new Vector2(baseX - wingX, baseY - wingY),
                 new Vector2(tipX, tipY),
+                new Vector2(baseX - wingX, baseY - wingY),
                 Rgba(BarrierThorn.R, BarrierThorn.G, BarrierThorn.B, (byte)(255 * life)));
         }
 
@@ -1025,6 +1031,38 @@ public sealed partial class RaylibRenderer : IRenderer
         }
     }
 
+    /// <summary>
+    /// Draws one small pip per hunter beside the hearts, so a floor with two or three of them says
+    /// so at a glance rather than only in the floor's name.
+    /// </summary>
+    /// <remarks>
+    /// Nothing is drawn on a one-hunter floor: a single pip would read as a status light for a
+    /// rule that has not changed, and the footer is the tightest strip on the screen.
+    /// </remarks>
+    /// <param name="state">The game to read the hunter count from.</param>
+    /// <param name="x">Left edge of the row.</param>
+    /// <param name="centreY">Vertical centre of the pips.</param>
+    private static void DrawHunterPips(GameState state, float x, float centreY)
+    {
+        if (state.HunterCount <= 1)
+        {
+            return;
+        }
+
+        var pulse = 0.55 + (Math.Sin(Raylib.GetTime() * 4.0) * 0.2);
+        var colour = Rgba(DangerText.R, DangerText.G, DangerText.B, (byte)(150 + (pulse * 80)));
+
+        // Two upright fangs: a shape a rectangle can draw exactly, so the pip is as crisp as the
+        // pixel face beside it. (A triangle would be anti-aliased into a smudge at this size.)
+        for (var index = 0; index < state.HunterCount; index++)
+        {
+            var cx = x + (index * 12f);
+
+            Raylib.DrawRectangle((int)cx, (int)centreY - 6, 3, 11, colour);
+            Raylib.DrawRectangle((int)cx + 4, (int)centreY - 3, 2, 8, colour);
+        }
+    }
+
     /// <summary>Draws one small heart from two lobes and a triangle, on the pixel grid.</summary>
     private static void DrawHeart(float centerX, float centerY, float size, Color color)
     {
@@ -1033,10 +1071,12 @@ public sealed partial class RaylibRenderer : IRenderer
 
         Raylib.DrawCircleV(new Vector2(centerX - lobe, top), lobe, color);
         Raylib.DrawCircleV(new Vector2(centerX + lobe, top), lobe, color);
+        // Counter-clockwise as raylib wants it (left, point, right): the other order is culled,
+        // which left the heart as two circles with no point and the pips invisible.
         Raylib.DrawTriangle(
             new Vector2(centerX - (lobe * 1.9f), top + (lobe * 0.35f)),
-            new Vector2(centerX + (lobe * 1.9f), top + (lobe * 0.35f)),
             new Vector2(centerX, centerY + (size * 0.44f)),
+            new Vector2(centerX + (lobe * 1.9f), top + (lobe * 0.35f)),
             color);
     }
 
@@ -1271,7 +1311,11 @@ public sealed partial class RaylibRenderer : IRenderer
             1.0f,
             Rgba(accent.R, accent.G, accent.B, 55));
 
-        DrawHearts(state, OriginHeartX, top + (RaylibLayout.FooterHeight / 2f));
+        var centreY = top + (RaylibLayout.FooterHeight / 2f);
+        var heartsEnd = OriginHeartX + (state.MaxHearts * 21f);
+
+        DrawHearts(state, OriginHeartX, centreY);
+        DrawHunterPips(state, heartsEnd + 4, centreY);
 
         var text = state.AimMode switch
         {
@@ -1286,9 +1330,9 @@ public sealed partial class RaylibRenderer : IRenderer
             _ => HintText,
         };
 
-        // The hints are centred in what the hearts leave, not in the whole strip: on a narrow
-        // window the long play hint would otherwise run straight under them.
-        var left = OriginHeartX + (state.MaxHearts * 21f) + 12f;
+        // The hints are centred in what the hearts and the hunter pips leave, not in the whole
+        // strip: on a narrow window the long play hint would otherwise run straight under them.
+        var left = heartsEnd + 12f + (state.HunterCount > 1 ? (state.HunterCount * 12f) + 6f : 0f);
         var room = width - left - 16f;
 
         // A window too narrow for the long hint drops a whole scale rather than a point: the face

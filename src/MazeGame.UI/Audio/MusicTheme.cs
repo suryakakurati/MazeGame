@@ -33,6 +33,49 @@ public enum MusicMode
 }
 
 /// <summary>
+/// The kind of piece a floor is: which instruments, which rhythm and which shape the arrangement
+/// takes. It is the difference between two floors sounding like two tracks rather than the same
+/// track in a new key.
+/// </summary>
+/// <remarks>
+/// A style owns the arrangement, not the tune: the melody, key and progression come from the
+/// theme. Two floors may share a style and still be different pieces, but no two adjacent floors
+/// do — the descent changes the kind of music, not just its numbers.
+/// </remarks>
+public enum MusicStyle
+{
+    /// <summary>A slow, wide drone with one voice over it: pressure, not a tune.</summary>
+    Drone,
+
+    /// <summary>A music box: high plucked notes, swaying, no drums.</summary>
+    Lullaby,
+
+    /// <summary>A slow march: a heavy beat, a walking bass, brass in the lead.</summary>
+    Procession,
+
+    /// <summary>Voices first: a formant choir over an organ bed and a soft frame drum.</summary>
+    Chant,
+
+    /// <summary>Driving four-to-the-floor with a filtered arpeggio under the motif.</summary>
+    Pulse,
+
+    /// <summary>Three beats to the bar, a light kick and a plucked melody.</summary>
+    Waltz,
+
+    /// <summary>Sparse and quiet: a piano-ish arpeggio, no drums, long tails.</summary>
+    Nocturne,
+
+    /// <summary>Metal: inharmonic bells, interlocking parts and no drum kit.</summary>
+    Gamelan,
+
+    /// <summary>Industrial: odd meter, noise hits, a distorted bass and a clanking rhythm.</summary>
+    Machine,
+
+    /// <summary>An organ and a bell under a slow, heavy tune.</summary>
+    Requiem,
+}
+
+/// <summary>
 /// How loud each voice family is on a floor.
 /// </summary>
 /// <param name="Pad">The sustained chord bed.</param>
@@ -53,27 +96,33 @@ public sealed record InstrumentMix(
 /// <param name="ThemeId">The floor theme this track belongs to; it is also the atlas id.</param>
 /// <param name="RootMidi">The tonic, as a MIDI note number.</param>
 /// <param name="Mode">The scale the floor is written in.</param>
+/// <param name="Style">The kind of piece: instruments, rhythm and shape.</param>
 /// <param name="Tempo">Beats per minute.</param>
+/// <param name="StepsPerBar">Sixteenth steps in a bar: 16 is common time, 12 is 3/4, 20 is 5/4.</param>
 /// <param name="BarsPerLoop">How many bars one pass of the arrangement lasts.</param>
 /// <param name="Progression">One scale degree per bar, cycling over the loop.</param>
+/// <param name="Melody">This floor's own tune, in scale degrees over its bar's root.</param>
 /// <param name="Mix">Per-family gains for this floor.</param>
-/// <param name="Density">0..1: how many eighths carry a note or a drum.</param>
-/// <param name="Tension">0..1: how far the pad detunes and how hard the percussion pushes.</param>
+/// <param name="Density">0..1: how many steps carry a note or a drum.</param>
+/// <param name="Tension">0..1: how far the bed detunes and how hard the percussion pushes.</param>
 /// <param name="ReverbWet">0..1: how much of the reverb return is mixed in.</param>
-/// <param name="Band">1..4: which arrangement layer this floor gets (see the build plan).</param>
-/// <param name="Canon">Whether the motif is also stated half a loop later, at a lower level.</param>
+/// <param name="Band">1..4: how deep into the descent the floor is, for the loudness arc.</param>
+/// <param name="Canon">Whether the melody is also stated half a loop later, at a lower level.</param>
 /// <remarks>
-/// The theme is a <i>parameter set</i>, not a recording. Two floors with the same parameters but a
-/// different seed sound like two takes on the same piece, which is the intended feeling: the deeper
-/// you go, the more the same handful of motifs come back in worse shapes.
+/// The theme is a <i>composition</i> expressed as parameters, not a recording. Every floor has its
+/// own melody and style, so no two floors are the same piece at a different pitch; the descent is
+/// heard as twenty pieces that get heavier, not one piece that gets detuned.
 /// </remarks>
 public sealed record MusicTheme(
     string ThemeId,
     int RootMidi,
     MusicMode Mode,
+    MusicStyle Style,
     double Tempo,
+    int StepsPerBar,
     int BarsPerLoop,
     int[] Progression,
+    Motif Melody,
     InstrumentMix Mix,
     double Density,
     double Tension,
