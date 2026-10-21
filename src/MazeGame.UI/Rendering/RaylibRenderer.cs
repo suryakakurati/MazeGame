@@ -2,6 +2,7 @@ using System;
 using System.Numerics;
 using MazeGame.Core.Game;
 using MazeGame.Core.Maze;
+using MazeGame.UI.Rendering.Pixels;
 using Raylib_cs;
 
 namespace MazeGame.UI.Rendering;
@@ -19,11 +20,10 @@ namespace MazeGame.UI.Rendering;
 /// explored tunnels stay faintly visible instead of blinking in and out as the lantern moves.
 /// </para>
 /// <para>
-/// Nothing is loaded from disk: the art is built from Raylib primitives (rounded tiles, thick
-/// strokes with rounded caps for rock, small polygons for the characters) plus deterministic
-/// hashes per cell, so the cave is detailed but reproducible and needs no texture pipeline.
-/// The palette runs green, pink and cyan on near-black teal, and every glow is a radial
-/// gradient rather than a flat colour.
+/// The maze itself is drawn from the compiled atlases by <see cref="Pixels.PixelRenderer"/>; this
+/// class paints the frame around it — the cave gradient, the vignette, the grain and the status
+/// strips — and is the one place the interface's geometry lives. Its labels are set in the same
+/// compiled 5x7 face as the cards and the title, so no screen falls back to a system typeface.
 /// </para>
 /// <para>
 /// Frames must be bracketed by <c>Raylib.BeginDrawing</c> / <c>Raylib.EndDrawing</c>, which the
@@ -60,14 +60,8 @@ public sealed partial class RaylibRenderer : IRenderer
     private static readonly Color HintText = new(110, 145, 132, 255);
     private static readonly Color DangerText = new(255, 128, 176, 255);
     private static readonly Color Panel = new(4, 12, 14, 190);
-    private static readonly Color PanelEdge = new(70, 200, 150, 52);
     private static readonly Color Transparent = new(0, 0, 0, 0);
 
-    private const int HudFontSize = 15;
-    private const int HintFontSize = 14;
-    private const int BannerTitleSize = 30;
-    private const int BannerSubtitleSize = 14;
-    private const float TextSpacing = 1.4f;
     private const int MoteCount = 70;
     private const int GrainCount = 110;
 
@@ -90,7 +84,8 @@ public sealed partial class RaylibRenderer : IRenderer
     ];
 
     private readonly HashSet<Cell> _explored = [];
-    private readonly Font _font;
+
+    private PixelFont? _font;
 
     // Presentation memory for the damage flash: the hearts drawn last frame and when the count
     // dropped. -1 means "nothing seen yet", so opening a game never flashes.
@@ -98,8 +93,7 @@ public sealed partial class RaylibRenderer : IRenderer
     private double _lastHitTime = double.NegativeInfinity;
 
     /// <summary>
-    /// Creates the renderer. Must be constructed <b>after</b> the window exists, because the
-    /// default raylib font is captured here and only exists once the graphics device is up.
+    /// Creates the renderer. Must be constructed <b>after</b> the window exists.
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// Thrown when the renderer is built before <c>Raylib.InitWindow</c>.
@@ -110,8 +104,24 @@ public sealed partial class RaylibRenderer : IRenderer
         {
             throw new InvalidOperationException("RaylibRenderer must be created after Raylib.InitWindow.");
         }
+    }
 
-        _font = Raylib.GetFontDefault();
+    /// <summary>
+    /// Sets the compiled face the interface's labels are drawn in.
+    /// </summary>
+    /// <param name="font">The font the world is already using.</param>
+    /// <remarks>
+    /// The world renderer loads the face once and shares it here, rather than this class keeping a
+    /// second copy of the same texture. A renderer that is asked for its overlay before this is
+    /// called fails loudly: silently falling back to the system typeface is the inconsistency this
+    /// method exists to remove.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="font"/> is null.</exception>
+    public void UsePixelFont(PixelFont font)
+    {
+        ArgumentNullException.ThrowIfNull(font);
+
+        _font = font;
     }
 
     /// <summary>
@@ -187,14 +197,23 @@ public sealed partial class RaylibRenderer : IRenderer
     /// and the type at its designed size.
     /// </remarks>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="state"/> is null.</exception>
-    public void DrawOverlay(GameState state)
+    public void DrawOverlay(GameState state) => DrawOverlay(state, null);
+
+    /// <summary>
+    /// Draws the interface with a floor's own identity: its emblem, number, name and gimmick, and
+    /// an accent that runs through the strips and every status chip.
+    /// </summary>
+    /// <param name="state">The floor being played.</param>
+    /// <param name="chrome">The floor's identity, or null for the neutral interface.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="state"/> is null.</exception>
+    public void DrawOverlay(GameState state, FloorChrome? chrome)
     {
         ArgumentNullException.ThrowIfNull(state);
 
         TrackDamage(state);
         DrawDamageFlash();
-        DrawHud(state);
-        DrawHints(state);
+        DrawHud(state, chrome);
+        DrawHints(state, chrome);
         DrawGrain();
     }
 
@@ -1069,7 +1088,7 @@ public sealed partial class RaylibRenderer : IRenderer
     /// given another meter to read. It turns danger-pink while the bar cannot be used, which is
     /// the same colour the game already uses for damage.
     /// </remarks>
-    private void DrawStamina(GameState state)
+    private void DrawStamina(GameState state, bool showLabel)
     {
         if (state.Config.SprintStaminaSeconds <= 0 || state.SprintStaminaFraction >= 0.999)
         {
@@ -1087,7 +1106,11 @@ public sealed partial class RaylibRenderer : IRenderer
             new Rectangle(left, top, trackWidth, trackHeight),
             Rgba(8, 26, 28, 200));
         Raylib.DrawRectangleRec(new Rectangle(left, top, filled, trackHeight), colour);
-        Text("SPRINT", left + trackWidth + 8, top - 4, 10, HintText);
+
+        if (showLabel)
+        {
+            Text("SPRINT", left + trackWidth + 8, top - 5, 1, HintText);
+        }
     }
 
     /// <summary>
@@ -1095,86 +1118,158 @@ public sealed partial class RaylibRenderer : IRenderer
     /// glowing dot in its own colour. When the killer is close an extra warning appears, so the
     /// player gets a cue that is not only visual atmosphere.
     /// </summary>
-    private void DrawHud(GameState state)
+    private void DrawHud(GameState state, FloorChrome? chrome)
     {
         var width = Raylib.GetScreenWidth();
+        var accent = chrome?.Style.Accent ?? GlowGreen;
+        var danger = state.EnemyGlow.Count > 0;
+        var pulse = 0.55 + (Math.Sin(Raylib.GetTime() * 3.2) * 0.45);
 
         Raylib.DrawRectangle(0, 0, width, RaylibLayout.HudHeight, Panel);
         Raylib.DrawLineEx(
             new Vector2(0, RaylibLayout.HudHeight - 1),
             new Vector2(width, RaylibLayout.HudHeight - 1),
             1.5f,
-            PanelEdge);
-
-        var x = (float)RaylibLayout.OriginX;
-        const float y = 15f;
-
-        x = DrawStatPill(x, y, "KEYS", $"{state.KeysCollected}/{state.Config.KeyCount}", GlowPink) + 10;
-        x = DrawStatPill(x, y, "BARRIERS", $"{state.BarriersRemaining}", GlowGreen) + 10;
-        x = DrawStatPill(x, y, "WISPS", $"{state.LuresRemaining}", GlowCyan) + 10;
-        DrawStatPill(x, y, "EXIT", state.IsExitUnlocked ? "OPEN" : "LOCKED", state.IsExitUnlocked ? ExitOpenColor : ExitLockedColor);
-
-        DrawStamina(state);
-
-        if (state.EnemyGlow.Count == 0)
-        {
-            return;
-        }
-
-        var pulse = 0.55 + (Math.Sin(Raylib.GetTime() * 3.2) * 0.45);
-        const string warning = "IT IS CLOSE";
-        var warningWidth = TextWidth(warning, 12);
-
-        Text(
-            warning,
-            width - RaylibLayout.OriginX - warningWidth,
-            22,
-            12,
-            Rgba(DangerText.R, DangerText.G, DangerText.B, (byte)(120 + (pulse * 120))));
-
+            Rgba(accent.R, accent.G, accent.B, 90));
         Raylib.DrawRectangle(
             RaylibLayout.OriginX,
             RaylibLayout.HudHeight - 3,
             width - (2 * RaylibLayout.OriginX),
-            2,
-            Rgba(DangerText.R, DangerText.G, DangerText.B, (byte)(50 + (pulse * 100))));
+            1,
+            Rgba(accent.R, accent.G, accent.B, 42));
+
+        // The status chips are laid out from the right, so the floor's name on the left gets
+        // whatever room is left rather than a hard-coded column that breaks on a narrow window.
+        var chips = new (string Label, string Value, Color Colour)[]
+        {
+            ("KEYS", $"{state.KeysCollected}/{state.Config.KeyCount}", GlowPink),
+            ("SEALS", $"{state.BarriersRemaining}", GlowGreen),
+            ("WISPS", $"{state.LuresRemaining}", GlowCyan),
+            ("EXIT", state.IsExitUnlocked ? "OPEN" : "LOCKED", state.IsExitUnlocked ? ExitOpenColor : ExitLockedColor),
+        };
+
+        var chipWidth = 0;
+
+        foreach (var chip in chips)
+        {
+            chipWidth += ChipWidth(chip.Label, chip.Value) + 6;
+        }
+
+        var chipX = (float)(width - RaylibLayout.OriginX - chipWidth + 6);
+        const float chipY = 14f;
+
+        foreach (var chip in chips)
+        {
+            DrawStatChip(chipX, chipY, chip.Label, chip.Value, chip.Colour);
+            chipX += ChipWidth(chip.Label, chip.Value) + 6;
+        }
+
+        var left = (float)RaylibLayout.OriginX;
+        var textX = left;
+        var room = chipX - left - 28;
+
+        if (chrome is not null)
+        {
+            var style = chrome.Style;
+
+            FloorEmblem.Draw(style.ThemeId, (int)left, 15, 3, accent);
+            textX = left + 30;
+            room = chipX - textX - 18;
+
+            Text($"FLOOR {chrome.Number:00}", textX, 6, 2, accent);
+            Text(FitText(chrome.Name.ToUpperInvariant(), 2, room), textX, 23, 2, HudText);
+
+            var line = danger ? "IT IS CLOSE" : chrome.Gimmick?.ToUpperInvariant();
+
+            if (!string.IsNullOrEmpty(line))
+            {
+                var colour = danger
+                    ? Rgba(DangerText.R, DangerText.G, DangerText.B, (byte)(120 + (pulse * 120)))
+                    : HintText;
+
+                Text(FitText(line, 1, room), textX, 41, 1, colour);
+            }
+        }
+        DrawStamina(state, chrome is null);
+
+        if (danger)
+        {
+            Raylib.DrawRectangle(
+                RaylibLayout.OriginX,
+                RaylibLayout.HudHeight - 3,
+                width - (2 * RaylibLayout.OriginX),
+                2,
+                Rgba(DangerText.R, DangerText.G, DangerText.B, (byte)(50 + (pulse * 100))));
+        }
+    }
+
+    /// <summary>Returns the width of one status chip.</summary>
+    private static int ChipWidth(string label, string value) =>
+        14 + TextWidth(label, 1) + 6 + TextWidth(value, 2) + 10;
+
+    /// <summary>
+    /// Draws one compact status chip: a glowing dot, a label and its value, in the floor's accent.
+    /// </summary>
+    /// <param name="x">The left edge.</param>
+    /// <param name="y">The top edge.</param>
+    /// <param name="label">The small all-caps label.</param>
+    /// <param name="value">The value, drawn brighter.</param>
+    /// <param name="accent">The value's colour.</param>
+    private void DrawStatChip(float x, float y, string label, string value, Color accent)
+    {
+        var width = ChipWidth(label, value);
+        var rectangle = new Rectangle(x, y, width, 32);
+
+        Raylib.DrawRectangleRounded(rectangle, 0.5f, 8, Rgba(3, 10, 12, 215));
+        Raylib.DrawRectangleRoundedLines(rectangle, 0.5f, 8, Rgba(accent.R, accent.G, accent.B, 65));
+        Raylib.DrawCircleV(new Vector2(x + 10, y + 16), 2.6f, accent);
+
+        Text(label, x + 16, y + 12, 1, Rgba(HudText.R, HudText.G, HudText.B, 160));
+        Text(value, x + 16 + TextWidth(label, 1) + 6, y + 9, 2, accent);
     }
 
     /// <summary>
-    /// Draws one status pill and returns the x coordinate just past it, so pills can be laid out
-    /// left to right without hard-coded widths.
+    /// Truncates <paramref name="text"/> with an ellipsis so a long floor name or gimmick fits the
+    /// room the status chips leave.
     /// </summary>
-    private float DrawStatPill(float x, float y, string label, string value, Color accent)
+    private static string FitText(string text, int scale, float maxWidth)
     {
-        var labelWidth = TextWidth(label, 12);
-        var valueWidth = TextWidth(value, 15);
-        var width = 26 + labelWidth + 8 + valueWidth + 14;
-        var rectangle = new Rectangle(x, y, width, 32);
+        if (maxWidth <= 0 || text.Length == 0)
+        {
+            return string.Empty;
+        }
 
-        Raylib.DrawRectangleRounded(rectangle, 0.5f, 8, Rgba(3, 10, 12, 210));
-        Raylib.DrawRectangleRoundedLines(rectangle, 0.5f, 8, Rgba(accent.R, accent.G, accent.B, 70));
+        // The face is fixed-advance, so the cut is arithmetic rather than a search: how many
+        // glyphs fit, less the three an ellipsis takes.
+        var glyphs = (int)(((maxWidth / scale) + 1) / PixelFont.Advance);
 
-        Raylib.DrawCircleGradient(new Vector2(x + 14, y + 16), 9, Rgba(accent.R, accent.G, accent.B, 70), Transparent);
-        Raylib.DrawCircleV(new Vector2(x + 14, y + 16), 3.0f, accent);
+        if (glyphs >= text.Length)
+        {
+            return text;
+        }
 
-        Text(label, x + 24, y + 10, 12, Rgba(HudText.R, HudText.G, HudText.B, 170));
-        Text(value, x + 24 + labelWidth + 8, y + 8, 15, accent);
-
-        return x + width;
+        return glyphs <= 3
+            ? text[..Math.Max(1, glyphs)]
+            : text[..(glyphs - 3)].TrimEnd() + "...";
     }
 
     /// <summary>
     /// Draws the control hints on a translucent footer strip, switching to the aiming controls
     /// while the player is placing a barrier.
     /// </summary>
-    private void DrawHints(GameState state)
+    private void DrawHints(GameState state, FloorChrome? chrome)
     {
         var width = Raylib.GetScreenWidth();
         var height = Raylib.GetScreenHeight();
         var top = height - RaylibLayout.FooterHeight;
+        var accent = chrome?.Style.Accent ?? GlowGreen;
 
         Raylib.DrawRectangle(0, top, width, RaylibLayout.FooterHeight, Panel);
-        Raylib.DrawLineEx(new Vector2(0, top), new Vector2(width, top), 1.0f, PanelEdge);
+        Raylib.DrawLineEx(
+            new Vector2(0, top),
+            new Vector2(width, top),
+            1.0f,
+            Rgba(accent.R, accent.G, accent.B, 55));
 
         DrawHearts(state, OriginHeartX, top + (RaylibLayout.FooterHeight / 2f));
 
@@ -1191,20 +1286,23 @@ public sealed partial class RaylibRenderer : IRenderer
             _ => HintText,
         };
 
-        // The strip is only as wide as the maze (656 px on a 15x15 floor), so a long hint shrinks a
-        // point at a time instead of being clipped at both ends.
-        var size = HintFontSize;
-        while (size > 9 && TextWidth(text, size) > width - 16)
+        // The hints are centred in what the hearts leave, not in the whole strip: on a narrow
+        // window the long play hint would otherwise run straight under them.
+        var left = OriginHeartX + (state.MaxHearts * 21f) + 12f;
+        var room = width - left - 16f;
+
+        // A window too narrow for the long hint drops a whole scale rather than a point: the face
+        // only has integer sizes, and one that half-fits is worse than a smaller one that fits.
+        var scale = 2;
+
+        if (TextWidth(text, scale) > room)
         {
-            size--;
+            scale = 1;
         }
 
-        Text(text, (width - TextWidth(text, size)) / 2f, top + ((RaylibLayout.FooterHeight - size) / 2f), size, color);
+        var textTop = top + ((RaylibLayout.FooterHeight - (PixelFont.LineHeight * scale)) / 2f);
+        Text(text, left + ((room - TextWidth(text, scale)) / 2f), textTop, scale, color);
     }
-
-    /// <summary>Draws text centred horizontally on <paramref name="centerX"/>.</summary>
-    private void TextCentered(string text, float centerX, float y, int size, Color color, float spacing = TextSpacing) =>
-        Text(text, centerX - (TextWidth(text, size, spacing) / 2f), y, size, color, spacing);
 
     /// <summary>
     /// Darkens the window edges with a soft gradient so the maze feels enclosed by rock, and
@@ -1292,11 +1390,23 @@ public sealed partial class RaylibRenderer : IRenderer
     /// </summary>
     private static Color Rgba(byte red, byte green, byte blue, byte alpha) => new(red, green, blue, alpha);
 
-    /// <summary>Draws text with a little letter spacing, which reads as deliberate typography.</summary>
-    private void Text(string text, float x, float y, int size, Color color, float spacing = TextSpacing) =>
-        Raylib.DrawTextEx(_font, text, new Vector2(x, y), size, spacing, color);
+    /// <summary>Gets the compiled face, which must have been supplied before anything is drawn.</summary>
+    /// <exception cref="InvalidOperationException">Thrown when no font was set.</exception>
+    private PixelFont Font =>
+        _font ?? throw new InvalidOperationException("Call UsePixelFont before drawing the interface.");
 
-    /// <summary>Measures text the same way <see cref="Text"/> draws it.</summary>
-    private int TextWidth(string text, int size, float spacing = TextSpacing) =>
-        (int)Raylib.MeasureTextEx(_font, text, size, spacing).X;
+    /// <summary>Draws a label in the compiled face at a whole-pixel integer scale.</summary>
+    /// <param name="text">The text.</param>
+    /// <param name="x">The left edge, rounded to a pixel.</param>
+    /// <param name="y">The top edge, rounded to a pixel.</param>
+    /// <param name="scale">The integer scale.</param>
+    /// <param name="color">The tint.</param>
+    private void Text(string text, float x, float y, int scale, Color color) =>
+        Font.Draw(text, (int)MathF.Round(x), (int)MathF.Round(y), scale, color);
+
+    /// <summary>Measures a label the same way <see cref="Text"/> draws it.</summary>
+    /// <param name="text">The text.</param>
+    /// <param name="scale">The integer scale.</param>
+    /// <returns>The width in pixels.</returns>
+    private static int TextWidth(string text, int scale) => PixelFont.MeasureWidth(text, scale);
 }

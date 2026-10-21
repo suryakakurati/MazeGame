@@ -9,9 +9,9 @@ This is a course project, so the graded data structures and algorithms
 min-heap for the enemy) are implemented from scratch in this repository. No
 graph/pathfinding libraries are used.
 
-> **Status (2026-10-20):** Course Phases 1–6 complete, and roguelike **Phases 1–4 plus the first
-> slice of Phase 6** are in — the
-> game is **playable in a Raylib window** as a **three-floor campaign with a card draft and timed
+> **Status (2026-10-20):** Course Phases 1–6 complete, and roguelike **Phases 1–4, 7 and the
+> content of Phase 8** are in — the
+> game is **playable in a Raylib window** as a **twenty-floor campaign with a card draft and timed
 > steps**. Each floor is a braided maze **drawn from the compiled pixel-art atlases** on a virtual
 > canvas at an integer scale, with fog of war, a per-cell lantern lightmap and a killer that carries
 > its own light: collect the keys, open the arch, and descend.
@@ -19,18 +19,25 @@ graph/pathfinding libraries are used.
 > it, and **hearts carry between floors**, so only the third catch on the whole run ends it. Walking
 > is a cadence (0.11 s per cell, tightening as you descend), one press is buffered, **Shift
 > sprints** on a stamina bar. The explorer snaps to its tile (one press, one tile) while the killer
-> slides between cells. Floors differ in name, accent, key count and killer pace (The Shallows →
-> Rootbound → Drowned Halls), with an intro card, a floor-cleared card, **a draft of three cards
+> slides between cells. All twenty floors differ in **shape, weather, light and music**, not only in
+> colour: twelve floor motifs, ten wall motifs, eleven signature objects, twelve kinds of drifting
+> weather, a per-floor HUD and card emblem, and a gimmick (a closed lantern, no barriers, a killer
+> without its glow). Each has an intro card, a floor-cleared card, **a draft of three cards
 > between floors — take one or skip for a heart** — from a catalog of thirteen, including four
-> movement cards, and a run summary (574 unit tests; the sprite compiler has produced 327 validated
-> pixel-art tiles, and the game draws the floor from them). The phased plan to a full roguelike is in [`FUTURE.md`](FUTURE.md); current
-> state in [`PROGRESS.md`](PROGRESS.md).
+> movement cards, and a run summary (675 unit tests; the sprite compiler has produced 2,264
+> validated pixel-art tiles across twenty themes, and the game draws the floor from them).
+> **It has a score and effects, and no audio files**: every sound is synthesised from code — 22
+> one-shots and twenty floor tracks arranged from five shared motifs, mixed as stems so the chase
+> arrives on the next bar. The phased plan to a full roguelike is in [`FUTURE.md`](FUTURE.md);
+> current state in [`PROGRESS.md`](PROGRESS.md).
 
 ## Requirements
 
 - .NET 8 SDK (any 8.0.x)
 - macOS, Linux, or Windows
 - A display for the game window; the `--console` version needs only a terminal
+- A sound card for the music and effects; without one the game is silent, never broken (the
+  mixer and the banks are still tested, and `--console` never opens an audio device)
 
 ## Build, run, test
 
@@ -55,12 +62,15 @@ from the code that claims to draw it. The game loads these atlases at startup (t
 beside the executable, and found in the repository when running from source), so the floor is
 real pixel art: a 16 px-per-cell canvas at an integer scale, thin wall faces along closed edges,
 the cast animated from the step clocks, and one multiplied lightmap for the lantern and the fog.
-The menus, the draft and the run summary are still the older vector renderer until the font atlas
-lands — that is the next slice of the phase.
+Every screen is drawn in the compiled pixel font: the title, the floor intro, the cleared and
+run-summary cards (each with the floor's emblem and palette strip), the draft, and the HUD and
+footer inside the window. Nothing falls back to the system typeface, so the type is as crisp as
+the tiles under it at any window size.
 
 `dotnet run --project src/MazeGame.UI` opens the title screen; `--console` plays the same
 campaign in the terminal, and the console view is also used automatically when no window can be
-opened (over SSH, for example). A run is three floors of 15x15, with three barriers, two wisps,
+opened (over SSH, for example). A run is twenty floors, each with its own theme and gimmick, with
+three barriers, two wisps,
 a vision radius of 3 cells and a key count per floor; the killer starts at 0.6 s per step and
 speeds up each floor. All of that is tunable in `GameConfig` and `FloorCatalog`. Every run
 generates new caves (`Seed = null`); set a seed to replay the exact same campaign.
@@ -94,7 +104,7 @@ The game opens on a title screen over the cave: `BIOLUMINESCENT / DEPTHS`, with 
 three hearts, every budget full. A floor intro card names the floor (The Shallows, Rootbound,
 Drowned Halls) before play begins.
 
-A run is three floors. Clearing a floor's arch shows a floor-cleared card; Enter opens the
+A run is twenty floors. Clearing a floor's arch shows a floor-cleared card; Enter opens the
 **draft**: three cards, each naming its own price in the same sentence as its benefit ("Vision
 +2, but the killer's light reaches 3 steps further"). Take one with Enter or its number, or skip
 with S for one heart. Whatever you take applies to every floor from then on, and the draft screen
@@ -102,14 +112,20 @@ shows the run's totals underneath the title. Then the next floor begins with the
 left. The third arch wins the run and shows a summary; there is no draft after it. Losing all
 three hearts ends the run whichever floor you are on.
 
-The window is an underground cave lit by living light. You are a small hooded figure carrying
-a lantern; the killer is a tall, spindly silhouette with pink rim light and two pale eyes; keys
-are magenta beacons — a pool of light on the floor, a shaft rising out of the cell, a pulsing
-ring and glowing fungus at the core, so they read at the edge of the torch; the exit is a stone
-arch (cyan once open); barriers are thorny
-barricades of cave moss. Mushrooms, lichen and spore motes glow green, pink and cyan in the
-dark. The terminal view uses `@` for you, `K` for the killer, `k` for a key, `E` for the exit,
-`#` for a sealed barrier, `=` for a spent one, `*` for a wisp and `X` for the aiming cursor.
+The window is an underground descent where each floor is a different place. The Shallows are
+wet boulders and drifting motes; Rootbound is matted root and spore; Drowned Halls are laid
+flagstones under falling water; The Salt Choir is tessellated stone, ribbed walls and dust; The
+Ember Vault is a grate over embers. Later floors add bone, crystal, silk, riveted plate, mire,
+ripples, ash and rain, and each carries one large signature object — a pool, a nest, a rune, a
+stopped clock, a mirror, a bone pile, a beating heart — that is scattered a few times per maze.
+The HUD names the floor and its gimmick, and the cards carry its emblem and palette.
+
+You are a small hooded figure carrying a lantern; the killer is a tall, spindly silhouette with
+pink rim light and two pale eyes; keys are magenta beacons — a pool of light on the floor, a shaft
+rising out of the cell, a pulsing ring and glowing fungus at the core, so they read at the edge of
+the torch; the exit is a stone arch (cyan once open); barriers are thorny barricades of cave moss.
+The terminal view uses `@` for you, `K` for the killer, `k` for a key, `E` for the exit, `#` for a
+sealed barrier, `=` for a spent one, `*` for a wisp and `X` for the aiming cursor.
 
 Walking is timed rather than instant: a step takes about a tenth of a second, a press during that
 window is remembered for the next step, and holding a direction keeps walking at that cadence.
@@ -266,17 +282,24 @@ within `EnemyAuraRadius` (2) of it become visible too, and `GameState.EnemyGlow`
 ones were lit that way so the renderer can glow them pink. Its own light ignores the wall
 between you, which is exactly why it can be seen around a corner.
 
-The art is drawn entirely from Raylib primitives, not textures: rounded stone floor slabs with
-grit and cracks, walls made of thick rounded rock strokes with a green rim, moss and glowing
-lichen, mushrooms that grow in some cells, and spores drifting only inside the lantern light.
-Characters have silhouettes rather than marker dots — a hooded explorer with a warm lantern, a
-spindly killer with a pink rim and eyes — and the HUD is a row of glass pills with a pink
-warning when the killer is close, and the heart row sits in the footer next to the hints. Walls
-are drawn in two passes (all rock, then all lit edges)
-so a shared wall keeps the rim on both sides. The renderers only decide how to express all
-this; they never decide what may be seen. Each keeps its own set of explored cells, so the map
-does not blink in and out as you walk, and `ConsoleRenderer` follows the same visibility rule
-in ASCII, which keeps the terminal fallback a fair way to play rather than a map cheat.
+The world is drawn from the committed pixel-art atlases: one 16x16 tile per cell, thin wall faces
+along closed edges, and a 16 px-per-cell virtual canvas blitted to the window at an integer scale.
+Each floor's atlas is drawn from its own motif (boulders, flagstones, roots, ripples, drift,
+mosaic, bones, shards, web, plates, mire, grate) and wall grammar (moss rock, cut block, woven
+root, ribbed, stacked plate, crystal, silk, bone, grate, frost), so the surface announces the place
+before the palette does. A per-cell lightmap carries the lantern falloff, remembered cells and the
+killer's cold tint; a weather layer of 30 tiny pixel particles (motes, bubbles, spores, embers,
+drips, dust, moths, petals, ash, rain, static, fireflies) drifts above it, and the light itself is
+warmed or cooled per floor. Characters have silhouettes rather than marker dots — a hooded
+explorer with a warm lantern, a spindly killer with a pink rim and eyes. The HUD is a themed strip
+with the floor's emblem, number, name and gimmick, compact status chips, a pink warning when the
+killer is close, and the heart row in the footer. Walls are drawn in two passes (all rock, then all
+lit edges) so a shared wall keeps the rim on both sides.
+
+The renderers only decide how to express all this; they never decide what may be seen. Each keeps
+its own set of explored cells, so the map does not blink in and out as you walk, and
+`ConsoleRenderer` follows the same visibility rule in ASCII, which keeps the terminal fallback a
+fair way to play rather than a map cheat.
 
 ## Roadmap
 
@@ -292,8 +315,8 @@ in ASCII, which keeps the terminal fallback a fair way to play rather than a map
 | 8 | Final cleanup, README screenshots, presentation notes |
 
 Beyond the course scope, [`FUTURE.md`](FUTURE.md) lays out the roguelike conversion in nine
-phases — hearts, a three-floor campaign, a card draft and smooth timed movement (all four done),
-followed by a generated pixel-art renderer, synthesised audio, twenty themes, and polish.
+phases — hearts, a campaign, a card draft and smooth timed movement (all four done), followed by a
+generated pixel-art renderer, synthesised audio, twenty themes (done), and polish.
 
 ## Contributing
 

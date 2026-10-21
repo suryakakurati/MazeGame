@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using MazeGame.Core.Game;
 using MazeGame.UI.Rendering.Pixels;
 
 namespace MazeGame.Tests.Rendering;
@@ -27,12 +28,14 @@ public sealed class AtlasManifestTests
     {
         var atlases = AtlasManifest.LoadShipped();
 
-        // Three floors plus the font sheet, which is an atlas too but not a theme.
-        Assert.Equal(4, atlases.Count);
+        // One atlas per floor, plus the font sheet, which is an atlas too but not a theme.
+        Assert.Equal(FloorCatalog.Shipped.Count + 1, atlases.Count);
 
-        foreach (var theme in new[] { "shallows", "rootbound", "drowned" })
+        foreach (var floor in FloorCatalog.Shipped)
         {
-            Assert.True(atlases.ContainsKey(theme), $"The manifest does not describe '{theme}'.");
+            Assert.True(
+                atlases.ContainsKey(floor.ThemeId),
+                $"The manifest does not describe '{floor.ThemeId}' (floor {floor.Number}, {floor.Name}).");
         }
 
         Assert.True(atlases.ContainsKey(PixelFont.AtlasId), "The manifest does not describe the font.");
@@ -56,7 +59,7 @@ public sealed class AtlasManifestTests
     {
         // The renderer composes these names inline, so this list is the contract: adding a draw
         // call without a tile is a red test rather than an exception mid-run.
-        var shared = new List<string> { "wall-north", "wall-east", "wall-south", "wall-west", "barrier", "barrier-cracked", "arch-locked", "arch-open", "prop-0", "prop-1" };
+        var shared = new List<string> { "floor-feature", "wall-north", "wall-east", "wall-south", "wall-west", "barrier", "barrier-cracked", "arch-locked", "arch-open", "prop-0", "prop-1", "prop-2" };
 
         foreach (var facing in PlayerFacings)
         {

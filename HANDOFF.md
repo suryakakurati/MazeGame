@@ -22,9 +22,29 @@ dotnet test      # expect: all tests pass
 
 If they are not green, fixing that is the first task, not the new feature.
 
-## Project state at handoff (2026-10-20)
+## Project state at handoff (2026-10-21)
 
-**The latest pass (theme families, the font, the campaign cards) is in:** the three floors are no
+**The latest pass (twenty distinct floors, sound, one typeface) is in:** every floor is drawn as its
+own place rather than a recolour — `Theme` carries a `FloorMotif`, a `WallMotif`, a `FeatureKind`
+and an `AmbientKind`, `MotifTiles` draws the new grammars, and every floor's atlas holds its own
+signature object and carved emblem with a maker's mark. `--check` requires six structural
+differences between neighbouring floors. `FloorStyle` adds a per-floor accent, one of twelve
+weather behaviours, a light cast and a fog density, so the lantern, the motes and the letterbox all
+belong to the floor. All twenty tracks are synthesised from twenty parameter sets with five shared
+motifs, and a test refuses two identical sets. Every screen — title, HUD, footer, draft and the
+campaign cards — is set in the compiled 5x7 face, and no UI file calls `Raylib.DrawText`.
+
+**The pass before that (camera, wall contrast, a resizable window) is in:** the play screen no longer
+draws the whole floor. `PixelLayout` sizes a viewport from the floor's vision radius (the lit radius
+plus one ring, odd, 9–13 cells) and `PixelCamera` follows the player, clamped to the maze, so a maze
+cell is 64 screen px instead of 32 and the fog edge is off screen. A card that raises vision zooms
+the camera out by rebuilding the render target. Walls were flattening into the floor, so the palette
+ladder lifted the wall body to 0.37 and the rim to 0.54 against a 0.20 floor, `WallStrips.Face`
+paints the rim and the near-black shadow after each family's texture, and `WallContrastTests` holds
+the ratios. The window opens at 696x872 and is resizable/maximisable (`Fit` re-derives the integer
+scale every frame, up to 6x).
+
+**The previous pass (theme families, the font, the campaign cards) is in:** the three floors were no
 longer recolours. A theme now names a `TileFamily` — `OrganicCave` (boulders, moss), `WrongOrganic`
 (matted roots, veins, membrane) and `WorkedStone` (brick courses, grout, carved bands) — and
 `TileGrammar` dispatches floor, wall, wall face and props to `CaveTiles`, `WrongOrganicTiles` or
@@ -33,10 +53,12 @@ themes on palette *indices*, so "same shapes in a new hue" is a red test. The co
 `font.png` — a 5x7 bitmap face for every printable character plus the heart and pip icons, in its
 own atlas and its own manifest section — and `PixelFont`/`PixelCards` draw the floor intro,
 floor-cleared, run-summary and caught cards in it instead of the system typeface. `RaylibRenderer`
-no longer draws those four cards; the draft screen is the last vector screen.
+no longer draws those four cards, and the same face now sets the title, the draft and the HUD:
+`PixelRenderer` hands its font to the chrome renderer in its constructor, which is the only place
+that wiring can go — the chrome's `Text` throws without a font.
 
-Phases 1–6 are complete except the pixel UI chrome (the draft screen and the HUD inside the
-canvas); solution scaffold, the three game/test projects (plus `tools/AssetForge`,
+Phases 1–6 are complete, including the pixel UI chrome (the draft screen, the HUD and the footer);
+solution scaffold, the three game/test projects (plus `tools/AssetForge`,
 a non-shipped console tool), shared build settings, style
 rules, all documentation, both graded algorithms (`DisjointSet` with path compression and
 union by size; `MinHeap<T>` with sift-up/sift-down), the maze pipeline (`IRandom`,
@@ -58,7 +80,7 @@ audio, themes); `PROGRESS.md` says which phase is next. The canvas has one hard-
 rule: the lantern falloff is **lighting**, painted before the cell contents, never after — drawing
 it last made keys invisible even though the rules said they were in view.
 
-**Phase 2 (floors and campaign) is in too:** `Campaign` sequences the shipped three-floor
+**Phase 2 (floors and campaign) is in too:** `Campaign` sequences the shipped twenty-floor
 `FloorCatalog` (The Shallows, Rootbound, Drowned Halls — 3/3/4 keys, killer 0.60/0.54/0.48 s),
 owns the current one-floor `GameState`, and carries hearts between floors via each floor's
 `StartingHearts`. `GameStatus.Won` means "this floor's exit"; the run's result is
@@ -231,9 +253,16 @@ visible inconsistency left in the phase. `PROGRESS.md` → **Next Steps** has th
   wall; `DrawCellDetails` then paints the lit rim, moss and lichen. A wall is drawn by both cells
   that share it, so a single pass would let the neighbour's dark stroke cover the first cell's
   rim. Keep that split if you add wall decoration.
-- **Cells are 40 px and the window is 656x760 for 15x15.** `RaylibLayout` owns this, and the
-  characters are sized against it; changing `CellSize` means re-checking the figure sizes in
-  `RaylibRenderer`.
+- **Two geometries, and they are different on purpose.** `RaylibLayout` owns the *window*: the
+  vector maze is 40 px a cell with a 60 px HUD strip and a 44 px hint strip, and the window is
+  opened at the pixel viewport's size (696x872 for a 9-cell viewport at 4x) and is resizable.
+  `PixelLayout` owns the *canvas*: one 16 px atlas tile per cell inside a viewport that follows the
+  player, blitted at an integer scale (1 to 6). Changing `RaylibLayout.CellSize` means re-checking
+  the figure sizes in `RaylibRenderer`; changing the pixel side means re-running AssetForge.
+- **The camera owns the view, the floor does not.** `PixelCamera.For` centres the player and clamps
+  to the floor, and `PixelRenderer` culls to it — every world pass must go through `CanvasX`/
+  `CanvasY`, never `PixelLayout.CellX` directly, or a cell will be drawn at the wrong place once the
+  camera has moved.
 - **Fog of war is a rule, not a drawing effect.** `GameState.IsVisible(cell)` is the only
   source of truth (own cell + `VisionRadius` steps through passages, cached, recomputed on
   movement). Renderers may decide how to darken, and each keeps its own explored-cell memory;

@@ -60,6 +60,13 @@ public sealed class GameState
     /// </summary>
     private const double SprintRecoveryThreshold = 0.25;
 
+    /// <summary>
+    /// How many undrained events are kept. A frontend drains them every frame, so this only
+    /// matters when nothing is listening (tests, the console view): the queue then holds the most
+    /// recent moments instead of growing with the length of the run.
+    /// </summary>
+    private const int MaxQueuedEvents = 32;
+
     private readonly GameConfig _config;
     private readonly Grid _maze;
     private readonly IPathfinder _pathfinder;
@@ -69,6 +76,7 @@ public sealed class GameState
     private readonly HashSet<Cell> _visible = [];
     private readonly HashSet<Cell> _enemyGlow = [];
     private readonly Cell _exit;
+    private readonly Queue<GameEvent> _events = new();
 
     private Cell _player;
     private Cell _enemy;
@@ -368,6 +376,46 @@ public sealed class GameState
     public int MaxHearts => _maxHearts;
 
     /// <summary>
+    /// Takes every event raised since the last drain, oldest first, and empties the queue.
+    /// </summary>
+    /// <returns>
+    /// The events, or an empty list when nothing happened. The returned list is a snapshot: the
+    /// game keeps playing with a fresh queue from the moment this returns.
+    /// </returns>
+    /// <remarks>
+    /// Draining is how a frontend turns rules into sound without inspecting the state twice. A
+    /// caller that never drains is harmless — the queue keeps only the most recent moments, so a
+    /// long headless run cannot grow without bound.
+    /// </remarks>
+    public IReadOnlyList<GameEvent> DrainEvents()
+    {
+        if (_events.Count == 0)
+        {
+            return Array.Empty<GameEvent>();
+        }
+
+        var drained = _events.ToArray();
+        _events.Clear();
+        return drained;
+    }
+
+    /// <summary>
+    /// Appends <paramref name="gameEvent"/> to the queue the UI drains.
+    /// </summary>
+    /// <param name="gameEvent">The moment that just happened.</param>
+    private void Raise(GameEvent gameEvent)
+    {
+        // A frontend that does not listen (the console view, a long test) must not accumulate a
+        // queue the size of the run. The oldest moment is the one worth dropping.
+        if (_events.Count >= MaxQueuedEvents)
+        {
+            _events.Dequeue();
+        }
+
+        _events.Enqueue(gameEvent);
+    }
+
+    /// <summary>
     /// Gets a value indicating whether the player is still inside the post-catch grace window.
     /// </summary>
     /// <remarks>
@@ -616,8 +664,14 @@ public sealed class GameState
         // What the player can see is anchored to their cell, so it moves with them.
         RecomputeVisibility();
 
-        // Collecting is idempotent: stepping on an already collected key cell changes nothing.
-        _keys.Remove(_player);
+        // Collecting is idempotent: stepping on an already collected key cell changes nothing,
+        // which is also why the pickup event is raised from the removal rather than the cell.
+        Raise(GameEvent.Step);
+
+        if (_keys.Remove(_player))
+        {
+            Raise(GameEvent.KeyPicked);
+        }
 
         if (ontoKiller)
         {
@@ -628,6 +682,7 @@ public sealed class GameState
         if (_player == _exit && IsExitUnlocked)
         {
             _status = GameStatus.Won;
+            Raise(GameEvent.FloorCleared);
         }
 
         return true;
@@ -780,6 +835,7 @@ public sealed class GameState
         _barriersRemaining--;
         _aiming = PlacementMode.None;
         InvalidateEnemyRoute();
+        Raise(GameEvent.SealPlaced);
         return true;
     }
 
@@ -811,6 +867,7 @@ public sealed class GameState
         _luresRemaining--;
         _aiming = PlacementMode.None;
         InvalidateEnemyRoute();
+        Raise(GameEvent.WispLit);
 
         // The wisp lights its own cell, so what the player can see changes at once.
         RecomputeVisibility();
@@ -1015,6 +1072,7 @@ public sealed class GameState
                 }
 
                 _barrierSeals.Remove(cell);
+                Raise(GameEvent.SealCracked);
                 cracked = true;
             }
 
@@ -1217,6 +1275,7 @@ public sealed class GameState
         _enemyStepLeft = interval;
         _enemyStepTotal = interval;
         _nextStepIndex++;
+        Raise(GameEvent.KillerStep);
 
         // The killer carries its own light, so what the player can see changes as it moves
         // even when the player stands still.
@@ -1233,6 +1292,7 @@ public sealed class GameState
         // Reaching the wisp spends it: the decoy has done its job and the chase resumes.
         if (_enemy == _lure)
         {
+            Raise(GameEvent.WispConsumed);
             ClearLure();
 
             // A card may make the wisp cost the killer real time. The stun is the same window a
@@ -1268,8 +1328,12 @@ public sealed class GameState
         {
             _hearts = 0;
             _status = GameStatus.Caught;
+            Raise(GameEvent.HeartLostLast);
+            Raise(GameEvent.RunLost);
             return;
         }
+
+        Raise(GameEvent.HeartLost);
 
         _enemy = ChooseRespawnCell();
 
@@ -1366,6 +1430,7 @@ public sealed class GameState
         _barrierSeals.Remove(cell);
         _barriers.Remove(cell);
         InvalidateEnemyRoute();
+        Raise(GameEvent.SealBroken);
     }
 
     /// <summary>

@@ -69,6 +69,62 @@ public sealed record FloorDefinition
     public int MaxHearts { get; init; } = 3;
 
     /// <summary>
+    /// Gets the one-line gimmick shown under the floor's name on its card, for example
+    /// "the lantern reaches one step here". Defaults to none.
+    /// </summary>
+    /// <remarks>
+    /// Content, not a rule: it is the sentence that tells the player what this floor does
+    /// differently, so the descent is read as well as felt.
+    /// </remarks>
+    public string? Gimmick { get; init; }
+
+    /// <summary>
+    /// Gets how far the lantern reaches on this floor, or null to inherit the run's setting.
+    /// </summary>
+    /// <remarks>
+    /// The knob behind a floor that is about light rather than speed: a blind floor hunts by
+    /// sound of the walls, a lit one shows you the whole room and lets the killer come at you
+    /// from off screen. It also sets the camera's zoom — more vision is a wider view.
+    /// </remarks>
+    public int? VisionRadius { get; init; }
+
+    /// <summary>Gets how many barriers this floor allows, or null to inherit the run's budget.</summary>
+    public int? BarrierBudget { get; init; }
+
+    /// <summary>Gets how many wisps this floor allows, or null to inherit the run's count.</summary>
+    public int? LureCount { get; init; }
+
+    /// <summary>Gets how long a wisp burns on this floor, or null to inherit the run's seconds.</summary>
+    public double? LureSeconds { get; init; }
+
+    /// <summary>Gets the extra walls the braider removes for loops, or null to inherit.</summary>
+    public int? ExtraLoops { get; init; }
+
+    /// <summary>Gets the percentage of dead ends the braider opens on this floor, or null to inherit.</summary>
+    public int? DeadEndBraidPercent { get; init; }
+
+    /// <summary>
+    /// Gets how far the killer's cold glow reaches on this floor, or null to inherit. Zero hides
+    /// the killer until it is in sight, which is what a stalking floor is made of.
+    /// </summary>
+    public int? EnemyAuraRadius { get; init; }
+
+    /// <summary>
+    /// Gets the distance at which the killer's glow appears, or null to inherit. Lower means you
+    /// hear it later.
+    /// </summary>
+    public int? EnemyAuraDistance { get; init; }
+
+    /// <summary>Gets how far a catch throws the killer, or null to inherit the run's distance.</summary>
+    public int? RespawnDistance { get; init; }
+
+    /// <summary>Gets the grace period after a catch, in seconds, or null to inherit.</summary>
+    public double? InvulnerabilitySeconds { get; init; }
+
+    /// <summary>Gets how long the killer is stunned after a catch, or null to inherit.</summary>
+    public double? RespawnStunSeconds { get; init; }
+
+    /// <summary>
     /// Checks that the floor describes something buildable.
     /// </summary>
     /// <remarks>
@@ -132,6 +188,59 @@ public sealed record FloorDefinition
                 nameof(MaxHearts),
                 MaxHearts,
                 "A floor must allow at least one heart.");
+        }
+
+        // The optional knobs are validated where they land (the composed GameConfig), but a
+        // negative one is a content typo worth naming here: the floor, not the run, is wrong.
+        if (VisionRadius is < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(VisionRadius), VisionRadius, "Vision cannot be negative.");
+        }
+
+        if (BarrierBudget is < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(BarrierBudget), BarrierBudget, "A barrier budget cannot be negative.");
+        }
+
+        if (LureCount is < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(LureCount), LureCount, "A wisp count cannot be negative.");
+        }
+
+        if (ExtraLoops is < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(ExtraLoops), ExtraLoops, "Extra loops cannot be negative.");
+        }
+
+        if (DeadEndBraidPercent is < 0 or > 100)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(DeadEndBraidPercent),
+                DeadEndBraidPercent,
+                "A braid percentage is between 0 and 100.");
+        }
+
+        if (EnemyAuraRadius is < 0 || EnemyAuraDistance is < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(EnemyAuraRadius), "The killer's glow cannot be negative.");
+        }
+
+        if (RespawnDistance is < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(RespawnDistance), RespawnDistance, "The respawn distance cannot be negative.");
+        }
+
+        foreach (var (value, name) in new (double? Value, string Name)[]
+                 {
+                     (LureSeconds, nameof(LureSeconds)),
+                     (InvulnerabilitySeconds, nameof(InvulnerabilitySeconds)),
+                     (RespawnStunSeconds, nameof(RespawnStunSeconds)),
+                 })
+        {
+            if (value is { } seconds && (!(seconds >= 0) || double.IsInfinity(seconds)))
+            {
+                throw new ArgumentOutOfRangeException(name, seconds, "A duration must be finite and non-negative.");
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using MazeGame.UI.Rendering.Pixels;
 using Raylib_cs;
 
 namespace MazeGame.UI.Rendering;
@@ -10,9 +11,12 @@ namespace MazeGame.UI.Rendering;
 /// <remarks>
 /// <para>
 /// This is a partial of <see cref="RaylibRenderer"/> rather than its own class so it can reuse the
-/// cave palette, the vignette, the grain and the text helpers instead of growing a second copy of
-/// them. It draws no game state at all: a title screen has no rules, and the frontend owns the
-/// menu selection.
+/// cave palette, the vignette and the grain instead of growing a second copy of them. It draws no
+/// game state at all: a title screen has no rules, and the frontend owns the menu selection.
+/// </para>
+/// <para>
+/// The type is set by <see cref="PixelCards.Title"/> in the compiled face, the same one the cards
+/// and the maze's labels use, so the first screen a player sees is already the game's typography.
 /// </para>
 /// <para>
 /// Everything moves on the clock (spore drift, the breathing glow behind the wordmark, the pulse
@@ -21,19 +25,19 @@ namespace MazeGame.UI.Rendering;
 /// </remarks>
 public sealed partial class RaylibRenderer
 {
-    private const int TitleFontSize = 44;
-    private const int WordmarkFontSize = 66;
-    private const int MenuFontSize = 22;
-
     /// <summary>
     /// Draws the title screen with the menu item at <paramref name="selectedItem"/> highlighted.
     /// </summary>
+    /// <param name="font">The compiled face the title is set in.</param>
     /// <param name="selectedItem">
     /// Zero-based index of the highlighted menu entry (0 = descend, 1 = leave). The renderer only
     /// highlights it; the frontend owns the selection itself.
     /// </param>
-    public void DrawTitle(int selectedItem)
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="font"/> is null.</exception>
+    public static void DrawTitle(PixelFont font, int selectedItem)
     {
+        ArgumentNullException.ThrowIfNull(font);
+
         var width = Raylib.GetScreenWidth();
         var height = Raylib.GetScreenHeight();
         var time = Raylib.GetTime();
@@ -62,90 +66,10 @@ public sealed partial class RaylibRenderer
 
         DrawTitleSpores(time);
 
-        TextCentered("A DESCENT IN THE DARK", centerX, 118, 12, Rgba(HintText.R, HintText.G, HintText.B, 210), 3.4f);
-        TextCentered("BIOLUMINESCENT", centerX, 148, TitleFontSize, Rgba(214, 255, 236, 245), 5.0f);
-        TextCentered("DEPTHS", centerX, 198, WordmarkFontSize, Rgba(GlowGreen.R, GlowGreen.G, GlowGreen.B, 245), 7.0f);
-
-        // A thin broken rule with a glowing seed in the gap: the smallest possible flourish that
-        // still separates the name from the promise below it.
-        const float ruleY = 300f;
-        Raylib.DrawLineEx(
-            new Vector2(centerX - 96, ruleY), new Vector2(centerX - 16, ruleY), 1f, Rgba(GlowGreen.R, GlowGreen.G, GlowGreen.B, 100));
-        Raylib.DrawLineEx(
-            new Vector2(centerX + 16, ruleY), new Vector2(centerX + 96, ruleY), 1f, Rgba(GlowGreen.R, GlowGreen.G, GlowGreen.B, 100));
-        Raylib.DrawCircleV(new Vector2(centerX, ruleY), 2.4f, Rgba(206, 255, 236, 230));
-
-        TextCentered(
-            "COLLECT THE KEYS. OPEN THE ARCH. DO NOT BE CAUGHT.",
-            centerX,
-            322,
-            12,
-            Rgba(HintText.R, HintText.G, HintText.B, 200),
-            1.8f);
-
-        DrawTitleMenuItem("DESCEND", centerX, 412, selectedItem == 0, time);
-        DrawTitleMenuItem("LEAVE", centerX, 468, selectedItem == 1, time);
-
-        TextCentered(
-            "W/S OR ARROWS: SELECT      ENTER: CONFIRM      ESC: LEAVE",
-            centerX,
-            height - 82,
-            12,
-            Rgba(HintText.R, HintText.G, HintText.B, 180),
-            1.6f);
-        TextCentered("COP3503H / GROUP 5", centerX, height - 48, 10, Rgba(HintText.R, HintText.G, HintText.B, 110), 2.8f);
+        PixelCards.Title(font, selectedItem);
 
         DrawVignette(false);
         DrawGrain();
-    }
-
-    /// <summary>
-    /// Draws one menu entry, with a breathing halo and a pair of chevrons when it is selected.
-    /// </summary>
-    /// <param name="label">The text to draw.</param>
-    /// <param name="centerX">Horizontal centre of the entry, in pixels.</param>
-    /// <param name="y">Top edge of the text, in pixels.</param>
-    /// <param name="selected">Whether this entry is the highlighted one.</param>
-    /// <param name="time">Current time in seconds, used for the pulse.</param>
-    /// <remarks>
-    /// The chevrons are triangles rather than glyphs because raylib's built-in font only covers
-    /// ASCII; a decorative character would silently render as a box.
-    /// </remarks>
-    private void DrawTitleMenuItem(string label, float centerX, float y, bool selected, double time)
-    {
-        if (selected)
-        {
-            var pulse = 0.6 + (Math.Sin(time * 2.4) * 0.4);
-            Raylib.DrawCircleGradient(
-                new Vector2(centerX, y + (MenuFontSize / 2f)),
-                110,
-                Rgba(GlowGreen.R, GlowGreen.G, GlowGreen.B, (byte)(26 * pulse)),
-                Transparent);
-        }
-
-        var accent = selected ? GlowGreen : HintText;
-        var alpha = selected ? (byte)Math.Clamp(200 + (Math.Sin(time * 3.2) * 55), 0, 255) : (byte)120;
-        TextCentered(label, centerX, y, MenuFontSize, Rgba(accent.R, accent.G, accent.B, alpha), 4.5f);
-
-        if (!selected)
-        {
-            return;
-        }
-
-        var offset = (TextWidth(label, MenuFontSize, 4.5f) / 2f) + 30;
-        var middle = y + (MenuFontSize / 2f);
-        var chevron = Rgba(GlowGreen.R, GlowGreen.G, GlowGreen.B, 220);
-
-        Raylib.DrawTriangle(
-            new Vector2(centerX + offset, middle - 5),
-            new Vector2(centerX + offset, middle + 5),
-            new Vector2(centerX + offset + 7, middle),
-            chevron);
-        Raylib.DrawTriangle(
-            new Vector2(centerX - offset, middle - 5),
-            new Vector2(centerX - offset, middle + 5),
-            new Vector2(centerX - offset - 7, middle),
-            chevron);
     }
 
     /// <summary>

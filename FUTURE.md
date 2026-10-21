@@ -897,8 +897,8 @@ still works end to end, not merely that it compiles.
 | **4** | **Movement feel** — timed steps, one buffered input, render interpolation, sprint | Same rules, smooth motion; speed becomes a stat | **done 2026-10-20** |
 | 5 | Sprite compiler — `AssetForge`, palettes, three families, rig, font, `--check` | No visual change yet; the atlases and validation exist | **done 2026-10-20 (exit met)**: canvas, palette, PNG writer, autotiler (16 edge + 47 blob), rig (cast + props), 3 themes, `--check`. Font, pictograms, UI chrome and the two other families follow the renderer's screens |
 | 6 | Pixel renderer — virtual canvas, integer scale, atlas blitting, lightmap, pixel HUD | The game looks like the planned indie game, same rules | **in progress 2026-10-20 (slice 1)**: virtual canvas, integer scale, atlas blitting, thin wall faces, lightmap, fog, cast, reticle. The font, pictograms, pixel HUD and the four menu screens remain |
-| 7 | Audio — synth engine, sequencer, motifs, intensity layers, FX bank, silent fallback | The chase is audible and the game is silent-safe | |
-| 8 | Themes and content — 20 floors, 20 palettes, remaining cards, hazards, save/continue | The full roguelike run exists | |
+| 7 | Audio — synth engine, sequencer, motifs, intensity layers, FX bank, silent fallback | The chase is audible and the game is silent-safe | **done 2026-10-20** |
+| 8 | Themes and content — 20 floors, 20 palettes, remaining cards, hazards, save/continue | The full roguelike run exists | **partial 2026-10-20**: 20 floors and 20 themes are shipped; remaining cards, hazards and save/continue |
 | 9 | Polish — juice, accessibility, balance, docs, screenshots | Definition of done in section 15 | |
 
 Phase 1 is shipped: `GameConfig` gained `StartingHearts` (3), `MaxHearts` (3),
@@ -956,6 +956,26 @@ frames (draining while moving, free while standing).
 The movement cards in §4.3 (Light Feet, Momentum, Sprint Lungs, Hollow Bones) can now be built on a
 real player step time, though Sprint Lungs overlaps with the free sprint and needs a redesign. The
 diegetic sprint cost from §5.2 (footstep ring, the killer listening) is not implemented yet.
+
+Phase 7 is shipped, and it closes §8 almost as written. `GameState` publishes a twelve-event
+stream (`Step`, `KeyPicked`, `HeartLost`, `HeartLostLast`, `KillerStep`, `SealPlaced`,
+`SealCracked`, `SealBroken`, `WispLit`, `WispConsumed`, `FloorCleared`, `RunLost`) that the UI
+drains; Core has no audio types. The score is one `MusicTheme` record per floor (root, mode,
+tempo, bars, progression, instrument mix, density, tension, reverb, band), arranged from five
+shared motifs transformed by band and rendered as three stems — because the stems are separate,
+the intensity mix is gains rather than a second track: `Calm` bed only, `Tense` adds bass, `Chase`
+opens motif and drums, `Hurt` ducks. The change is adopted on the next bar and faded in over 400 ms,
+which is the plan's "composed rather than triggered" made literal; floor 20 holds the arrangement
+back for ten seconds and states its motif in canon, two of the three special beats §8.5 asks for. Hats, kicks, snares and the reverb are synthesised from the
+primitives in `Synth`, so the game still ships no audio files at all. Two deviations from §8: the
+device is fed by Raylib's stream callback instead of a ring-buffer thread (raylib refuses a write
+when its buffer is full, so polling stutters or lags; the callback measured 100% of real time at
+441 frames per call), and the FX distinctness/clipping checks are xunit tests rather than part of
+`AssetForge --check`, because the recipes live in the UI assembly and the tool must not reference
+the game. The score costs **0.006 ms per 2048-frame block** (~0.3% of a core, budget 4%), one
+45–150 ms render per floor during the intro card, and 22 one-shots in 2.6 MB that are built
+in 27 ms before the stream starts. What is left is taste: balance, motif memorability, whether
+twenty 10–16 s loops are enough before they repeat.
 
 ### 11.2 Milestone detail
 

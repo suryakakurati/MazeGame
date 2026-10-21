@@ -1215,3 +1215,157 @@ and the reason the cards pick 4 → 2 by measured width instead of scaling to fi
 face does not have draws as `?` rather than throwing: the text comes from game data, and a stray
 symbol in a floor's name must not end a run mid-frame. The draft screen is the last vector screen,
 and the HUD still lives in the letterbox; both are slice 2b.
+
+## 2026-10-20 — The canvas is a camera viewport, sized by vision
+
+**Decision:** `PixelLayout` no longer draws the whole floor. The canvas is a viewport whose size
+comes from the floor's vision radius — the lit radius plus one ring, rounded to an odd number and
+clamped to 9–13 cells — and `PixelCamera` positions it so the player is the centre cell, clamped to
+the floor so the frame never shows past the maze's edge. `PixelRenderer` culls every pass to the
+viewport and rebuilds its one-texel-per-cell lightmap in viewport space; exploration is still
+recorded across the whole maze, because a generous vision card can light cells further out than the
+camera shows.
+
+**Reason:** Drawing the whole 15x15 floor at 2x spent most of the screen on cells the lantern could
+not reach, so the play area was small and the maze read as a diagram rather than a place. A viewport
+makes the same floor bigger, and it makes the camera do the work that the fog used to do badly.
+
+**Consequences:** A card that raises vision is a zoom out: the viewport grows and the render target is
+rebuilt once, so the effect is "you can see further" rather than "the map got smaller". The cap at
+thirteen cells is deliberate — a stacked vision run zooms out to a wide view without turning the maze
+into a minimap, and the fog keeps the unseen edge black. The window is now sized from the viewport
+(696x872 at 4x) instead of the floor, which is what makes one maze cell 64 screen pixels.
+
+## 2026-10-20 — Walls get a guaranteed contrast, and the edge treatment is shared
+
+**Decision:** The palette's lightness ladder moved the wall body from 0.29 to 0.37 and the lit rim
+from 0.42 to 0.54, against a 0.20 floor and a 0.07 contact shadow. `WallStrips.Face` now paints the
+rim and the shadow *after* the family's own texture, so no family can bury the two rows that say
+"wall". `WallContrastTests` measures relative luminance and fails if the body is under 1.6x the
+floor, the rim under 2.2x, or the shadow lighter than 0.7x.
+
+**Reason:** A wall here is a five-pixel band painted over a floor tile, so it has almost no area to
+make its case. With the old ladder the band sat barely above the floor and, in Rootbound, a family
+had painted moss over its own shadow row — the band read as part of the floor, which is exactly what
+the player reported. Contrast is not something to eyeball per theme: it is the one number that has
+to hold for every palette the game will ever ship.
+
+**Consequences:** Walls are noticeably brighter than floors in every theme, which costs a little of
+the cave's gloom but buys legibility. The shared rim-and-shadow rows mean the two edge rows are no
+longer a place for family detail; the three body rows still are, and the shape languages remain
+distinct there (courses, fibres, boulders).
+
+## 2026-10-20 — Twenty floors, each a gimmick; the rule knobs live on the floor
+
+**Decision:** `FloorCatalog` holds twenty floors. A floor may carry a `Gimmick` sentence for its
+card, and any of the optional knobs `VisionRadius`, `BarrierBudget`, `LureCount`, `LureSeconds`,
+`ExtraLoops`, `DeadEndBraidPercent`, `EnemyAuraRadius`, `EnemyAuraDistance`, `RespawnDistance`,
+`InvulnerabilitySeconds`; `GameConfig.ForFloor` folds them over the run's settings. Nothing in
+`GameState` knows a floor by name.
+
+**Reason:** Twenty floors that only differ in key count and killer pace are twenty difficulty steps,
+not twenty places. The interesting differences — a floor where the lantern dies, one where barriers
+do not exist, one where the killer arrives without its glow — are all *settings the rules already
+understand*. Putting them on the floor record keeps the content seam where the project already said
+it was: a floor is data, and a gimmick is data, not a subclass or a branch.
+
+**Consequences:** A gimmick is only as interesting as the knobs allow; a floor that wanted new
+mechanics would still need a rule. The tests now assert the *shape* of the descent rather than a
+strictly falling pace — the two slow, lit floors are deliberate breathers — and require every floor
+to carry a card line and a signature no other floor repeats.
+
+## 2026-10-20 — A wall must beat its floor by a measured ratio, and floor 2's floor was the problem
+
+**Decision:** `WallStrips.Face` paints the near-black outline and the lit rim *after* whichever family
+drew the band, so no texture can bury the two rows that say "wall"; the palette's wall body is 0.40
+and its rim 0.58 against a 0.20 floor. Rootbound's floor growth was moved from the wall's body colour
+to moss-over-shadow. `WallContrastTests` measures relative luminance of the painted band against the
+painted floor and fails under 1.6x body / 2.2x rim.
+
+**Reason:** The player reported that floor 2's walls disappeared into its tiles. They were right, and
+the cause was not the wall: the wrong-organic floor drew full-width fibres in `Wall` and knots in
+`Wall`/`WallTop`, so the floor already contained wall-bright lines — band vs floor was 1.52x, the worst
+of any theme. A wall here is a five-pixel band over a floor tile, so its whole claim to being an
+obstacle is contrast; that is a number, not a vibe, and it belongs in a test.
+
+**Consequences:** All twenty themes now sit between 1.96x and 7.30x (Rootbound 2.23x), and in a
+rendered frame a walled cell's top rows read up to 2.9x its own floor against 0.88x for open cells.
+The cost is that the root floors are no longer lit by bright fibres; their glow comes from sap, props
+and the lantern instead. Two rows of every wall band are now shared by all families, so a new family
+decorates the body rows and inherits a legible edge.
+
+## 2026-10-20 — A floor publishes events; the UI turns them into sound
+
+**Decision:** `GameState` keeps a small capped queue of `GameEvent` values and drains it on
+request. The frontend drains it once a frame, feeds the events to the audio layer, and Core never
+mentions audio, Raylib or a mixer.
+
+**Reason:** The alternative — the UI diffing two frames to notice a key disappeared, or polling
+`Hearts` — cannot distinguish "a heart was spent" from "the HUD was rebuilt", cannot see a seal
+crack, and would need a second copy of the rules to guess. Events are also what a future VFX layer
+wants, and they are cheap: a queue of at most 32 ids.
+
+**Consequences:** The queue is capped, not unbounded, so a frontend that never drains (the console
+view, a long test) keeps only the most recent moments. A new moment that needs a sound is one enum
+value and one `Raise` call in Core, plus one line in the director's switch.
+
+## 2026-10-20 — The score is twenty parameter sets, arranged from five motifs and mixed as stems
+
+**Decision:** A floor's music is a `MusicTheme` record (root, mode, tempo, bars, progression,
+instrument mix, density, tension, reverb, band), not a track. `ScoreRenderer` arranges one loop of
+three stems — bed, rhythm, lead — from the floor's record plus five shared motifs, and
+`AudioEngine` mixes the stems with gains. `MusicCatalog`'s ids are the atlas theme ids, so music
+and tiles for a floor cannot drift apart.
+
+**Reason:** Twenty tracks of authored audio are impossible without assets, and twenty unrelated
+generated tracks would not sound like one descent. Generating *stems* is what lets the music react
+without a second arrangement: `Calm` opens the bed, `Tense` adds the bass, `Chase` opens the motif
+and drums, and the change is applied on the next bar line so it feels composed. It also makes the
+loop seam a rendering problem (wrap the tails, run the reverb around the loop) rather than a
+crossfade problem.
+
+**Consequences:** The score is rendered once per floor on the main thread (45–150 ms, hidden by the
+intro card), and the loops are 10–16 s, so repetition is audible on a long floor. Balance and motif
+memorability are ears-only judgements; the tests can only prove the tracks are audible, in time,
+inside the ceiling and seamless.
+
+## 2026-10-20 — The device is fed by Raylib's stream callback, not a polling thread
+
+**Decision:** `AudioDirector` installs `SetAudioStreamCallback` and mixes into the buffer Raylib
+hands it, through a Cdecl `[UnmanagedCallersOnly]` shim into `AudioEngine.Render`. The mixer
+allocates nothing per block (a fixed 4096-frame scratch buffer, split when a block is bigger), and
+the one-shot bank is built before the stream starts.
+
+**Reason:** The first implementation was the plan's ring-buffer pump thread calling
+`UpdateAudioStream`. On this machine that logged `STREAM: Buffer not available for updating` on
+almost every block: raylib's `UpdateAudioStream` *refuses* a write when its ring buffer is full
+rather than blocking, so a pump either spins with warnings or has to poll `IsAudioStreamProcessed`
+— which empties the buffer between polls, i.e. a gap every period. The callback is the only mode
+that runs at the device's pace without either failure.
+
+**Consequences:** The callback cannot close over an instance, so the live director is a single
+static that `Dispose` clears; the callback must not throw (it is a native boundary), which is why
+the engine's path is allocation-free and bounds-checked. `AllowUnsafeBlocks` is enabled for the UI
+project, and only `AudioDirector` uses it. Measured: 441 frames per callback, 100% of real time,
+0.006 ms of mixing per 2048-frame block.
+
+## 2026-10-21 — One typeface on every screen, and the chrome renderer gets it by injection
+
+**Decision:** The title, the draft and the HUD/footer inside the window are set in the compiled
+5x7 face, like the four campaign cards. `RaylibRenderer` no longer has a proportional text path:
+its `Text` takes an integer scale and throws when no font was supplied, and `PixelRenderer` hands
+its `PixelFont` to the chrome renderer in its constructor. Truncation is arithmetic because the
+face is fixed-advance, and a strip that is too narrow drops a whole scale rather than shaving a
+point off.
+
+**Reason:** The game's typography was the last thing that read as a program rather than an indie
+game: a system face over pixel art looks like a placeholder at every size, and the HUD in
+particular sat in the same frame as the tiles. It also removed a second text implementation, so
+spacing, wrapping and ellipses have one answer.
+
+**Consequences:** The chrome renderer must be given a font before its first frame — the throw is
+deliberate, because a silent fallback is exactly the inconsistency this entry removes, and it
+caught a real crash when the HUD moved to the face. Text is only crisp at integer scales, so
+layouts measure and pick 1, 2, 3 or 4 instead of scaling to fit; the footer centres its hints in
+the room the hearts leave, and the HUD name truncates at a glyph boundary so a long name cannot
+run into the status chips.

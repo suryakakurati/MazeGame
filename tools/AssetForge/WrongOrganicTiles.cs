@@ -49,7 +49,8 @@ public static class WrongOrganicTiles
 
         Fibres(canvas, theme, variant, random);
 
-        // Knots where fibres meet: a body with a lit crown, so they read as thicker growth.
+        // Knots where fibres meet: a mossy body with a shadowed crown, so they read as thicker
+        // growth without borrowing the wall's brightness.
         var knots = 1 + (int)Math.Round(theme.VeinDensity * 2);
 
         for (var knot = 0; knot < knots; knot++)
@@ -58,14 +59,14 @@ public static class WrongOrganicTiles
             var centreY = 2 + random.NextInt(Size - 4);
             var radius = 1 + random.NextInt(2);
 
-            canvas.Ellipse(centreX, centreY, radius + 1, radius, Index(PaletteRole.Wall));
-            canvas.Ellipse(centreX, centreY - 1, radius, Math.Max(1, radius - 1), Index(PaletteRole.WallTop));
+            canvas.Ellipse(centreX, centreY, radius + 1, radius, Index(PaletteRole.Moss));
+            canvas.Ellipse(centreX, centreY - 1, radius, Math.Max(1, radius - 1), Index(PaletteRole.FloorDark));
         }
 
         canvas.Speckle(Index(PaletteRole.FloorDark), theme.SpeckleRate * 0.2, random);
 
         // Sap pools in the low spots and catches the light.
-        var beads = (int)Math.Round(theme.GlowStrength * 3);
+        var beads = (int)Math.Round(theme.GlowStrength * 2);
 
         for (var bead = 0; bead < beads; bead++)
         {
@@ -270,9 +271,11 @@ public static class WrongOrganicTiles
     {
         var strands = 2 + (int)Math.Round(theme.VeinDensity * 4);
         var direction = variant % 3;
-        var main = Index(PaletteRole.Wall);
-        var shade = Index(PaletteRole.WallEdge);
-        var fibre = random.NextInt(3) == 0 ? Index(PaletteRole.Moss) : main;
+        // Floor growth is *dim*: strands are moss over shadow, never the wall's body colour. They
+        // used to be drawn in `Wall`, which put full-width wall-bright lines across the floor and
+        // made an actual wall impossible to tell from the surface it stood on.
+        var main = Index(PaletteRole.Moss);
+        var shade = Index(PaletteRole.FloorDark);
 
         for (var strand = 0; strand < strands; strand++)
         {
@@ -283,17 +286,17 @@ public static class WrongOrganicTiles
             switch (direction)
             {
                 case 0:
-                    canvas.Line(0, start, Size - 1, end, strand % 2 == 0 ? fibre : main);
+                    canvas.Line(0, start, Size - 1, end, main);
                     canvas.Line(0, start + 1, Size - 1, end + 1, shade);
                     break;
 
                 case 1:
-                    canvas.Line(start, 0, end, Size - 1, strand % 2 == 0 ? fibre : main);
+                    canvas.Line(start, 0, end, Size - 1, main);
                     canvas.Line(start + 1, 0, end + 1, Size - 1, shade);
                     break;
 
                 default:
-                    canvas.Line(0, start, Size - 1, end, strand % 2 == 0 ? fibre : main);
+                    canvas.Line(0, start, Size - 1, end, main);
                     canvas.Line(start, 0, end, Size - 1, shade);
                     break;
             }

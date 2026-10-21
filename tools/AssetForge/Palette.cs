@@ -121,6 +121,13 @@ public sealed class Palette
     /// <summary>Derives a theme's palette from its hues, using the fixed lightness ladder.</summary>
     /// <param name="theme">The theme whose hues and accents are used.</param>
     /// <returns>A palette whose contrast does not depend on the theme.</returns>
+    /// <remarks>
+    /// The ladder deliberately leaves a wide gap between <see cref="PaletteRole.Floor"/> and
+    /// <see cref="PaletteRole.Wall"/>, with a bright <see cref="PaletteRole.WallTop"/> rim and a
+    /// near-black <see cref="PaletteRole.WallEdge"/> foot. Walls in this maze are thin bands painted
+    /// over a floor tile, so they have one or two pixels to announce themselves: if the wall body sat
+    /// a shade above the floor, the maze read as one flat surface with lit edges.
+    /// </remarks>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="theme"/> is null.</exception>
     public static Palette Derive(Theme theme)
     {
@@ -134,9 +141,9 @@ public sealed class Palette
             new Rgb(0, 0, 0),
             Hsl(hue, 0.28, 0.20),
             Hsl(hue, 0.24, 0.13),
-            Hsl(hue + 6, 0.22, 0.29),
-            Hsl(hue + 6, 0.26, 0.42),
-            Hsl(hue + 6, 0.20, 0.10),
+            Hsl(hue + 6, 0.22, 0.40),
+            Hsl(hue + 6, 0.26, 0.58),
+            Hsl(hue + 6, 0.20, 0.07),
             Hsl(hue - 34, 0.45, 0.31),
             Hsl(accent, 0.62, 0.54),
             Hsl(accent, 0.86, 0.72),

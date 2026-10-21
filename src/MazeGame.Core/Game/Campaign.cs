@@ -106,6 +106,15 @@ public sealed class Campaign
     /// <summary>Gets the run's floors, in order.</summary>
     public IReadOnlyList<FloorDefinition> Floors => _floors;
 
+    /// <summary>
+    /// Gets the seed the whole run was built from.
+    /// </summary>
+    /// <remarks>
+    /// The score is a pure function of the floor's theme and this seed, so two runs from the same
+    /// seed sound the same as well as look the same.
+    /// </remarks>
+    public int RunSeed => _runSeed;
+
     /// <summary>Gets the definition of the floor currently being played.</summary>
     public FloorDefinition CurrentFloor => _floors[_floorIndex];
 

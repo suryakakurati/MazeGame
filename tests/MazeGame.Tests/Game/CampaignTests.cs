@@ -297,6 +297,35 @@ public sealed class CampaignTests
         Assert.Equal(GameStatus.InProgress, campaign.Floor.Status);
     }
 
+    [Fact]
+    public void TheShippedRun_CanBeWalkedFromTheFirstFloorToTheLast()
+    {
+        // The shipped catalog is twenty floors long; this walks that many corridor floors through
+        // the real campaign object, resolving a draft between every pair, and proves the run ends
+        // won rather than looping, stalling or running off the end.
+        var count = FloorCatalog.Shipped.Count;
+        var campaign = CampaignOf(count);
+
+        for (var floor = 1; floor <= count; floor++)
+        {
+            Assert.Equal(floor, campaign.FloorNumber);
+
+            ClearFloor(campaign);
+
+            if (campaign.Status == CampaignStatus.Won)
+            {
+                break;
+            }
+
+            Assert.NotNull(campaign.Draft);
+            ResolveDraftWithACard(campaign);
+            Assert.True(campaign.TryAdvanceFloor(), $"the run refused to descend from floor {floor}.");
+        }
+
+        Assert.Equal(CampaignStatus.Won, campaign.Status);
+        Assert.Equal(count, campaign.FloorsCleared);
+    }
+
     /// <summary>
     /// Resolves the open draft with a card that leaves the heart count alone, or skips when the
     /// seeded draft has no such offer.

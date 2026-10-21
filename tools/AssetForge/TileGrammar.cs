@@ -19,8 +19,8 @@ namespace MazeGame.AssetForge;
 /// </remarks>
 public static class TileGrammar
 {
-    /// <summary>How many prop tiles each theme compiles.</summary>
-    public const int PropCount = 2;
+    /// <summary>How many prop tiles each theme compiles: two scenery props and the floor's emblem.</summary>
+    public const int PropCount = 3;
 
     /// <summary>Draws one floor variant for <paramref name="theme"/>'s family.</summary>
     /// <param name="theme">The theme being drawn.</param>
@@ -32,11 +32,12 @@ public static class TileGrammar
     {
         ArgumentNullException.ThrowIfNull(theme);
 
-        return theme.Family switch
+        return theme.Floor switch
         {
-            TileFamily.WorkedStone => WorkedStoneTiles.Floor(theme, variant),
-            TileFamily.WrongOrganic => WrongOrganicTiles.Floor(theme, variant),
-            _ => CaveTiles.Floor(theme, variant),
+            FloorMotif.Flagstones => WorkedStoneTiles.Floor(theme, variant),
+            FloorMotif.Roots => WrongOrganicTiles.Floor(theme, variant),
+            FloorMotif.Boulders => CaveTiles.Floor(theme, variant),
+            _ => MotifTiles.Floor(theme, variant),
         };
     }
 
@@ -48,11 +49,12 @@ public static class TileGrammar
     {
         ArgumentNullException.ThrowIfNull(theme);
 
-        return theme.Family switch
+        return theme.Wall switch
         {
-            TileFamily.WorkedStone => WorkedStoneTiles.Wall(theme),
-            TileFamily.WrongOrganic => WrongOrganicTiles.Wall(theme),
-            _ => CaveTiles.Wall(theme),
+            WallMotif.CutBlock => WorkedStoneTiles.Wall(theme),
+            WallMotif.WovenRoot => WrongOrganicTiles.Wall(theme),
+            WallMotif.MossRock => CaveTiles.Wall(theme),
+            _ => MotifTiles.Wall(theme),
         };
     }
 
@@ -88,6 +90,11 @@ public static class TileGrammar
             throw new ArgumentOutOfRangeException(nameof(index), index, $"A theme has {PropCount} props.");
         }
 
+        if (index == PropCount - 1)
+        {
+            return MotifTiles.Sigil(theme);
+        }
+
         return theme.Family switch
         {
             TileFamily.WorkedStone => WorkedStoneTiles.Prop(theme, index),
@@ -95,4 +102,10 @@ public static class TileGrammar
             _ => CaveTiles.Prop(theme, index),
         };
     }
+
+    /// <summary>Draws the floor's signature object, which is scattered a few times per maze.</summary>
+    /// <param name="theme">The theme whose feature is drawn.</param>
+    /// <returns>A 16x16 sprite with a transparent background.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="theme"/> is null.</exception>
+    public static PixelCanvas Feature(Theme theme) => MotifTiles.Feature(theme);
 }

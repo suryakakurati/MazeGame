@@ -53,6 +53,23 @@ internal sealed class TileAtlas : IDisposable
         }
     }
 
+    /// <summary>
+    /// Gets how many scenery props the floor scatters: every prop except the last, which is the
+    /// floor's emblem and is placed deliberately rather than at the scenery rate.
+    /// </summary>
+    public int SceneryPropCount => Math.Max(0, PropCount - 1);
+
+    /// <summary>Returns whether the atlas contains a tile with this name.</summary>
+    /// <param name="name">The tile's manifest name.</param>
+    /// <returns><see langword="true"/> when it can be drawn.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="name"/> is null.</exception>
+    public bool Has(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+
+        return _info.Tiles.ContainsKey(name);
+    }
+
     /// <summary>Gets the atlas texture, for tests and the harness.</summary>
     public Texture2D Texture => _texture;
 

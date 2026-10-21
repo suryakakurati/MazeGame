@@ -67,14 +67,15 @@ internal sealed class PixelView : IDisposable
     /// <param name="topInset">Screen pixels reserved at the top.</param>
     /// <param name="bottomInset">Screen pixels reserved at the bottom.</param>
     /// <param name="margin">Screen pixels to keep free around the canvas.</param>
+    /// <param name="backdrop">The colour the letterbox is cleared to, for the floor's ambience.</param>
     /// <returns>Where the canvas landed.</returns>
-    public PixelLayout.PixelFit Present(int topInset, int bottomInset, int margin)
+    public PixelLayout.PixelFit Present(int topInset, int bottomInset, int margin, Color backdrop)
     {
         var fit = PixelLayout.Fit(Width, Height, Raylib.GetScreenWidth(), Raylib.GetScreenHeight(), topInset, bottomInset, margin);
 
         // The letterbox is cleared here rather than by the caller: a frame that only paints inside
         // the canvas would otherwise leave the previous frame's margins on screen.
-        Raylib.DrawRectangle(0, 0, Raylib.GetScreenWidth(), Raylib.GetScreenHeight(), Color.Black);
+        Raylib.DrawRectangle(0, 0, Raylib.GetScreenWidth(), Raylib.GetScreenHeight(), backdrop);
 
         Raylib.DrawTexturePro(
             _target.Texture,

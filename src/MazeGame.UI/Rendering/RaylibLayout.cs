@@ -30,6 +30,19 @@ internal static class RaylibLayout
     /// <summary>Target frame rate; the game clock uses measured time, so this is only smoothness.</summary>
     public const int TargetFps = 60;
 
+    /// <summary>
+    /// The screen scale the window is opened at. The canvas is a viewport now, so the window is sized
+    /// from it rather than from the floor: four screen pixels per atlas pixel means one maze cell is
+    /// 64 px, against 32 px before the camera existed.
+    /// </summary>
+    public const int PreferredScale = 4;
+
+    /// <summary>The smallest window the player can drag the frame down to.</summary>
+    public const int MinWindowWidth = 640;
+
+    /// <summary>The smallest window height, which still shows the canvas at 2x.</summary>
+    public const int MinWindowHeight = 560;
+
     /// <summary>Window title, matching the title screen rather than the repository name.</summary>
     public const string Title = "Bioluminescent Depths";
 
@@ -40,12 +53,29 @@ internal static class RaylibLayout
     public const int OriginY = HudHeight + Margin;
 
     /// <summary>
-    /// Returns the window size needed to show a maze of <paramref name="config"/>'s size plus
-    /// the two text strips.
+    /// Returns the window size that shows the floor's viewport at <see cref="PreferredScale"/>,
+    /// plus the two text strips.
     /// </summary>
-    public static (int Width, int Height) WindowSize(GameConfig config) =>
-        ((config.Columns * CellSize) + (2 * Margin),
-         (config.Rows * CellSize) + HudHeight + FooterHeight + (2 * Margin));
+    /// <remarks>
+    /// A viewport-sized window is what makes the camera worth having: the frame follows the
+    /// lantern, so the window no longer has to hold the whole floor. It is resizable, and
+    /// <c>PixelLayout.Fit</c> re-derives the integer scale from whatever size the frame is dragged
+    /// to, so the same layout serves a laptop and a 4K monitor.
+    /// </remarks>
+    public static (int Width, int Height) WindowSize(GameConfig config)
+    {
+        System.ArgumentNullException.ThrowIfNull(config);
+
+        var cells = Pixels.PixelLayout.ViewCells(config);
+
+        return (
+            System.Math.Max(
+                MinWindowWidth,
+                (Pixels.PixelLayout.CanvasWidth(cells) * PreferredScale) + (2 * Margin)),
+            System.Math.Max(
+                MinWindowHeight,
+                (Pixels.PixelLayout.CanvasHeight(cells) * PreferredScale) + HudHeight + FooterHeight + (2 * Margin)));
+    }
 
     /// <summary>Returns the pixel x of a cell's left edge.</summary>
     public static int CellX(int column) => OriginX + (column * CellSize);

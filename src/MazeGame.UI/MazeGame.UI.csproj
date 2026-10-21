@@ -6,6 +6,11 @@
     <IsPackable>false</IsPackable>
     <!-- Public UI types (renderers, input adapters) are documented too. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!--
+      Raylib-cs exposes the audio stream callback as a function pointer, so the one place that
+      installs it (AudioDirector) needs an unsafe context. Nothing else in the game does.
+    -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

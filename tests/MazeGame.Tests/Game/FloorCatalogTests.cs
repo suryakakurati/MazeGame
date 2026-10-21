@@ -1,20 +1,27 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MazeGame.Core.Game;
 
 namespace MazeGame.Tests.Game;
 
 /// <summary>
-/// Verifies the shipped three-floor campaign: the floors are numbered in order, valid, buildable,
-/// visually distinct, and genuinely harder as the run descends.
+/// Verifies the shipped twenty-floor campaign: numbered in order, valid and buildable, every floor
+/// its own place and rule, and the descent getting meaner as it goes.
 /// </summary>
+/// <remarks>
+/// Pace is no longer a straight line down the list: several floors are deliberately slow and lit,
+/// or fast and blind, because that is the gimmick. The tests therefore assert the *shape* of the
+/// descent — the last floor is the fastest, most floors tighten, and the player always outruns the
+/// killer — rather than a strictly falling number.
+/// </remarks>
 public sealed class FloorCatalogTests
 {
     [Fact]
     public void Shipped_HasTheAnnouncedNumberOfFloors()
     {
         Assert.Equal(FloorCatalog.ShippedFloorCount, FloorCatalog.Shipped.Count);
-        Assert.Equal(3, FloorCatalog.Shipped.Count);
+        Assert.Equal(20, FloorCatalog.Shipped.Count);
     }
 
     [Fact]
@@ -33,13 +40,12 @@ public sealed class FloorCatalogTests
         {
             floor.Validate();
 
-            // The capacity rule lives in GameConfig; building the derived config here proves the
-            // floor's size actually fits its player, killer, exit and keys.
             var config = new GameConfig
             {
                 Rows = floor.Rows,
                 Columns = floor.Columns,
                 KeyCount = floor.KeyCount,
+                VisionRadius = floor.VisionRadius ?? 3,
             };
 
             config.Validate();
@@ -62,25 +68,137 @@ public sealed class FloorCatalogTests
     }
 
     [Fact]
-    public void Shipped_LaterFloorsAskForMoreOrEqualKeys()
+    public void Shipped_EveryFloorExplainsItsGimmick()
     {
-        for (var index = 1; index < FloorCatalog.Shipped.Count; index++)
+        foreach (var floor in FloorCatalog.Shipped)
         {
+            Assert.False(
+                string.IsNullOrWhiteSpace(floor.Gimmick),
+                $"floor {floor.Number} ({floor.Name}) has no line for its card.");
+
+            // The card draws the line at scale 2 under the name, so it has to stay a sentence.
             Assert.True(
-                FloorCatalog.Shipped[index].KeyCount >= FloorCatalog.Shipped[index - 1].KeyCount,
-                "a later floor must not need fewer keys");
+                floor.Gimmick!.Length <= 48,
+                $"floor {floor.Number}'s gimmick is {floor.Gimmick!.Length} characters and will not fit its card.");
         }
     }
 
     [Fact]
-    public void Shipped_LaterFloorsHaveAFasterKiller()
+    public void Shipped_EveryFloorIsGivenSomethingOfItsOwn()
     {
-        for (var index = 1; index < FloorCatalog.Shipped.Count; index++)
+        // A floor may be distinguished by a rule of its own (vision, barriers, wisps, the maze's
+        // shape, the respawn) or by its numbers. What it may not be is a duplicate of the floor
+        // before it with a new name on the card.
+        var signatures = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var floor in FloorCatalog.Shipped)
+        {
+            var signature = string.Join(
+                '|',
+                floor.Rows,
+                floor.Columns,
+                floor.KeyCount,
+                floor.EnemyStepSeconds.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+                floor.PlayerStepSeconds.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+                floor.VisionRadius,
+                floor.BarrierBudget,
+                floor.LureCount,
+                floor.ExtraLoops,
+                floor.DeadEndBraidPercent,
+                floor.EnemyAuraRadius,
+                floor.RespawnDistance,
+                floor.InvulnerabilitySeconds);
+
+            Assert.True(signatures.Add(signature), $"floor {floor.Number} ({floor.Name}) replays floor {floor.Number - 1}.");
+        }
+    }
+
+    [Fact]
+    public void Shipped_AtLeastHalfTheFloorsChangeARuleNotJustANumber()
+    {
+        var gimmicked = 0;
+
+        foreach (var floor in FloorCatalog.Shipped)
+        {
+            if (floor.VisionRadius is not null ||
+                floor.BarrierBudget is not null ||
+                floor.LureCount is not null ||
+                floor.ExtraLoops is not null ||
+                floor.DeadEndBraidPercent is not null ||
+                floor.EnemyAuraRadius is not null ||
+                floor.RespawnDistance is not null ||
+                floor.InvulnerabilitySeconds is not null)
+            {
+                gimmicked++;
+            }
+        }
+
+        Assert.True(gimmicked >= 10, $"Only {gimmicked} floors change a rule of their own.");
+    }
+
+    [Fact]
+    public void Shipped_EveryFloorNeedsBetweenTwoAndFiveKeys()
+    {
+        foreach (var floor in FloorCatalog.Shipped)
+        {
+            Assert.InRange(floor.KeyCount, 2, 5);
+        }
+    }
+
+    [Fact]
+    public void Shipped_TheRunAsksForMoreKeysThanItHasFloors()
+    {
+        var keys = 0;
+
+        foreach (var floor in FloorCatalog.Shipped)
+        {
+            keys += floor.KeyCount;
+        }
+
+        Assert.True(keys >= 60, $"The whole run only asks for {keys} keys.");
+    }
+
+    [Fact]
+    public void Shipped_TheDescentGetsMeaner()
+    {
+        var floors = FloorCatalog.Shipped;
+        var tightened = 0;
+
+        for (var index = 1; index < floors.Count; index++)
         {
             Assert.True(
-                FloorCatalog.Shipped[index].EnemyStepSeconds < FloorCatalog.Shipped[index - 1].EnemyStepSeconds,
-                "a later floor must give the killer less time per step");
+                floors[index].EnemyStepSeconds <= 1.0,
+                $"floor {index + 1} gives the killer {floors[index].EnemyStepSeconds}s a step; only a slow, lit floor is allowed to be a breather.");
+
+            if (floors[index].EnemyStepSeconds < floors[index - 1].EnemyStepSeconds)
+            {
+                tightened++;
+            }
         }
+
+        // Most of the descent tightens. A handful of floors are deliberately slow and lit, because
+        // pace is one of the gimmicks; what the run may not do is drift.
+        Assert.True(tightened >= 12, $"Only {tightened} of {floors.Count - 1} floors are faster than the one before.");
+
+        var opening = floors.Take(5).Average(floor => floor.EnemyStepSeconds);
+        var closing = floors.TakeLast(5).Average(floor => floor.EnemyStepSeconds);
+
+        Assert.True(
+            closing < opening - 0.1,
+            $"The last five floors average {closing:0.00}s a killer step against {opening:0.00}s at the start.");
+
+        // The last floor is the hardest one: the killer's best pace of the run.
+        var fastest = floors[0];
+
+        foreach (var floor in floors)
+        {
+            if (floor.EnemyStepSeconds < fastest.EnemyStepSeconds)
+            {
+                fastest = floor;
+            }
+        }
+
+        Assert.Equal(floors[^1], fastest);
     }
 
     [Fact]
@@ -100,13 +218,13 @@ public sealed class FloorCatalogTests
     }
 
     [Fact]
-    public void Shipped_LaterFloorsTightenThePlayerStepToo()
+    public void Shipped_NoFloorLetsThePlayerStepSlowerThanATenth()
     {
-        for (var index = 1; index < FloorCatalog.Shipped.Count; index++)
+        foreach (var floor in FloorCatalog.Shipped)
         {
             Assert.True(
-                FloorCatalog.Shipped[index].PlayerStepSeconds <= FloorCatalog.Shipped[index - 1].PlayerStepSeconds,
-                "a later floor must not give the player more time per step");
+                floor.PlayerStepSeconds <= 0.15,
+                $"floor {floor.Number} moves at {floor.PlayerStepSeconds}s a cell, which feels stuck rather than heavy.");
         }
     }
 
@@ -121,7 +239,7 @@ public sealed class FloorCatalogTests
 
     [Theory]
     [InlineData(0)]
-    [InlineData(4)]
+    [InlineData(21)]
     [InlineData(-1)]
     public void ByNumber_WithAnUnknownNumber_Throws(int number)
     {

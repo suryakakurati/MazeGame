@@ -36,13 +36,22 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     /// <summary>About one cell in this many gets a prop.</summary>
     private const int PropSpacing = 7;
 
+    /// <summary>About one cell in this many gets the floor's signature object.</summary>
+    private const int FeatureSpacing = 29;
+
+    /// <summary>About one cell in this many gets the floor's carved emblem.</summary>
+    private const int EmblemSpacing = 53;
+
+    /// <summary>How many particles each floor's weather draws.</summary>
+    private const int AmbientCount = 30;
+
     private static readonly Color CanvasColour = new(3, 9, 11, 255);
 
     private static readonly Color Remembered = new(104, 118, 122, 255);
 
     private static readonly Color Cursor = new(210, 255, 225, 255);
 
-    private readonly PixelView _view;
+    private PixelView _view;
 
     private readonly RaylibRenderer _chrome = new();
 
@@ -54,9 +63,9 @@ public sealed class PixelRenderer : IRenderer, IDisposable
 
     private readonly HashSet<Cell> _explored = [];
 
-    private readonly int _columns;
+    private int _columns;
 
-    private readonly int _rows;
+    private int _rows;
 
     private Image _lightImage;
 
@@ -64,7 +73,15 @@ public sealed class PixelRenderer : IRenderer, IDisposable
 
     private int _lightStamp = int.MinValue;
 
+    private PixelCamera _camera;
+
+    private int _viewCells;
+
     private string _themeId;
+
+    private FloorStyle _style;
+
+    private FloorChrome? _floorChrome;
 
     private Direction _playerFacing = Direction.South;
 
@@ -84,12 +101,18 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         _rows = config.Rows;
         _manifest = AtlasManifest.LoadShipped();
         _directory = AssetPaths.GeneratedDirectory();
-        _view = new PixelView(PixelLayout.CanvasWidth(config), PixelLayout.CanvasHeight(config));
+        _viewCells = PixelLayout.ViewCells(config);
+        _view = new PixelView(PixelLayout.CanvasWidth(_viewCells), PixelLayout.CanvasHeight(_viewCells));
 
         _themeId = FirstTheme();
+        _style = FloorStyleCatalog.For(_themeId);
         Font = new PixelFont(_manifest[PixelFont.AtlasId], _directory);
 
-        _lightImage = Raylib.GenImageColor(_columns, _rows, Color.Black);
+        // The HUD and footer strips are drawn by the vector renderer, but they set their text in
+        // the same compiled face as the canvas, so it has to be handed over before the first frame.
+        _chrome.UsePixelFont(Font);
+
+        _lightImage = Raylib.GenImageColor(_viewCells, _viewCells, Color.Black);
         _light = Raylib.LoadTextureFromImage(_lightImage);
         Raylib.SetTextureFilter(_light, TextureFilter.Bilinear);
     }
@@ -136,6 +159,21 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         }
 
         _themeId = themeId;
+        _style = FloorStyleCatalog.For(themeId);
+        _lightStamp = int.MinValue;
+    }
+
+    /// <summary>
+    /// Tells the renderer which floor it is drawing, so the HUD can say its name and the cards can
+    /// carry its emblem. Called once per floor, beside <see cref="SetTheme"/>.
+    /// </summary>
+    /// <param name="floor">The floor about to be played.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="floor"/> is null.</exception>
+    public void SetFloor(FloorDefinition floor)
+    {
+        ArgumentNullException.ThrowIfNull(floor);
+
+        _floorChrome = FloorChrome.For(floor);
         _lightStamp = int.MinValue;
     }
 
@@ -155,20 +193,29 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         ArgumentNullException.ThrowIfNull(state);
 
         var atlas = Atlas;
+
+        // Floors are not all the same size: the gallery is 21x21 and the warren is 11x11. The
+        // viewport is sized from the lantern, but the maze bounds have to come from the floor
+        // being drawn, not from the settings the renderer was constructed with.
+        _rows = state.Maze.Rows;
+        _columns = state.Maze.Columns;
+
         TrackFacing(state);
+        Follow(state);
 
         _view.Begin(CanvasColour);
         DrawCells(state, atlas);
         DrawProps(state, atlas);
         DrawEntities(state, atlas);
         DrawLight(state);
+        DrawAmbience();
         PixelView.End();
 
         // The chrome is the existing HUD: pulled, glass status strip and hints. It draws in window
         // pixels, so it is applied after the canvas is scaled up, in the letterbox around it.
-        var fit = _view.Present(RaylibLayout.HudHeight, RaylibLayout.FooterHeight, Margin);
+        var fit = _view.Present(RaylibLayout.HudHeight, RaylibLayout.FooterHeight, Margin, Backdrop());
         DrawAimCursor(state, fit);
-        _chrome.DrawOverlay(state);
+        _chrome.DrawOverlay(state, _floorChrome);
 
         // A lost run ends on a card, like the campaign screens do, so the last thing the player
         // sees is in the same type as everything else.
@@ -209,6 +256,49 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         _view.Dispose();
     }
 
+    /// <summary>
+    /// Points the camera at the player and resizes the canvas when a card changes how far the
+    /// lantern reaches.
+    /// </summary>
+    /// <remarks>
+    /// The zoom comes from the floor's <see cref="GameConfig.VisionRadius"/> rather than the
+    /// effective radius, so lighting a wisp does not shove the camera in and out; a card that adds
+    /// vision is a permanent, quieter zoom out. A viewport that changes means a new render target
+    /// and a new light texture, which happens once per draft, not per frame.
+    /// </remarks>
+    private void Follow(GameState state)
+    {
+        var cells = PixelLayout.ViewCells(state.Config.VisionRadius);
+
+        if (cells != _viewCells)
+        {
+            _view.Dispose();
+            _viewCells = cells;
+            _view = new PixelView(PixelLayout.CanvasWidth(cells), PixelLayout.CanvasHeight(cells));
+
+            Raylib.UnloadImage(_lightImage);
+            _lightImage = Raylib.GenImageColor(cells, cells, Color.Black);
+            _lightStamp = int.MinValue;
+        }
+
+        _camera = PixelCamera.For(_rows, _columns, _viewCells, _viewCells, state.Player);
+    }
+
+    /// <summary>
+    /// Returns the colour the letterbox is cleared to: the floor's accent, drowned in the cave's
+    /// near-black. Each floor therefore sits in its own colour rather than the same black frame.
+    /// </summary>
+    private Color Backdrop() => _style.Fog;
+
+    /// <summary>Returns the canvas x of a cell, as the camera sees it.</summary>
+    private int CanvasX(int column) => PixelLayout.CellX(column, _camera.Column);
+
+    /// <summary>Returns the canvas y of a cell, as the camera sees it.</summary>
+    private int CanvasY(int row) => PixelLayout.CellY(row, _camera.Row);
+
+    /// <summary>Returns whether a cell is inside the current viewport.</summary>
+    private bool OnScreen(Cell cell) => _camera.Shows(cell, _viewCells, _viewCells);
+
     /// <summary>Gets the atlas for the current theme, loading it the first time it is needed.</summary>
     private TileAtlas Atlas
     {
@@ -244,17 +334,24 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     {
         var variants = atlas.FloorVariantCount;
 
-        for (var row = 0; row < _rows; row++)
+        // Only the viewport is drawn: the camera moves with the player, so a cell further away than
+        // the viewport could not be seen even if it were painted.
+        for (var row = _camera.Row; row < _camera.Row + _viewCells; row++)
         {
-            for (var column = 0; column < _columns; column++)
+            if (row < 0 || row >= _rows)
             {
+                continue;
+            }
+
+            for (var column = _camera.Column; column < _camera.Column + _viewCells; column++)
+            {
+                if (column < 0 || column >= _columns)
+                {
+                    continue;
+                }
+
                 var cell = state.Maze.GetCell(row, column);
                 var visible = state.IsVisible(cell);
-
-                if (visible)
-                {
-                    _explored.Add(cell);
-                }
 
                 if (!visible && !_explored.Contains(cell))
                 {
@@ -262,8 +359,8 @@ public sealed class PixelRenderer : IRenderer, IDisposable
                 }
 
                 var tint = visible ? Color.White : Remembered;
-                var x = PixelLayout.CellX(column);
-                var y = PixelLayout.CellY(row);
+                var x = CanvasX(column);
+                var y = CanvasY(row);
 
                 atlas.Draw($"floor-{Variant(row, column, variants)}", x, y, tint);
                 DrawWalls(state, atlas, cell, x, y, tint);
@@ -323,17 +420,24 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     /// </remarks>
     private void DrawProps(GameState state, TileAtlas atlas)
     {
-        var props = atlas.PropCount;
+        var props = atlas.SceneryPropCount;
+        var hasFeature = atlas.Has("floor-feature");
+        var emblem = atlas.PropCount > props ? $"prop-{props}" : null;
 
-        if (props == 0)
+        for (var row = _camera.Row; row < _camera.Row + _viewCells; row++)
         {
-            return;
-        }
-
-        for (var row = 0; row < _rows; row++)
-        {
-            for (var column = 0; column < _columns; column++)
+            if (row < 0 || row >= _rows)
             {
+                continue;
+            }
+
+            for (var column = _camera.Column; column < _camera.Column + _viewCells; column++)
+            {
+                if (column < 0 || column >= _columns)
+                {
+                    continue;
+                }
+
                 var cell = state.Maze.GetCell(row, column);
 
                 if (!Known(state, cell) || IsBusy(state, cell))
@@ -342,17 +446,33 @@ public sealed class PixelRenderer : IRenderer, IDisposable
                 }
 
                 var hash = Hash(row, column);
+                var tint = state.IsVisible(cell) ? Color.White : Remembered;
 
-                if (hash % PropSpacing != 0)
+                // The signature object is rare on purpose: it should be a landmark the player
+                // remembers, not the most common thing on the floor.
+                if (hasFeature && hash % FeatureSpacing == 0)
+                {
+                    atlas.Draw("floor-feature", CanvasX(column), CanvasY(row), tint);
+                    continue;
+                }
+
+                // The emblem is rarer still: a carved mark that names the place.
+                if (emblem is not null && hash % EmblemSpacing == 0)
+                {
+                    atlas.Draw(emblem, CanvasX(column), CanvasY(row), tint);
+                    continue;
+                }
+
+                if (props == 0 || hash % PropSpacing != 0)
                 {
                     continue;
                 }
 
                 atlas.Draw(
                     $"prop-{(hash / PropSpacing) % props}",
-                    PixelLayout.CellX(column),
-                    PixelLayout.CellY(row),
-                    state.IsVisible(cell) ? Color.White : Remembered);
+                    CanvasX(column),
+                    CanvasY(row),
+                    tint);
             }
         }
     }
@@ -370,6 +490,22 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     private static int Hash(int row, int column) =>
         unchecked(((row * 73856093) ^ (column * 19349663)) & 0x7FFFFFFF);
 
+    /// <summary>Returns the fractional part of a value, the basis of the weather hashes.</summary>
+    private static double Frac(double value) => value - Math.Floor(value);
+
+    /// <summary>Returns a stable positive hash of a string, used to seed a floor's weather.</summary>
+    private static int TextHash(string text)
+    {
+        var hash = unchecked((int)2166136261);
+
+        foreach (var character in text)
+        {
+            hash = unchecked((hash ^ character) * 16777619);
+        }
+
+        return hash & 0x7FFFFFFF;
+    }
+
     /// <summary>Draws the keys, the arch, the wisp, the barriers and the two figures.</summary>
     private void DrawEntities(GameState state, TileAtlas atlas)
     {
@@ -378,47 +514,50 @@ public sealed class PixelRenderer : IRenderer, IDisposable
 
         foreach (var key in state.Keys)
         {
-            if (!Known(state, key))
+            if (!Known(state, key) || !OnScreen(key))
             {
                 continue;
             }
 
-            atlas.Draw($"key-{(frame + (key.Column + key.Row)) % 3}", PixelLayout.CellX(key.Column), PixelLayout.CellY(key.Row));
+            atlas.Draw($"key-{(frame + (key.Column + key.Row)) % 3}", CanvasX(key.Column), CanvasY(key.Row));
         }
 
         foreach (var barrier in state.Barriers)
         {
-            if (!Known(state, barrier))
+            if (!Known(state, barrier) || !OnScreen(barrier))
             {
                 continue;
             }
 
             var sealedCell = state.BarrierSeals.ContainsKey(barrier);
-            atlas.Draw(sealedCell ? "barrier" : "barrier-cracked", PixelLayout.CellX(barrier.Column), PixelLayout.CellY(barrier.Row));
+            atlas.Draw(sealedCell ? "barrier" : "barrier-cracked", CanvasX(barrier.Column), CanvasY(barrier.Row));
         }
 
-        if (state.Lure is { } lure && Known(state, lure))
+        if (state.Lure is { } lure && Known(state, lure) && OnScreen(lure))
         {
-            atlas.Draw($"wisp-{frame}", PixelLayout.CellX(lure.Column), PixelLayout.CellY(lure.Row));
+            atlas.Draw($"wisp-{frame}", CanvasX(lure.Column), CanvasY(lure.Row));
         }
 
-        if (state.Exit is var exit && Known(state, exit))
+        if (state.Exit is var exit && Known(state, exit) && OnScreen(exit))
         {
             atlas.Draw(
                 state.IsExitUnlocked ? "arch-open" : "arch-locked",
-                PixelLayout.CellX(exit.Column),
-                PixelLayout.CellY(exit.Row));
+                CanvasX(exit.Column),
+                CanvasY(exit.Row));
+        }
+
+        if (OnScreen(state.Enemy))
+        {
+            atlas.Draw(
+                $"killer-{NameOf(_enemyFacing)}-{EnemyFrame(state)}",
+                CanvasX(state.Enemy.Column),
+                CanvasY(state.Enemy.Row));
         }
 
         atlas.Draw(
-            $"killer-{NameOf(_enemyFacing)}-{EnemyFrame(state)}",
-            PixelLayout.CellX(state.Enemy.Column),
-            PixelLayout.CellY(state.Enemy.Row));
-
-        atlas.Draw(
             $"player-{NameOf(_playerFacing)}-{PlayerFrame(state)}",
-            PixelLayout.CellX(state.Player.Column),
-            PixelLayout.CellY(state.Player.Row));
+            CanvasX(state.Player.Column),
+            CanvasY(state.Player.Row));
     }
 
     /// <summary>Returns the walk-cycle frame the explorer is on.</summary>
@@ -467,6 +606,8 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     /// </summary>
     private void DrawLight(GameState state)
     {
+        TrackExploration(state);
+
         var stamp = LightStamp(state);
 
         if (stamp != _lightStamp)
@@ -478,17 +619,22 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         // The flicker rides on the draw's tint instead of being baked into the texture, so the
         // texture is only rebuilt when what is lit actually changes rather than ten times a second.
         var flicker = Flicker();
-        var tint = new Color(flicker, flicker, flicker, (byte)255);
+        var light = _style.LightTint;
+        var tint = new Color(
+            (byte)Math.Clamp((flicker * light.R) / 255, 0, 255),
+            (byte)Math.Clamp((flicker * light.G) / 255, 0, 255),
+            (byte)Math.Clamp((flicker * light.B) / 255, 0, 255),
+            (byte)255);
 
         Raylib.BeginBlendMode(BlendMode.Multiplied);
         Raylib.DrawTexturePro(
             _light,
-            new Rectangle(0, 0, _columns, _rows),
+            new Rectangle(0, 0, _viewCells, _viewCells),
             new Rectangle(
                 PixelLayout.Pad,
                 PixelLayout.HeaderHeight + PixelLayout.Pad,
-                _columns * PixelLayout.CellSize,
-                _rows * PixelLayout.CellSize),
+                _viewCells * PixelLayout.CellSize,
+                _viewCells * PixelLayout.CellSize),
             Vector2.Zero,
             0f,
             tint);
@@ -508,7 +654,8 @@ public sealed class PixelRenderer : IRenderer, IDisposable
             state.Enemy.Column,
             _explored.Count,
             state.EnemyGlow.Count,
-            state.EffectiveVisionRadius);
+            state.EffectiveVisionRadius,
+            HashCode.Combine(_camera.Column, _camera.Row, _viewCells));
     }
 
     /// <summary>Returns the lantern's flicker as a multiplier, from 0.88 to 1.0.</summary>
@@ -518,17 +665,61 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         return (byte)Math.Clamp((int)Math.Round(breath * 255.0), 0, 255);
     }
 
-    /// <summary>Rebuilds the light texture from the floor's current visibility.</summary>
-    private void UploadLight(GameState state)
+    /// <summary>
+    /// Records every cell the lantern reaches, over the whole maze.
+    /// </summary>
+    /// <remarks>
+    /// A generous vision card can light cells further out than the viewport shows, and the map must
+    /// remember them for when the camera gets there; the viewport only decides what is painted, not
+    /// what has been seen.
+    /// </remarks>
+    private void TrackExploration(GameState state)
     {
-        var radius = Math.Max(1, state.EffectiveVisionRadius);
-        var player = state.Player;
-
         for (var row = 0; row < _rows; row++)
         {
             for (var column = 0; column < _columns; column++)
             {
                 var cell = state.Maze.GetCell(row, column);
+
+                if (state.IsVisible(cell))
+                {
+                    _explored.Add(cell);
+                }
+            }
+        }
+    }
+
+    /// <summary>Rebuilds the light texture: one texel per cell of the viewport.</summary>
+    /// <remarks>
+    /// Sized to the viewport rather than the floor, so the cost of a move is the size of the screen
+    /// rather than the size of the maze.
+    /// </remarks>
+    private void UploadLight(GameState state)
+    {
+        var radius = Math.Max(1, state.EffectiveVisionRadius);
+        var player = state.Player;
+
+        Raylib.ImageDrawRectangle(ref _lightImage, 0, 0, _viewCells, _viewCells, Color.Black);
+
+        for (var row = 0; row < _viewCells; row++)
+        {
+            var mazeRow = _camera.Row + row;
+
+            if (mazeRow < 0 || mazeRow >= _rows)
+            {
+                continue;
+            }
+
+            for (var column = 0; column < _viewCells; column++)
+            {
+                var mazeColumn = _camera.Column + column;
+
+                if (mazeColumn < 0 || mazeColumn >= _columns)
+                {
+                    continue;
+                }
+
+                var cell = state.Maze.GetCell(mazeRow, mazeColumn);
                 double level;
 
                 if (state.IsVisible(cell))
@@ -547,9 +738,18 @@ public sealed class PixelRenderer : IRenderer, IDisposable
                 }
 
                 var brightness = (byte)Math.Clamp(level * 255.0, 0, 255);
+                var light = _style.LightTint;
                 var colour = state.EnemyGlow.Count > 0 && state.EnemyGlow.Contains(cell)
-                    ? new Color((byte)Math.Clamp(brightness * 0.80, 0, 255), (byte)Math.Clamp(brightness * 0.94, 0, 255), brightness, (byte)255)
-                    : new Color(brightness, brightness, brightness, (byte)255);
+                    ? new Color(
+                        (byte)Math.Clamp((brightness * 0.80 * light.R) / 255, 0, 255),
+                        (byte)Math.Clamp((brightness * 0.94 * light.G) / 255, 0, 255),
+                        (byte)Math.Clamp((brightness * light.B) / 255, 0, 255),
+                        (byte)255)
+                    : new Color(
+                        (byte)Math.Clamp((brightness * light.R) / 255, 0, 255),
+                        (byte)Math.Clamp((brightness * light.G) / 255, 0, 255),
+                        (byte)Math.Clamp((brightness * light.B) / 255, 0, 255),
+                        (byte)255);
 
                 Raylib.ImageDrawPixel(ref _lightImage, column, row, colour);
             }
@@ -561,6 +761,141 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     }
 
     /// <summary>
+    /// Draws the floor's weather: a handful of pixel particles whose motion and colour come from
+    /// <see cref="FloorStyle.Ambient"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The layer is drawn after the lightmap, so it glows in the dark rather than being dimmed by
+    /// it. Its particles are small and sparse: this is atmosphere, and the player still has to
+    /// read a key at the edge of the lantern.
+    /// </para>
+    /// <para>
+    /// Every position is a hash of the particle index and a per-floor seed, so the same floor's
+    /// weather is the same on every replay without storing any particle state.
+    /// </para>
+    /// </remarks>
+    private void DrawAmbience()
+    {
+        var time = Raylib.GetTime();
+        var seed = TextHash(_themeId);
+        var areaWidth = _viewCells * PixelLayout.CellSize;
+        var areaHeight = _viewCells * PixelLayout.CellSize;
+        var left = (float)PixelLayout.Pad;
+        var top = (float)PixelLayout.HeaderHeight + PixelLayout.Pad;
+        var colour = _style.AmbientColor;
+
+        for (var index = 0; index < AmbientCount; index++)
+        {
+            var a = Frac(Math.Sin((index * 12.9898) + (seed * 0.0001) + 4.1414) * 43758.5453);
+            var b = Frac(Math.Sin((index * 78.233) + (seed * 0.0002) + 1.618) * 12345.6789);
+            var phase = (time * 0.7) + (index * 1.7);
+            double x;
+            double y;
+            byte alpha = 150;
+            var width = 1;
+            var height = 1;
+
+            switch (_style.Ambient)
+            {
+                case FloorAmbient.Motes:
+                    x = left + (Frac(a + (time * 0.012)) * areaWidth);
+                    y = top + (Frac(b - (time * 0.010)) * areaHeight);
+                    alpha = (byte)(55 + (115 * (0.5 + (0.5 * Math.Sin(phase * 1.3)))));
+                    break;
+
+                case FloorAmbient.Bubbles:
+                    x = left + (a * areaWidth) + (Math.Sin(phase * 1.4) * 3);
+                    y = top + (Frac(b - (time * 0.045)) * areaHeight);
+                    alpha = (byte)(80 + (70 * (0.5 + (0.5 * Math.Sin(phase)))));
+                    width = 2;
+                    height = 2;
+                    break;
+
+                case FloorAmbient.Spores:
+                    x = left + (Frac(a + (time * 0.006) + (Math.Sin(phase * 0.6) * 0.02)) * areaWidth);
+                    y = top + (Frac(b + (Math.Cos(phase * 0.5) * 0.02)) * areaHeight);
+                    alpha = (byte)(50 + (110 * (0.5 + (0.5 * Math.Sin(phase * 1.7)))));
+                    break;
+
+                case FloorAmbient.Embers:
+                    x = left + (Frac(a + (time * 0.02) + (Math.Sin(phase * 2.1) * 0.01)) * areaWidth);
+                    y = top + (Frac(b - (time * 0.075)) * areaHeight);
+                    alpha = (byte)(170 * (1.0 - Frac(b - (time * 0.075))));
+                    break;
+
+                case FloorAmbient.Drips:
+                    var drop = Frac(b + (time * 0.45));
+                    x = left + (a * areaWidth);
+                    y = top + (drop * areaHeight);
+                    alpha = (byte)(drop < 0.25 ? 190 : 0);
+                    height = 3;
+                    break;
+
+                case FloorAmbient.Dust:
+                    x = left + (Frac(a + (time * 0.007)) * areaWidth);
+                    y = top + (Frac(b + (time * 0.004)) * areaHeight);
+                    alpha = (byte)(35 + (55 * (0.5 + (0.5 * Math.Sin(phase * 0.8)))));
+                    break;
+
+                case FloorAmbient.Moths:
+                    x = left + ((a * areaWidth) + (Math.Cos(phase * 1.9) * 14));
+                    y = top + ((b * areaHeight) + (Math.Sin(phase * 2.6) * 10));
+                    alpha = (byte)(100 + (90 * (0.5 + (0.5 * Math.Sin(phase * 3.1)))));
+                    width = 2;
+                    break;
+
+                case FloorAmbient.Petals:
+                    x = left + (Frac(a + (time * 0.015) + (Math.Sin(phase) * 0.02)) * areaWidth);
+                    y = top + (Frac(b + (time * 0.030)) * areaHeight);
+                    alpha = (byte)(80 + (80 * (0.5 + (0.5 * Math.Sin(phase * 1.1)))));
+                    width = index % 2 == 0 ? 2 : 1;
+                    height = index % 2 == 0 ? 1 : 2;
+                    break;
+
+                case FloorAmbient.Ash:
+                    x = left + (Frac(a + (time * 0.018) + (Math.Sin(phase * 0.7) * 0.015)) * areaWidth);
+                    y = top + (Frac(b + (time * 0.024)) * areaHeight);
+                    alpha = (byte)(40 + (70 * (0.5 + (0.5 * Math.Sin(phase)))));
+                    break;
+
+                case FloorAmbient.Rain:
+                    x = left + (Frac(a + (time * 0.10)) * areaWidth);
+                    y = top + (Frac(b + (time * 0.55)) * areaHeight);
+                    alpha = (byte)110;
+                    height = 4;
+                    break;
+
+                case FloorAmbient.Static:
+                    x = left + (a * areaWidth);
+                    y = top + (b * areaHeight);
+                    alpha = (byte)(Math.Sin((time * 8.0) + (index * 2.3)) > 0.25 ? 170 : 0);
+                    break;
+
+                default:
+                    x = left + (Frac(a + (time * 0.01) + (Math.Cos(phase * 0.7) * 0.03)) * areaWidth);
+                    y = top + (Frac(b + (time * 0.012) + (Math.Sin(phase * 0.5) * 0.03)) * areaHeight);
+                    alpha = (byte)(70 + (130 * (0.5 + (0.5 * Math.Sin(phase * 2.0)))));
+                    width = 2;
+                    height = 2;
+                    break;
+            }
+
+            if (alpha == 0)
+            {
+                continue;
+            }
+
+            Raylib.DrawRectangle(
+                (int)Math.Round(x),
+                (int)Math.Round(y),
+                width,
+                height,
+                new Color(colour.R, colour.G, colour.B, alpha));
+        }
+    }
+
+    /// <summary>
     /// Draws a bracketed reticle on the aimed cell while the player is placing something.
     /// </summary>
     /// <remarks>
@@ -568,16 +903,16 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     /// the fog cannot dim the one thing the player needs to see while placing a barrier. The arms
     /// are whole screen pixels wide at any scale, so the recticle stays crisp at 2x and 3x.
     /// </remarks>
-    private static void DrawAimCursor(GameState state, PixelLayout.PixelFit fit)
+    private void DrawAimCursor(GameState state, PixelLayout.PixelFit fit)
     {
-        if (!state.IsAiming)
+        if (!state.IsAiming || !OnScreen(state.AimCursor))
         {
             return;
         }
 
         var size = PixelLayout.CellSize * fit.Scale;
-        var x = fit.X + (PixelLayout.CellX(state.AimCursor.Column) * fit.Scale);
-        var y = fit.Y + (PixelLayout.CellY(state.AimCursor.Row) * fit.Scale);
+        var x = fit.X + (CanvasX(state.AimCursor.Column) * fit.Scale);
+        var y = fit.Y + (CanvasY(state.AimCursor.Row) * fit.Scale);
 
         var arm = Math.Max(2, size / 4);
         var thickness = Math.Max(1, fit.Scale);

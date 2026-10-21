@@ -1,5 +1,6 @@
 using System;
 using MazeGame.Core.Game;
+using MazeGame.Core.Maze;
 
 namespace MazeGame.UI.Rendering.Pixels;
 
@@ -9,15 +10,17 @@ namespace MazeGame.UI.Rendering.Pixels;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The canvas is sized in <b>atlas pixels</b>: a cell is exactly one 16x16 tile, so the maze can
-/// only ever be drawn on its own pixel grid, and the margins are whole tiles' worth of breathing
-/// room. Nothing here scales by a fraction — <see cref="Fit"/> returns an integer scale and a
-/// centred offset, and the letterbox is whatever is left.
+/// The canvas is a <b>viewport</b>, not the floor: it shows a fixed number of cells around the
+/// player and the camera moves with them, so a 15x15 maze is seen nine cells at a time. A cell is
+/// exactly one 16x16 atlas tile, so the maze can only ever be drawn on its own pixel grid.
+/// Nothing here scales by a fraction — <see cref="Fit"/> returns an integer scale and a centred
+/// offset, and the letterbox is whatever is left.
 /// </para>
 /// <para>
-/// The canvas is per floor size rather than one fixed 336x400, because that fixed size was chosen
-/// to fit nineteen-tile floors: computing it from the floor keeps a 15x15 floor from carrying 40
-/// px of dead space on every side, and a 19x19 one still fits.
+/// The viewport is sized from the floor's vision radius: the lantern's circle plus
+/// <see cref="ViewMargin"/> rings, so there is always darkness between what is lit and the edge of
+/// the screen. A card that raises vision therefore zooms the camera out — the same floor seen from
+/// further away, not a different canvas rule.
 /// </para>
 /// </remarks>
 public static class PixelLayout
@@ -25,74 +28,102 @@ public static class PixelLayout
     /// <summary>Side of one atlas tile, and therefore of one maze cell on screen.</summary>
     public const int CellSize = 16;
 
-    /// <summary>Margin around the maze inside the canvas, in atlas pixels.</summary>
+    /// <summary>Margin around the viewport inside the canvas, in atlas pixels.</summary>
     public const int Pad = 8;
 
-    /// <summary>Strip reserved above the maze inside the canvas, for the pixel HUD.</summary>
+    /// <summary>Strip reserved above the viewport inside the canvas, for the pixel HUD.</summary>
     public const int HeaderHeight = 18;
 
     /// <summary>The largest integer scale the game will ever draw at.</summary>
-    public const int MaxScale = 4;
+    public const int MaxScale = 6;
 
-    /// <summary>Returns the canvas width for a maze <paramref name="columns"/> wide.</summary>
-    /// <param name="columns">The floor's width in cells.</param>
-    /// <returns>The canvas width in atlas pixels.</returns>
-    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="columns"/> is not positive.</exception>
-    public static int CanvasWidth(int columns)
+    /// <summary>Cells shown past the lit radius, so the viewport never ends inside the light.</summary>
+    public const int ViewMargin = 1;
+
+    /// <summary>The smallest number of cells across the viewport, so a blind floor still shows a room.</summary>
+    public const int MinViewCells = 9;
+
+    /// <summary>The largest number of cells across the viewport, so the whole floor is never on screen.</summary>
+    public const int MaxViewCells = 13;
+
+    /// <summary>
+    /// Returns how many cells across the viewport is for a floor with <paramref name="visionRadius"/>.
+    /// </summary>
+    /// <param name="visionRadius">The floor's vision radius in steps; zero is allowed.</param>
+    /// <returns>An odd number of cells between <see cref="MinViewCells"/> and <see cref="MaxViewCells"/>.</returns>
+    /// <remarks>
+    /// Odd so the player always sits in the middle cell of an odd grid; clamped at thirteen so a
+    /// generous vision card zooms out without turning the maze into a map.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the radius is negative.</exception>
+    public static int ViewCells(int visionRadius)
     {
-        if (columns <= 0)
+        if (visionRadius < 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(columns), columns, "A maze needs at least one column.");
+            throw new ArgumentOutOfRangeException(nameof(visionRadius), visionRadius, "A vision radius cannot be negative.");
         }
 
-        return (columns * CellSize) + (2 * Pad);
-    }
+        var cells = (2 * (visionRadius + ViewMargin)) + 1;
 
-    /// <summary>Returns the canvas height for a maze <paramref name="rows"/> tall.</summary>
-    /// <param name="rows">The floor's height in cells.</param>
-    /// <returns>The canvas height in atlas pixels.</returns>
-    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="rows"/> is not positive.</exception>
-    public static int CanvasHeight(int rows)
-    {
-        if (rows <= 0)
+        // Round up to an odd number, then clamp: the player must land on the centre cell.
+        if ((cells & 1) == 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(rows), rows, "A maze needs at least one row.");
+            cells++;
         }
 
-        return (rows * CellSize) + (2 * Pad) + HeaderHeight;
+        return Math.Clamp(cells, MinViewCells, MaxViewCells);
     }
 
-    /// <summary>Returns the canvas width for <paramref name="config"/>'s maze.</summary>
+    /// <summary>Returns how many cells across the viewport is for <paramref name="config"/>.</summary>
     /// <param name="config">The floor's settings.</param>
-    /// <returns>The canvas width in atlas pixels.</returns>
+    /// <returns>The viewport size in cells.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="config"/> is null.</exception>
-    public static int CanvasWidth(GameConfig config)
+    public static int ViewCells(GameConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
 
-        return CanvasWidth(config.Columns);
+        return ViewCells(config.VisionRadius);
     }
 
-    /// <summary>Returns the canvas height for <paramref name="config"/>'s maze.</summary>
-    /// <param name="config">The floor's settings.</param>
-    /// <returns>The canvas height in atlas pixels.</returns>
-    /// <exception cref="ArgumentNullException">Thrown when <paramref name="config"/> is null.</exception>
-    public static int CanvasHeight(GameConfig config)
+    /// <summary>Returns the canvas width for a viewport <paramref name="viewColumns"/> cells wide.</summary>
+    /// <param name="viewColumns">The viewport size in cells.</param>
+    /// <returns>The canvas width in atlas pixels.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the size is not positive.</exception>
+    public static int CanvasWidth(int viewColumns)
     {
-        ArgumentNullException.ThrowIfNull(config);
+        if (viewColumns <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(viewColumns), viewColumns, "A viewport needs at least one column.");
+        }
 
-        return CanvasHeight(config.Rows);
+        return (viewColumns * CellSize) + (2 * Pad);
     }
 
-    /// <summary>Returns the canvas x of <paramref name="column"/>'s left edge.</summary>
+    /// <summary>Returns the canvas height for a viewport <paramref name="viewRows"/> cells tall.</summary>
+    /// <param name="viewRows">The viewport size in cells.</param>
+    /// <returns>The canvas height in atlas pixels.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the size is not positive.</exception>
+    public static int CanvasHeight(int viewRows)
+    {
+        if (viewRows <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(viewRows), viewRows, "A viewport needs at least one row.");
+        }
+
+        return (viewRows * CellSize) + (2 * Pad) + HeaderHeight;
+    }
+
+    /// <summary>Returns the canvas x of <paramref name="column"/>'s left edge, seen from a camera.</summary>
     /// <param name="column">The cell's column.</param>
-    /// <returns>The pixel x inside the canvas.</returns>
-    public static int CellX(int column) => Pad + (column * CellSize);
+    /// <param name="cameraColumn">The leftmost cell the camera shows.</param>
+    /// <returns>The pixel x inside the canvas; negative when the cell is off the left edge.</returns>
+    public static int CellX(int column, int cameraColumn) => Pad + ((column - cameraColumn) * CellSize);
 
-    /// <summary>Returns the canvas y of <paramref name="row"/>'s top edge.</summary>
+    /// <summary>Returns the canvas y of <paramref name="row"/>'s top edge, seen from a camera.</summary>
     /// <param name="row">The cell's row.</param>
-    /// <returns>The pixel y inside the canvas.</returns>
-    public static int CellY(int row) => HeaderHeight + Pad + (row * CellSize);
+    /// <param name="cameraRow">The topmost cell the camera shows.</param>
+    /// <returns>The pixel y inside the canvas; negative when the cell is above the viewport.</returns>
+    public static int CellY(int row, int cameraRow) => HeaderHeight + Pad + ((row - cameraRow) * CellSize);
 
     /// <summary>
     /// Works out the integer scale and offset that put a canvas inside a window.
@@ -163,4 +194,61 @@ public static class PixelLayout
     /// <param name="Width">The drawn width in window pixels.</param>
     /// <param name="Height">The drawn height in window pixels.</param>
     public readonly record struct PixelFit(int Scale, int X, int Y, int Width, int Height);
+}
+
+/// <summary>
+/// The cell the canvas's top-left corner sits on: the camera that follows the player.
+/// </summary>
+/// <remarks>
+/// Kept as two integers rather than a pixel offset so the world can only ever be drawn on the tile
+/// grid — the camera snaps one cell at a time, like the figure it follows. When a floor is smaller
+/// than the viewport the camera centres the floor instead of clamping to zero, so a small maze does
+/// not hug the top-left corner of the screen.
+/// </remarks>
+public readonly record struct PixelCamera(int Column, int Row)
+{
+    /// <summary>Works out the camera that centres <paramref name="focus"/> in the viewport.</summary>
+    /// <param name="mazeRows">The floor's height in cells.</param>
+    /// <param name="mazeColumns">The floor's width in cells.</param>
+    /// <param name="viewRows">The viewport height in cells.</param>
+    /// <param name="viewColumns">The viewport width in cells.</param>
+    /// <param name="focus">The cell to centre, usually the player.</param>
+    /// <returns>The camera's top-left cell.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when a size is not positive.</exception>
+    public static PixelCamera For(
+        int mazeRows,
+        int mazeColumns,
+        int viewRows,
+        int viewColumns,
+        Cell focus)
+    {
+        if (mazeRows <= 0 || mazeColumns <= 0 || viewRows <= 0 || viewColumns <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(viewRows), "A camera needs a positive maze and viewport.");
+        }
+
+        return new PixelCamera(
+            Axis(mazeColumns, viewColumns, focus.Column),
+            Axis(mazeRows, viewRows, focus.Row));
+    }
+
+    /// <summary>Returns whether a cell is inside the viewport.</summary>
+    /// <param name="cell">The cell to test.</param>
+    /// <param name="viewRows">The viewport height in cells.</param>
+    /// <param name="viewColumns">The viewport width in cells.</param>
+    /// <returns><see langword="true"/> when the cell is on screen.</returns>
+    public bool Shows(Cell cell, int viewRows, int viewColumns) =>
+        cell.Column >= Column && cell.Column < Column + viewColumns &&
+        cell.Row >= Row && cell.Row < Row + viewRows;
+
+    private static int Axis(int maze, int view, int focus)
+    {
+        if (maze <= view)
+        {
+            // A floor narrower than the viewport is centred, with darkness on both sides.
+            return -(view - maze) / 2;
+        }
+
+        return Math.Clamp(focus - (view / 2), 0, maze - view);
+    }
 }

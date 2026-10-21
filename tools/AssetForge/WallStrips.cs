@@ -69,12 +69,24 @@ public static class WallStrips
     {
         ArgumentNullException.ThrowIfNull(theme);
 
-        return theme.Family switch
+        var canvas = theme.Wall switch
         {
-            TileFamily.WorkedStone => WorkedStoneTiles.Face(theme, side),
-            TileFamily.WrongOrganic => WrongOrganicTiles.Face(theme, side),
-            _ => OrganicFace(theme, side),
+            WallMotif.CutBlock => WorkedStoneTiles.Face(theme, side),
+            WallMotif.WovenRoot => WrongOrganicTiles.Face(theme, side),
+            WallMotif.MossRock => OrganicFace(theme, side),
+            _ => MotifTiles.Face(theme, side),
         };
+
+        // The edge treatment is shared by every family, and painted last so no texture can bury it:
+        // a near-black outline on the outer row, a lit rim and then the contact shadow against the
+        // floor. A wall is a five-pixel band over a floor tile, so those rows are what say "this is
+        // a wall" — a family that painted moss over its shadow made the band read as part of the
+        // floor, and a body row the same value as a floor tile made it disappear entirely.
+        Paint(canvas, side, 0, CaveTiles.Index(PaletteRole.WallEdge));
+        Paint(canvas, side, Thickness - 2, CaveTiles.Index(PaletteRole.WallTop));
+        Paint(canvas, side, Thickness - 1, CaveTiles.Index(PaletteRole.WallEdge));
+
+        return canvas;
     }
 
     /// <summary>Draws the cave's band: rock with a lit rim, chips, moss and a few glowing motes.</summary>

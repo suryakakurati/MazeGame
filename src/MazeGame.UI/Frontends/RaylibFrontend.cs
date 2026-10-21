@@ -1,6 +1,7 @@
 using System;
 using MazeGame.Core.Game;
 using MazeGame.Core.Maze;
+using MazeGame.UI.Audio;
 using MazeGame.UI.Input;
 using MazeGame.UI.Rendering;
 using MazeGame.UI.Rendering.Pixels;
@@ -60,7 +61,12 @@ internal static class RaylibFrontend
 
         // Warnings only: Raylib's startup banner would otherwise be printed over the ending.
         Raylib.SetTraceLogLevel(TraceLogLevel.Warning);
+
+        // Draggable and maximisable: the canvas scales by a whole number to whatever room the frame
+        // gives it, so a bigger window is a bigger view rather than a blurrier one.
+        Raylib.SetConfigFlags(ConfigFlags.ResizableWindow);
         Raylib.InitWindow(width, height, RaylibLayout.Title);
+        Raylib.SetWindowMinSize(RaylibLayout.MinWindowWidth, RaylibLayout.MinWindowHeight);
 
         if (!Raylib.IsWindowReady())
         {
@@ -115,6 +121,10 @@ internal static class RaylibFrontend
         // The floors are drawn from the committed atlases; the vector renderer keeps the title, the
         // campaign cards and the HUD chrome around the canvas.
         using var pixels = new PixelRenderer(config);
+
+        // No device is a silent game, not a broken one: the director is null on a machine with no
+        // sound card, and every use of it is a no-op.
+        using var audio = AudioDirector.TryCreate();
         Campaign? campaign = null;
         var screen = Screen.Title;
         var selected = DescendItem;
@@ -165,6 +175,11 @@ internal static class RaylibFrontend
                     // Measured frame time: the killer's pace must not depend on the frame rate.
                     campaign.Floor.Tick(Raylib.GetFrameTime());
 
+                    // The floor's events are the only thing the sound layer listens to: it never
+                    // diffs two frames to guess that a key was lifted.
+                    audio?.Handle(campaign.Floor.DrainEvents());
+                    audio?.Update(campaign.Floor, Raylib.GetFrameTime());
+
                     if (campaign.Floor.Status == GameStatus.Caught)
                     {
                         screen = Screen.RunLost;
@@ -183,6 +198,9 @@ internal static class RaylibFrontend
                         // screen, so the player reads what the floor cost before picking.
                         screen = Screen.Draft;
                         selected = 0;
+
+                        // The killer is not on this screen; drop to the bed while the cards are up.
+                        audio?.SetIntensity(MusicIntensity.Calm);
                     }
                     else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
                     {
@@ -192,6 +210,8 @@ internal static class RaylibFrontend
                     break;
 
                 case Screen.Draft:
+                    var previousSelection = selected;
+
                     if (ReadDraftChoice(campaign!, ref selected, out var take, out var skip))
                     {
                         if (take is not null && !campaign!.TakeCard(take))
@@ -204,6 +224,8 @@ internal static class RaylibFrontend
                             campaign!.SkipDraft();
                         }
 
+                        audio?.PlayCardResolved(take is not null);
+
                         // Only move on if the floor was actually built: a refused advance must
                         // leave the draft on screen rather than loop back to a floor intro for a
                         // floor that is already cleared.
@@ -215,6 +237,10 @@ internal static class RaylibFrontend
                         renderer.Reset();
                         pixels.Reset();
                         StartFloorIntro();
+                    }
+                    else if (selected != previousSelection)
+                    {
+                        audio?.PlayCardHover();
                     }
                     else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
                     {
@@ -255,8 +281,14 @@ internal static class RaylibFrontend
             screen = Screen.FloorIntro;
 
             // Every floor is drawn in its own theme's palette, so the atlas is chosen here — the
-            // one place both "a run started" and "the next floor was built" pass through.
-            pixels.SetTheme(campaign!.CurrentFloor.ThemeId);
+            // one place both "a run started" and "the next floor was built" pass through. The
+            // score is arranged here too, while the intro card holds the screen.
+            pixels.SetFloor(campaign!.CurrentFloor);
+            pixels.SetTheme(campaign.CurrentFloor.ThemeId);
+            audio?.PlayFloor(
+                campaign.CurrentFloor.ThemeId,
+                campaign.FloorNumber,
+                campaign.RunSeed);
             introEndsAt = Raylib.GetTime() + IntroSeconds;
             Raylib.SetWindowTitle(
                 $"{RaylibLayout.Title} — Floor {campaign!.FloorNumber}/{campaign.FloorCount}");
@@ -278,7 +310,7 @@ internal static class RaylibFrontend
 
         if (screen == Screen.Title)
         {
-            renderer.DrawTitle(selected);
+            RaylibRenderer.DrawTitle(pixels.Font, selected);
         }
         else
         {
@@ -303,7 +335,11 @@ internal static class RaylibFrontend
                     break;
 
                 case Screen.Draft:
-                    renderer.DrawDraft(campaign, selected);
+                    PixelCards.Draft(
+                        pixels.Font,
+                        campaign,
+                        selected,
+                        RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId));
                     break;
 
                 case Screen.RunComplete:
@@ -311,7 +347,8 @@ internal static class RaylibFrontend
                         pixels.Font,
                         campaign.FloorCount,
                         campaign.Hearts,
-                        RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId));
+                        RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId),
+                        campaign.CurrentFloor.ThemeId);
                     break;
             }
         }

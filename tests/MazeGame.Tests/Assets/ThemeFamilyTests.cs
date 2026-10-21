@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MazeGame.AssetForge;
+using MazeGame.Core.Game;
 
 namespace MazeGame.Tests.Assets;
 
@@ -17,7 +18,7 @@ namespace MazeGame.Tests.Assets;
 public sealed class ThemeFamilyTests
 {
     [Fact]
-    public void TheShippedFloors_UseThreeDifferentFamilies()
+    public void TheShippedFloors_UseEveryShapeLanguage()
     {
         var families = new HashSet<TileFamily>();
 
@@ -26,7 +27,21 @@ public sealed class ThemeFamilyTests
             families.Add(theme.Family);
         }
 
-        Assert.Equal(ThemeCatalog.Shipped.Count, families.Count);
+        // Twenty places from three grammars: the families are reused, the *rooms* are not.
+        Assert.Equal(Enum.GetValues<TileFamily>().Length, families.Count);
+    }
+
+    [Fact]
+    public void TheThemes_LineUpWithTheFloors()
+    {
+        // The compiler's table and the campaign's table are separate files on purpose (the game
+        // must not reference the tool), so the order is the contract that keeps them honest.
+        Assert.Equal(FloorCatalog.Shipped.Count, ThemeCatalog.Shipped.Count);
+
+        for (var index = 0; index < FloorCatalog.Shipped.Count; index++)
+        {
+            Assert.Equal(FloorCatalog.Shipped[index].ThemeId, ThemeCatalog.Shipped[index].Id);
+        }
     }
 
     [Fact]
@@ -38,7 +53,6 @@ public sealed class ThemeFamilyTests
         {
             for (var right = left + 1; right < themes.Count; right++)
             {
-                Assert.NotEqual(themes[left].Family, themes[right].Family);
                 Assert.False(
                     SamePixels(TileGrammar.Floor(themes[left], 0), TileGrammar.Floor(themes[right], 0)),
                     $"{themes[left].Id} and {themes[right].Id} draw the same floor; that is a recolour.");

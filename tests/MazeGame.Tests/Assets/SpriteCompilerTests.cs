@@ -20,17 +20,17 @@ public sealed class SpriteCompilerTests
         var atlas = SpriteCompiler.Compile(theme);
         var names = atlas.Tiles.Select(tile => tile.Name).ToList();
 
-        // floor variants + plain wall + 4 thin wall faces + 16 edges + 47 blobs + 16 player poses
-        // + 12 killer poses + 3 key + 3 wisp + 2 barrier + 2 arch + 2 props.
-        Assert.Equal(theme.VariantCount + 108, atlas.Tiles.Count);
+        // floor variants + signature feature + plain wall + 4 thin wall faces + 16 edges + 47 blobs
+        // + 16 player poses + 12 killer poses + 3 key + 3 wisp + 2 barrier + 2 arch + 3 props.
+        Assert.Equal(theme.VariantCount + 110, atlas.Tiles.Count);
         Assert.Equal(names.Count, names.Distinct(StringComparer.Ordinal).Count());
 
         foreach (var expected in new[]
                  {
-                     "floor-0", "wall", "edge-0", "edge-15", "blob-0", "blob-46",
+                     "floor-0", "floor-feature", "wall", "edge-0", "edge-15", "blob-0", "blob-46",
                      "player-south-idle", "player-west-walk2", "killer-north-walk1",
                      "key-2", "wisp-1", "barrier", "barrier-cracked", "arch-locked", "arch-open",
-                     "prop-0", "prop-1",
+                     "prop-0", "prop-1", "prop-2",
                  })
         {
             Assert.Contains(expected, names);
@@ -66,7 +66,10 @@ public sealed class SpriteCompilerTests
 
             // A map tile is a full square: a transparent pixel would show the window's background
             // through the floor. Sprites are cut-outs and are allowed their transparent margin.
-            var isMapTile = tile.Name.StartsWith("floor", StringComparison.Ordinal) ||
+            // The signature feature is a decal: it is deliberately transparent outside its
+            // object, so it is not a map tile even though its name starts with "floor".
+            var isMapTile = (tile.Name.StartsWith("floor", StringComparison.Ordinal) &&
+                             !string.Equals(tile.Name, "floor-feature", StringComparison.Ordinal)) ||
                             tile.Name.StartsWith("edge", StringComparison.Ordinal) ||
                             tile.Name.StartsWith("blob", StringComparison.Ordinal) ||
                             tile.Name == "wall";

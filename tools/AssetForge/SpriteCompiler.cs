@@ -54,8 +54,13 @@ public static class SpriteCompiler
     /// <summary>The smallest palette distance two neighbouring themes must have.</summary>
     public const double MinimumThemeDistance = Palette.MinimumThemeDistance;
 
-    /// <summary>The smallest number of structural parameters two neighbouring themes must differ in.</summary>
-    public const int MinimumStructuralDifferences = 2;
+    /// <summary>
+    /// The smallest number of structural parameters two neighbouring themes must differ in.
+    /// Floors now carry a floor motif, a wall motif, a signature feature and weather on top of
+    /// the older shape numbers, so the bar is raised: a floor that only changes speed and hue is
+    /// not a new place.
+    /// </summary>
+    public const int MinimumStructuralDifferences = 6;
 
     /// <summary>Compiles one theme into an atlas.</summary>
     /// <param name="theme">The theme to draw.</param>
@@ -71,6 +76,10 @@ public static class SpriteCompiler
         {
             tiles.Add(($"floor-{variant}", TileGrammar.Floor(theme, variant)));
         }
+
+        // The signature object is a decal rather than a floor variant: it is transparent, so it
+        // can sit on any of the variants and the renderer decides where it appears.
+        tiles.Add(("floor-feature", TileGrammar.Feature(theme)));
 
         tiles.Add(("wall", TileGrammar.Wall(theme)));
 

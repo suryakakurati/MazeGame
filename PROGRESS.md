@@ -3,13 +3,13 @@
 Single source of truth for the state of the project. Update this file at the end of
 every work session (see the handoff protocol in `HANDOFF.md`).
 
-Last updated: 2026-10-20 (Phase 6 slice 1: the floor is drawn from the committed atlases on a
-virtual canvas)
+Last updated: 2026-10-21 (Phase 8: every floor is its own place — motif art, weather, HUD, cards,
+and one typeface on every screen)
 
 ## Current Status
 
-The solution builds with zero warnings, `dotnet test` is green (574 tests), and the game runs
-**in a Raylib window** as a **three-floor campaign with a card draft between floors and timed
+The solution builds with zero warnings, `dotnet test` is green (675 tests), and the game runs
+**in a Raylib window** as a **twenty-floor campaign with a card draft between floors and timed
 steps**: the title leads to a floor intro card, then a seeded 15x15 maze drawn as a bioluminescent
 cave — fog of war, braided dead ends, keys, an exit, sealed barriers, wisps, and a killer that
 hunts the player with Dijkstra. **The player has three hearts**: a catch costs one, throws the
@@ -23,18 +23,136 @@ no window can be opened) plays the same campaign in ASCII. The catalog holds **t
 including the four movement cards. The **sprite compiler is complete to its Phase 5 exit**: every
 committed atlas under `src/MazeGame.UI/Content/Generated` holds the full tileset (floor variants,
 wall, four thin wall faces, 16 edge and 47 blob tiles) and the whole cast, checked by `--check`.
-**The floor is now drawn from those atlases**: a 16 px-per-cell virtual canvas, blitted to the
-window at an integer scale, with a per-cell lightmap for the lantern and the fog. The menus, the
-campaign cards and the HUD are still drawn by the vector renderer, which is what the font atlas
-will replace next.
+**The floor is drawn from those atlases**: a 16 px-per-cell virtual canvas, blitted to the
+window at an integer scale, with a per-cell lightmap for the lantern and the fog. **Every floor is
+now drawn as its own place**: twelve floor motifs, ten wall motifs, a signature object and a
+per-floor weather layer, plus a themed HUD with the floor's emblem, name and gimmick. **Every
+screen is set in the compiled pixel face** — title, HUD, footer hints, draft and the four campaign
+cards — so nothing falls back to the system typeface.
+**The game now has sound, and no audio files**: every effect and all twenty floor tracks are
+synthesised from code — a 22-recipe one-shot bank, a four-band sequencer with five shared motifs,
+a Schroeder reverb and an intensity mix that follows the killer. A device is opened through
+Raylib's stream callback; with no device the game is silent rather than broken.
 
-What changed in this session (Phase 6 slice 1 — the pixel renderer):
+What changed in this pass (Phase 8 — twenty distinct places):
+
+- **The tile grammar grew past three shape families.** `Theme` now carries a `FloorMotif`
+  (boulders, flagstones, roots, ripples, drift, mosaic, bones, shards, web, plates, mire, vents),
+  a `WallMotif` (moss rock, cut block, woven root, ribbed, stacked plate, crystal, silk, bone,
+  grate, frost), a `FeatureKind` (pool, nest, rune, grate, clock, mirror, crystal, web, bones,
+  seal, heart) and an `AmbientKind`. `MotifTiles` draws the nine new floor grammars, the seven new
+  walls, their faces, the eleven signature objects and a deterministic emblem. The older three
+  families still draw boulders/flagstones/roots; nothing else in the compiler knows a theme id.
+- **Every theme is unique at the pixel level.** A twelve-bit maker's mark derived from the theme
+  id is pressed into every wall face and every signature object, so two floors that share a
+  grammar still cannot compile the same face or the same object. The check now requires
+  **six** structural differences between neighbouring floors (was two), covering motif, wall,
+  feature, weather, family and the older shape numbers.
+- **A signature object and an emblem per floor.** `floor-feature` is a transparent decal the
+  renderer scatters about once in 29 known cells; `prop-2` is the floor's carved emblem at about
+  once in 53. Both are in every atlas and both are asserted distinct across all twenty floors.
+- **Weather, light and fog are per floor.** `FloorStyle` holds an accent, one of twelve particle
+  behaviours, a warm/cold light cast and a fog density. `PixelRenderer` draws 30 tiny particles
+  above the lightmap (they glow in the dark) and tints the lightmap, so The Ember Vault breathes
+  embers through a warm lantern while The Hush flicks with static through a cold one. The HUD and
+  the letterbox take the same floor colour.
+- **The HUD is a floor's HUD.** `RaylibRenderer.DrawOverlay(state, FloorChrome)` draws the floor's
+  emblem, number, name and gimmick on the left, four compact status chips on the right, and keeps
+  the hearts and the control hints in the footer. The floor intro, cleared, run-complete and
+  caught cards use the compiled font, and the first three carry the emblem and a five-block
+  palette strip. The draft header gains the emblem and the floor name.
+- **The type is the game's type everywhere.** The title wordmark, the HUD's floor label, name and
+  gimmick, the four status chips, the footer hints and the draft's panes are all drawn by
+  `PixelFont` in whole-pixel integer scales, so the interface is as crisp as the tiles under it.
+  Nothing in the UI calls `Raylib.DrawText` any more, and `RaylibRenderer.Text` throws if a font
+  was not supplied, so a screen cannot quietly regress to the system face. The hints centre in
+  the room the hearts leave and the floor name is truncated arithmetically, because the face is
+  fixed-advance: a narrow window drops one size rather than clipping a line.
+- **A latent floor-size crash was found and fixed.** `PixelRenderer` kept the constructor's 15x15
+  `_rows`/`_columns`, so the 11x11 Warren asked the grid for cells outside its bounds; the
+  renderer now reads the floor's dimensions from `GameState.Maze` every frame. The harness had
+  never reached floor 9 before because it stopped at an earlier exception or a short run.
+- **Music was already one track per floor**, and a new test pins that no two of the twenty
+  parameter sets are identical, so the guarantee cannot quietly regress.
+
+Verified in this pass:
+
+- `dotnet build` -> **0 warnings, 0 errors**. `dotnet test` -> **675/675 passing, 0 skipped**
+  (14 new: signature features, wall faces and emblems distinct across all twenty floors, every
+  motif/feature used, the style table matching the floor catalog, distinct accents and weather,
+  mirrored emblems, and the twenty distinct music parameter sets).
+- `tools/AssetForge -- --check` -> `CHECK_OK themes=20 tiles=2264`; every atlas recompiles
+  byte-identically. A direct pixel comparison over all theme pairs reports **0** duplicate
+  floors, walls, wall faces, features or emblems.
+- A real window, 900x760, drew **all twenty floors** and three campaign cards without an
+  exception (`/tmp/mzlook-*.png`, `card-*.png`), including the 11x11 Warren and the 21x21 Long
+  Gallery. The title screen and the draft were captured at 900x760 and at the 640x560 minimum,
+  and the HUD band of a floor was read back as a text map: the emblem, the three floor lines and
+  the chips occupy separate columns, and the hints clear the hearts. The shipped window ran for
+  eight seconds with an empty log. The screenshots were read back and measured (average colours,
+  painted area, HUD/card layout) but not judged by a human eye; the weather, tile detail and
+  type are parameter-checked, not taste-checked.
+
+What changed in the previous pass (Phase 7 — audio):
+
+- **Core raises events; the UI listens.** `GameEvent` and `GameState.DrainEvents()` publish the
+  moments a frame cannot be inferred from state — `Step`, `KeyPicked`, `HeartLost`,
+  `HeartLostLast`, `KillerStep`, `SealPlaced`, `SealCracked`, `SealBroken`, `WispLit`,
+  `WispConsumed`, `FloorCleared`, `RunLost`. The queue is capped at 32 so a frontend that never
+  drains (the console view, a long test) cannot grow it with the length of the run. This is also
+  the VFX seam: nothing in Core references audio.
+- **A synth toolkit, not a sample library.** `Synth` has oscillators, a seeded noise source,
+  one-pole and band-pass filters, a soft clipper and a four-comb/two-all-pass reverb; `SfxBank`
+  arranges 22 recipes from them (three footstep variants, killer step, damage, last heart,
+  heartbeat, key pickup, sonar ping, seal placed/cracked/broken, wisp lit/consumed, arch
+  locked/unlocked, floor cleared, card hover/take, run lost, lunge tell, near miss). All 22 are
+  mono, 0.09–1.8 s, peak ≤ 0.9, and no two share a waveform.
+- **Twenty tracks from twenty parameter sets.** `MusicTheme` is `root, mode, tempo, bars,
+  progression, per-family mix, density, tension, reverb, band`; `MusicCatalog` holds one per
+  floor, with ids **equal to the atlas ids**, and five shared motifs transformed per band
+  (inverted from floor 11, retrograded from floor 16). `ScoreRenderer` arranges and renders one
+  loop of three stems — bed (pad/choir), rhythm (bass/drums), lead (motif/bells) — with every
+  overhanging note wrapped and the reverb run around the loop point, so the seam is ~0.005–0.016
+  (a -40 dB step at the loudest point) rather than a cut.
+- **The mix reacts on the bar line.** `MusicMix` turns distance into `Calm` (pad only), `Tense`
+  (bass in) or `Chase` (everything), and `AudioEngine` adopts a new intensity **only at the next
+  bar**, then fades it in over 400 ms so a stem cannot step on top of the waveform mid-note. Damage
+  ducks the music to 35% for 1.4 s behind the stinger (2.4 s for the last heart); a stunned killer
+  or an open aim drops the music back; on the last heart a heartbeat plays on its own cadence. The
+  last floor opens with a **ten-second calm hold** (the drums and motif arrive late) and carries its
+  motif **in canon** — a second statement half a loop later, which is a `MusicTheme.Canon` flag, not
+  a name check in the renderer.
+- **No device is a silent game.** `AudioDirector.TryCreate()` returns null on a headless machine
+  and every caller is `?.`; the stream is fed by `SetAudioStreamCallback` (a Cdecl
+  `UnmanagedCallersOnly` shim into `AudioEngine.Render`), which is what makes it 100% real time
+  rather than a poll that stutters or lags. The mixer allocates nothing per block, the bank is
+  built on the main thread before the stream starts, and the score is rendered during the floor
+  intro (45–150 ms, once per floor).
+
+Verified in this pass:
+
+- `dotnet build` → 0 warnings, 0 errors. `dotnet test` → **661/661 passing, 0 skipped** (56 new:
+  10 event-stream cases, 8 catalog, 5 bank, 9 score, 14 mix (including the distance theory) and 10
+  mixer).
+- Device path, on this machine: `device: opened`, **461 callbacks / 203,301 frames in 4.6 s** =
+  **100% of real time**, 441 frames (10 ms) per callback, through a real score + key sounds +
+  two ducks + an intensity change, and disposed cleanly. A windowed run of the shipped game logs
+  **nothing** (the earlier polling design logged a warning per block; the callback design is
+  silent).
+- Mixer cost: **0.006 ms per 2048-frame block** (≈0.01–0.3% of one core, budget 4%), measured over
+  215 blocks = 10 s of the densest floor with footsteps mixed in. Score render: 45–80 ms per floor
+  after the first (143 ms, JIT); SFX bank builds in 27 ms.
+- Generated audio, measured over all twenty tracks: peak **0.85–0.92**, RMS **0.110–0.155**, loop
+  seam **≤ 0.016**, loop length within 1% of the tempo, deterministic for a given seed.
+
+What changed in the previous pass (Phase 6 slice 1 — the pixel renderer):
 
 - **The floor is pixel art, at a whole-pixel scale.** `PixelLayout` sizes a virtual canvas from the
   floor (one 16 px atlas tile per cell, an 8 px margin, an 18 px header), `PixelView` renders into a
-  `RenderTexture2D` and blits it with **integer** scale and letterboxing — 2x for the shipped
-  656x760 window, 512x548 in the middle — so the art is never resampled by a fraction. A resize
-  changes only the scale and the offset, never a coordinate inside the game.
+  `RenderTexture2D` and blits it with **integer** scale and letterboxing — 2x in the 656x760 window
+  of the time, 512x548 in the middle — so the art is never resampled by a fraction. (The canvas is
+  now a camera viewport at 4x; see the camera pass below.) A resize changes only the scale and the
+  offset, never a coordinate inside the game.
 - **The atlases are loaded, and a missing tile fails loudly.** `AtlasManifest` parses and validates
   `manifest.txt` (theme lines, tile lines, counts, positions inside the atlas), `AssetPaths` finds
   the folder beside the executable or in the repository, and `TileAtlas` looks a tile up by name.
@@ -410,55 +528,110 @@ Core contains:
 
 ## Current Task
 
-**Phase 6 is two-thirds done.** Slice 1 (the play screen) is complete: the floor is drawn from the
-committed atlases on a virtual canvas (`PixelLayout`, `PixelView`, `TileAtlas`, `AtlasManifest`,
-`TileMask`, `PixelRenderer`) with a per-cell lightmap and thin wall faces.
+**The twenty floors are now twenty places.** Each one selects a floor motif, a wall motif, a
+signature feature and a weather; the renderer gives it a warm or cold light, a fog, a particle
+layer and a HUD with its emblem, name and gimmick; the cards carry the emblem and a palette strip.
+The compiler's `--check` requires six structural differences between neighbours, and the twenty
+signature features, wall faces and emblems are asserted distinct at the pixel level. What is left
+is taste: whether a given motif reads as the place its name promises, whether the weather is
+visible enough without obscuring keys, and whether the HUD still fits at the minimum window size.
+Those need a human at the window and an ear on the score.
 
-Slice 2a (the art and the type) is done as of this pass:
-- **Three shape families.** A theme carries a `TileFamily`; `TileGrammar` dispatches to
-  `CaveTiles` (boulders), `WrongOrganicTiles` (roots, veins, membrane) or `WorkedStoneTiles`
-  (courses, grout, carved bands), and the families share no drawing code. Rootbound and Drowned
-  Halls are no longer the cave in a different hue, and `ThemeFamilyTests` compares palette
-  *indices* so a recolour is a red test.
-- **The compiled font.** `Glyphs` (5x7, ASCII 32–126), `FontAtlas` (6x8 cells plus the heart and
-  pip icons) and `font.png` in the generated folder, with its own `theme`/`tile` section in the
-  manifest; tile lines now carry an explicit width and height (default 16x16).
-- **The campaign cards in that font.** `PixelFont` blits text and icons at an integer scale, and
-  `PixelCards` draws the floor intro, floor-cleared, run-summary and caught cards. The vector
-  versions are deleted, not kept side by side.
+## Previous task: twenty floors and their themes
 
-What is left of the phase: the **pictograms** (24x24 card art), the **UI chrome** (9-slice panels,
-card frames, hearts in the canvas) and the **draft screen**, which is the last screen still set in
-the system typeface.
+**The campaign is twenty floors, each with its own theme and gimmick.** Phase 6's play screen, the
+camera and the compiled font are done; that pass was content and legibility.
+
+- **Twenty floors** in `FloorCatalog`, each with a `Gimmick` line for its card and, where the floor
+  is about a *rule* rather than a number, its own optional overrides: `VisionRadius`,
+  `BarrierBudget`, `LureCount`, `LureSeconds`, `ExtraLoops`, `DeadEndBraidPercent`,
+  `EnemyAuraRadius`/`EnemyAuraDistance`, `RespawnDistance`, `InvulnerabilitySeconds`. `ForFloor`
+  composes them over the run's settings, so no gimmick is an `if` in `GameState`. Examples: Rootbound
+  closes the lantern in (vision 2), The Gilded Cage removes barriers entirely, The Blind Mile puts the
+  killer's glow out, The Ossuary respawns it three cells away, The Bramble braids every dead end.
+- **Twenty themes** in the compiler's `ThemeCatalog`, one per floor, from the three shape families,
+  each with its own hue pair, moss, glow, speckle and course height. `--check` rejects a neighbouring
+  theme that is too close in colour or differs in fewer than two structural parameters, so the
+  descent cannot drift into recolours; `ThemeFamilyTests` proves on palette indices that no two
+  floors draw the same tile, and that the compiler's table and the campaign's line up.
+- **Every floor has an accent**, in `RaylibRenderer.ThemeAccent`, used by the cards and now by the
+  letterbox (`PixelView.Present(..., backdrop)`), so each floor sits in its own coloured frame.
+- **Walls, including floor 2.** The root cause on Rootbound was that the *floor* was as bright as a
+  wall: its fibres were drawn in the wall's body colour, full width, and its knots in wall-bright
+  glyphs. Floor growth is now moss over shadow, the wall band carries a near-black outline at both
+  edges, and the palette ladder sits at wall 0.40 / rim 0.58 / shadow 0.07 against a 0.20 floor.
+  Measured on the committed atlases, band vs floor is now 1.96–7.30 across all twenty themes
+  (Rootbound 2.23, was 1.52), and in a rendered frame floor 2's walled cell tops read 1.49–2.89x
+  their own floors against 0.88 for open cells.
+
+What is left of the visual phase: the **draft screen** is still the last screen set in the system
+typeface, and the **HUD** still lives in the window's letterbox rather than inside the canvas.
+The floor cards and the HUD now carry each floor's emblem, palette and weather, so the remaining
+work is chrome (9-slice frames, card art) rather than identity.
 
 ## Next Steps
 
-1. **Phase 6 slice 2b: the last vector screen and the chrome.** `Pictograms` (24x24 card art) and
-   `UiForge` (9-slice panels, card frames) in `tools/AssetForge`, then the draft screen and the HUD
-   redrawn with `PixelCards`/`PixelFont` and the vector chrome retired. That removes the last of the
-   primitive drawing, and the window's top strip can shrink once the pills live in the canvas.
-2. **Play a run and judge the new look.** The floor is real pixel art now, and the harness measures
-   it (1.03 ms median, 62% of the canvas painted, no fog leaks) — but whether the 16 px tiles read
-   as a cave at 2x, and whether the thin wall faces are thick enough, needs a human at the window.
-   The knobs are `PixelLayout.CellSize`, `WallStrips.Thickness` and the light levels in
-   `PixelRenderer.UploadLight`.
-3. **Judge the movement.** Timed steps change difficulty more than any card does: instant movement
-   was generous, and the first real question is whether 0.11 s per cell plus a 0.6 s killer still
-   lets a player escape by reflex.
-4. **Momentum needs a play-test of its own.** It is the first card that changes how the game
-   *feels* rather than what it allows: 5% a step to +25%, and 15% slower for 2 s after a turn.
-   The numbers are one record in `CardCatalog`; the shape (ramp vs. flat) is the open question.
-5. **Get the window screens judged by eye.** The draft screen, the interpolated figures, the
-   stamina bar and now the card faces (13 of them) are drawn through the real renderer, but no
-   framebuffer can be read here (see Known Issues).
-6. **Keep the seams clean.** `GameFactory.CreateFloor` remains the only place a floor is built
-   (now with the run's modifiers), and `Campaign` the only place floors, hearts and drafts are
-   sequenced. Movement timing lives in `GameState`, never in a frontend.
+1. **Look at the twenty floors and judge the motifs.** The compiler proves they are different
+   pixels; only a human can say whether a mire reads as a mire and a plate floor as a foundry.
+   The knobs are the `Theme` records and the routines in `MotifTiles`; a motif change is one file,
+   then `AssetForge -- --all` and a commit.
+2. **Listen to a run, then tune the balance.** The numbers measured here (music peak 0.72 under
+   effects at 0.9, duck to 35%) are guesses that only an ear can settle. The knobs are
+   `AudioEngine.MusicGain`/`EffectGain`/`DuckDepth`, `MusicMix.Gains` and the per-theme `Mix` in
+   `MusicCatalog`.
+3. **Phase 8's remaining content.** Seven of the thirteen catalog cards are still unbuilt (the
+   curse pair needs rare-with-a-price, the rest need hazards or blueprint changes), and the run has
+   no save/continue yet: remaining cards, hazards and suspend/resume.
+4. **Give the cards art.** Every screen is now in the compiled face, but a draft card is still
+   type on a rectangle: `Pictograms` (24x24 card art) and `UiForge` (9-slice panels, card frames)
+   in `tools/AssetForge` are the missing pieces. The HUD reads like the floor yet still lives in
+   the window's letterbox rather than inside the canvas.
+5. **Play a run and judge the movement and the weather.** The harness measures the canvas and the
+   mixer, but whether 0.11 s per cell plus a 0.6 s killer still allows escape by reflex, and
+   whether 30 particles are visible enough at 3x, needs a human at the window.
+6. **Keep the seams clean.** `GameFactory.CreateFloor` remains the only place a floor is built,
+   `Campaign` the only place floors, hearts and drafts are sequenced, and `GameState` the only
+   source of gameplay events. Movement timing lives in Core, never in a frontend; audio never
+   lives in Core.
 7. Re-run `dotnet build`, `dotnet test`, the renderer harness and a window session after every
    phase; update `PROGRESS.md` and the phase table in `FUTURE.md`.
 
 ## Completed
 
+- [x] 2026-10-21 — Twenty distinct places. `Theme` gained a floor motif, wall motif, signature
+      feature and weather; `MotifTiles` draws nine new floor grammars, seven new wall grammars,
+      their faces, eleven signature objects and a mirrored emblem; every face and feature carries
+      a theme-seeded maker's mark, so all twenty are pixel-distinct. `FloorStyle` (accent, weather,
+      warm/cold light, fog) drives a 30-particle weather layer and the HUD; `FloorChrome` and
+      `FloorEmblem` give every floor a name plate and a mark; the intro, cleared and summary cards
+      show the emblem and a palette strip. `--check` now requires six structural differences
+      between neighbours. Fixed a latent crash on the 11x11 Warren (renderer kept the constructor's
+      15x15 bounds). 14 new tests (675 total), 2,264 tiles, all twenty floors and the cards drawn
+      in a real window.
+- [x] 2026-10-20 — Roguelike Phase 7: audio. `GameEvent` + `GameState.DrainEvents()` (twelve
+      moments, capped queue); `Synth` (oscillators, noise, one-pole, band-pass, soft clip,
+      Schroeder reverb), `SfxBank` (22 recipes, all distinct, 0.09–1.8 s, peak ≤ 0.9); `MusicTheme`
+      + `MusicCatalog` (20 tracks keyed by atlas id, 5 motifs, 4 bands) and `ScoreRenderer` (three
+      stems, wrapped tails, reverb around the loop, seam ≤ 0.016); `MusicMix` (distance → Calm /
+      Tense / Chase, bar-aligned) and `AudioEngine` (16 voices, duck, 0.006 ms/block);
+      `AudioDirector` (Raylib stream callback through an `UnmanagedCallersOnly` shim, silent when
+      there is no device, 100% of real time on this machine). 56 new tests (661 total).
+- [x] 2026-10-20 — Twenty floors, twenty themes, and walls that read. `FloorCatalog` grew from three
+      floors to twenty, each with a gimmick line and optional rule overrides (vision, barriers,
+      wisps, loops, braid, killer aura, respawn, grace) composed by `GameConfig.ForFloor`;
+      `ThemeCatalog` grew to twenty parameter sets across the three families, with `--check` holding
+      colour and shape apart for every neighbour. `RaylibRenderer.ThemeAccent` gives each floor its
+      colour, now also used for the letterbox. The Rootbound wall problem was traced to wall-bright
+      floor growth, fixed in `WrongOrganicTiles` and `WallStrips` (outline at both band edges) and
+      guarded by `WallContrastTests` plus a floor-vs-band measurement: 1.96–7.30x across the themes.
+      604 tests pass; 20 atlases, 2,224 tiles.
+- [x] 2026-10-20 — Camera viewport, visible walls, resizable window. `PixelLayout` sizes the canvas
+      from the vision radius (9–13 cells, odd) and `PixelCamera` follows the player, clamped to the
+      floor; `PixelRenderer` culls to the viewport, rebuilds the lightmap per viewport cell, and
+      keeps a whole-maze exploration set. A vision card zooms the camera out by rebuilding the
+      render target. The palette ladder and `WallStrips` were reworked so a wall band is 1.7x its
+      floor in relative luminance with a bright rim and a near-black shadow, guarded by
+      `WallContrastTests`; the window opens at 696x872 and is resizable to 6x. 596 tests pass.
 - [x] 2026-10-20 — Phase 6 slice 2a: three shape families and the compiled font. `TileFamily` +
       `TileGrammar` dispatch floor/wall/face/props to `CaveTiles`, `WrongOrganicTiles` and
       `WorkedStoneTiles` (three shape languages, no shared drawing code), and `ThemeFamilyTests`
@@ -639,6 +812,15 @@ the system typeface.
 
 ## Known Issues / Bugs
 
+- **The audio is measured, not heard.** Every check that can run headless passes (all twenty
+  tracks audible, inside the ceiling, in time, seamless, deterministic; all 22 effects distinct;
+  the device drained at exactly real time), but nobody has listened to a run. The balance ratios,
+  the reverb amounts and whether the motifs are memorable are taste calls. The one design
+  deviation from `FUTURE.md` §8.3 is that the FX checks live in `MazeGame.Tests` rather than
+  `AssetForge --check`: the recipes are in the UI assembly and the tool must not reference the
+  game.
+- **A floor's score is rendered on the main thread** (45–150 ms) while the intro card is up, and
+  the old stems become garbage. That is a one-frame hitch between floors, not a per-frame cost.
 - **The menus are still vector.** The play screen draws from the atlases, but the title, floor
   intro, draft grid and run summary are still the old primitive renderer, because the font atlas
   that would let them be drawn in pixels does not exist yet. The two look different on purpose for
