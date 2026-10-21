@@ -52,6 +52,20 @@ public sealed class RunModifiers
         double? lureSeconds,
         double lureStunSeconds,
         int lureVisionPenalty,
+        int blinkCharges,
+        int veilCharges,
+        int dragCharges,
+        int lanternCharges,
+        int shoveCharges,
+        bool firstCatchFree,
+        bool magneticKeys,
+        bool reviveOnce,
+        bool blinkRefundOnKey,
+        int catchCost,
+        double veilDurationSeconds,
+        double dragSeconds,
+        double dragPenaltySeconds,
+        int lanternRange,
         int healOnFloorClear)
     {
         _cards = cards;
@@ -73,6 +87,20 @@ public sealed class RunModifiers
         LureSeconds = lureSeconds;
         LureStunSeconds = lureStunSeconds;
         LureVisionPenalty = lureVisionPenalty;
+        BlinkCharges = blinkCharges;
+        VeilCharges = veilCharges;
+        DragCharges = dragCharges;
+        LanternCharges = lanternCharges;
+        ShoveCharges = shoveCharges;
+        FirstCatchFree = firstCatchFree;
+        MagneticKeys = magneticKeys;
+        ReviveOnce = reviveOnce;
+        BlinkRefundOnKey = blinkRefundOnKey;
+        CatchCost = catchCost;
+        VeilDurationSeconds = veilDurationSeconds;
+        DragSeconds = dragSeconds;
+        DragPenaltySeconds = dragPenaltySeconds;
+        LanternRange = lanternRange;
         HealOnFloorClear = healOnFloorClear;
     }
 
@@ -97,6 +125,20 @@ public sealed class RunModifiers
         lureSeconds: null,
         lureStunSeconds: 0,
         lureVisionPenalty: 0,
+        blinkCharges: 0,
+        veilCharges: 0,
+        dragCharges: 0,
+        lanternCharges: 0,
+        shoveCharges: 0,
+        firstCatchFree: false,
+        magneticKeys: false,
+        reviveOnce: false,
+        blinkRefundOnKey: false,
+        catchCost: 0,
+        veilDurationSeconds: 0,
+        dragSeconds: 0,
+        dragPenaltySeconds: 0,
+        lanternRange: 0,
         healOnFloorClear: 0);
 
     /// <summary>Gets the cards held, in the order they were taken.</summary>
@@ -155,6 +197,48 @@ public sealed class RunModifiers
 
     /// <summary>Gets how much vision a burning wisp costs.</summary>
     public int LureVisionPenalty { get; }
+
+    /// <summary>Gets the change to each floor's blink charges.</summary>
+    public int BlinkCharges { get; }
+
+    /// <summary>Gets the change to each floor's veil charges.</summary>
+    public int VeilCharges { get; }
+
+    /// <summary>Gets the change to each floor's drag charges.</summary>
+    public int DragCharges { get; }
+
+    /// <summary>Gets the change to each floor's lantern charges.</summary>
+    public int LanternCharges { get; }
+
+    /// <summary>Gets the change to each floor's shove charges.</summary>
+    public int ShoveCharges { get; }
+
+    /// <summary>Gets a value indicating whether the first catch each floor is free.</summary>
+    public bool FirstCatchFree { get; }
+
+    /// <summary>Gets a value indicating whether adjacent keys are collected automatically.</summary>
+    public bool MagneticKeys { get; }
+
+    /// <summary>Gets a value indicating whether the first fatal catch each floor is survived.</summary>
+    public bool ReviveOnce { get; }
+
+    /// <summary>Gets a value indicating whether a key returns a blink charge.</summary>
+    public bool BlinkRefundOnKey { get; }
+
+    /// <summary>Gets the change to the hearts a catch costs.</summary>
+    public int CatchCost { get; }
+
+    /// <summary>Gets the change to a veil's duration.</summary>
+    public double VeilDurationSeconds { get; }
+
+    /// <summary>Gets the change to Drag's slow window.</summary>
+    public double DragSeconds { get; }
+
+    /// <summary>Gets the change to Drag's hangover.</summary>
+    public double DragPenaltySeconds { get; }
+
+    /// <summary>Gets the change to the lantern's throw range.</summary>
+    public int LanternRange { get; }
 
     /// <summary>Gets the hearts restored on every floor clear.</summary>
     public int HealOnFloorClear { get; }
@@ -216,6 +300,20 @@ public sealed class RunModifiers
             effect.LureSeconds ?? LureSeconds,
             LureStunSeconds + effect.LureStunSeconds,
             LureVisionPenalty + effect.LureVisionPenalty,
+            BlinkCharges + effect.BlinkCharges,
+            VeilCharges + effect.VeilCharges,
+            DragCharges + effect.DragCharges,
+            LanternCharges + effect.LanternCharges,
+            ShoveCharges + effect.ShoveCharges,
+            FirstCatchFree || effect.FirstCatchFree,
+            MagneticKeys || effect.MagneticKeys,
+            ReviveOnce || effect.ReviveOnce,
+            BlinkRefundOnKey || effect.BlinkRefundOnKey,
+            CatchCost + effect.CatchCost,
+            VeilDurationSeconds + effect.VeilDurationSeconds,
+            DragSeconds + effect.DragSeconds,
+            DragPenaltySeconds + effect.DragPenaltySeconds,
+            LanternRange + effect.LanternRange,
             HealOnFloorClear + effect.HealOnFloorClear);
     }
 
@@ -242,6 +340,12 @@ public sealed class RunModifiers
         }
 
         var sealSeconds = Math.Max(0, BarrierSealSeconds ?? config.BarrierSealSeconds);
+        var powerups = config.Powerups
+            .Adjust(PowerupKind.Blink, BlinkCharges)
+            .Adjust(PowerupKind.Veil, VeilCharges)
+            .Adjust(PowerupKind.Drag, DragCharges)
+            .Adjust(PowerupKind.Lantern, LanternCharges)
+            .Adjust(PowerupKind.Shove, ShoveCharges);
         var lureSeconds = Math.Max(MinimumStepSeconds, LureSeconds ?? config.LureSeconds);
         var stepSeconds = Math.Max(MinimumStepSeconds, config.EnemyStepSeconds * EnemyStepScale);
 
@@ -257,6 +361,16 @@ public sealed class RunModifiers
             LureSeconds = lureSeconds,
             LureStunSeconds = Math.Max(0, config.LureStunSeconds + LureStunSeconds),
             LureVisionPenalty = Math.Max(0, config.LureVisionPenalty + LureVisionPenalty),
+            Powerups = powerups,
+            FirstCatchFree = config.FirstCatchFree || FirstCatchFree,
+            MagneticKeys = config.MagneticKeys || MagneticKeys,
+            ReviveOnce = config.ReviveOnce || ReviveOnce,
+            BlinkRefundOnKey = config.BlinkRefundOnKey || BlinkRefundOnKey,
+            CatchCost = Math.Max(1, config.CatchCost + CatchCost),
+            VeilDurationSeconds = Math.Max(0.1, config.VeilDurationSeconds + VeilDurationSeconds),
+            DragSeconds = Math.Max(0, config.DragSeconds + DragSeconds),
+            DragPenaltySeconds = Math.Max(0, config.DragPenaltySeconds + DragPenaltySeconds),
+            LanternRange = Math.Max(0, config.LanternRange + LanternRange),
             EnemyStepSeconds = stepSeconds,
             PlayerStepSeconds = Math.Max(0, config.PlayerStepSeconds * PlayerStepScale),
             InvulnerabilitySeconds = Math.Max(0, config.InvulnerabilitySeconds + InvulnerabilitySeconds),
@@ -289,10 +403,44 @@ public sealed class RunModifiers
 
         Append(text, "VISION", VisionRadius);
         Append(text, "AURA", EnemyAuraDistance);
+        Append(text, "BLINK", BlinkCharges);
+        Append(text, "VEIL", VeilCharges);
+        Append(text, "DRAG", DragCharges);
+        Append(text, "LANTERN", LanternCharges);
+        Append(text, "SHOVE", ShoveCharges);
         Append(text, "BARRIERS", BarrierBudget);
         Append(text, "WISPS", LureCount);
         Append(text, "KEYS", KeyCount);
         Append(text, "HEARTS", MaxHearts);
+        Append(text, "LANTERN RANGE", LanternRange);
+
+        if (CatchCost != 0)
+        {
+            AppendText(
+                text,
+                $"CATCH COST {CatchCost.ToString("+0;-0", CultureInfo.InvariantCulture)}");
+        }
+
+        if (VeilDurationSeconds != 0)
+        {
+            AppendText(
+                text,
+                $"VEIL {VeilDurationSeconds.ToString("+0.#;-0.#", CultureInfo.InvariantCulture)}s");
+        }
+
+        if (DragSeconds != 0)
+        {
+            AppendText(
+                text,
+                $"DRAG {DragSeconds.ToString("+0.#;-0.#", CultureInfo.InvariantCulture)}s");
+        }
+
+        if (DragPenaltySeconds != 0)
+        {
+            AppendText(
+                text,
+                $"DRAG HANGOVER {DragPenaltySeconds.ToString("+0.#;-0.#", CultureInfo.InvariantCulture)}s");
+        }
 
         if (BarrierSealSeconds is { } seal)
         {

@@ -3,24 +3,29 @@
 Single source of truth for the state of the project. Update this file at the end of
 every work session (see the handoff protocol in `HANDOFF.md`).
 
-Last updated: 2026-10-21 (second playtest: the death card shows the floor reached, and the maze
-grows as the run descends)
+Last updated: 2026-10-21 (third playtest: the five-verb powerup kit, and descent conditions chosen
+at gates on floors 8 and 14)
 
 ## Current Status
 
-The solution builds with zero warnings, `dotnet test` is green (703 tests), and the game runs
-**in a Raylib window** as a **twenty-floor campaign with a card draft between floors and timed
-steps**: the title leads to a floor intro card, then a seeded maze (15x15 at the top, 25x25 at the
-bottom) drawn as a bioluminescent cave — fog of war, braided dead ends, keys, an exit, sealed barriers, wisps, and a killer that
-hunts the player with Dijkstra. **The player has three hearts**: a catch costs one, throws the
+The solution builds with zero warnings, `dotnet test` is green (748 tests), and the game runs
+**in a Raylib window** as a **twenty-floor campaign with a card draft between floors, five
+powerups and timed steps**: the title leads to a floor intro card, then a seeded maze (15x15 at
+the top, 25x25 at the bottom) drawn as a bioluminescent cave — fog of war, braided dead ends,
+keys, an exit, and a killer (or three) that hunts the player with Dijkstra. **Every floor refills
+five one-key verbs** — Blink, Veil, Drag, Lantern and Shove — and **floors 8 and 14 are gates**
+where the run takes one of two **descent conditions** for the rest of the descent. **The player has three hearts**: a catch costs one, throws the
 killer to a distant cell and stuns it, and keeps every key and barrier; hearts carry from floor to
-floor, so the run is lost only when the last heart is. Walking is now a **cadence** — 0.14 s per
-cell on floor 1, tightening within each arc as you descend — with one buffered input and **sprint on Shift** (a
+floor, so the run is lost only when the last heart is. Walking is now a **cadence** — a constant 0.26 s per
+cell, with cards and sprint as the only speed-ups — while hunters start at 1.20 s and ramp to 0.22 s,
+so the player starts well ahead but has to draft speed to stay ahead. One buffered input and **sprint on Shift** (a
 1.2 s stamina bar). The explorer **snaps to its tile** (one press, one tile, so the grid is
 countable while running) and the killer **slides** between its cells. Clearing an arch opens a **draft of three cards — take one or skip for a heart** — and
 the twentieth arch wins the run. The terminal view offered by `--console` (and used automatically when
-no window can be opened) plays the same campaign in ASCII. The catalog holds **thirteen cards**,
-including the four movement cards. The **sprite compiler is complete to its Phase 5 exit**: every
+no window can be opened) plays the same campaign in ASCII. The catalog holds **twenty-three
+cards**: the four movement cards, the four powerup cards and a second wave that changes a catch,
+a key pickup, a powerup's duration or a revival, with a guaranteed rare on every fifth floor and
+rarer draws late in the run. The HUD shows the five powerup charges as a row of keyed slots. The **sprite compiler is complete to its Phase 5 exit**: every
 committed atlas under `src/MazeGame.UI/Content/Generated` holds the full tileset (floor variants,
 wall, four thin wall faces, 16 edge and 47 blob tiles) and the whole cast, checked by `--check`.
 **The floor is drawn from those atlases**: a 16 px-per-cell virtual canvas, blitted to the
@@ -35,7 +40,48 @@ and meters, a Schroeder reverb and an intensity mix that follows the nearest hun
 opened through
 Raylib's stream callback; with no device the game is silent rather than broken.
 
-What changed in this pass (the run's score, and a maze that grows):
+What changed in this pass (the five-verb kit and the descent gates):
+
+- **The old barrier/wisp kit is retired from the player's hands.** `PowerupKind` and
+  `PowerupCharges` carry five verbs with per-floor charges — Blink (2), Veil (3), Drag (1),
+  Lantern (1), Shove (1), taught one at a time on floors 1, 2, 4, 6 and 8 and deepened twice.
+  `GameState` implements each as a rule: `TryBlink` removes the wall and moves through it,
+  `TryVeil` channels 0.6 s and hides for 3 s, `TryDrag` scales the hunter clocks 0.4x then 1.1x
+  for 5 s, `TryThrowLantern` moves `LightOrigin` up to four cells, and `TryShove` pushes a hunter
+  two cells and stuns it for 2 s while giving every other hunter its next step. A charge is spent
+  only on success. Both frontends bind Space/V/T/L/F, and the HUD prints the five counts.
+- **Eight descent conditions, chosen at two gates.** `DescentCondition` + `ConditionOffer` +
+  `DescentConditionCatalog` (names, one-sentence rules, seeded two-card offer) and
+  `Campaign.TakeCondition`; `TryAdvanceFloor` refuses to pass floor 8 or 14 until the gate is
+  resolved. Regrowth seals an empty dead end every 18 s, Fracture opens one wall and closes
+  another every 22 s behind a connectivity check, Eclipse drops vision for 6 of every 16 s,
+  Listener makes the hunt turn-based, Pack moves every hunter on one clock, Hunted makes the
+  first hunter always visible and 20% faster, Mute removes one rotating tool and adds a heart,
+  and Drift moves the exit after every key. The chosen rules ride `GameConfig.Conditions` and
+  are shown on the HUD and intro card.
+- **Content follows the kit.** The four cards built on barriers/wisps (Deep Roots, Thornwright,
+  Bait, Smoke Wisp) were rewritten as Blink Step, Long Veil, Lantern Oil and Quick Hands;
+  `CardEffect` and `RunModifiers` now compose the five charge deltas, clamped at zero. The Gilded
+  Cage, The Foundry and The Moth Garden trade their seal/wisp gimmicks for "no blink", "shoves are
+  cheap" and "lanterns are cheap".
+- **The cards were then overhauled.** The catalog grew from thirteen to twenty-three with ten
+  rule-backed cards: Featherfall (first catch free), Greedy Grasp (magnetic keys), Bloom (one
+  revival per floor), Blink Ledger (a key returns a blink), Ghost Veil (longer veil), Long Drag
+  (longer slow and hangover), Wide Light (longer throw), Glass Cannon (faster but catches cost two
+  hearts), Debt of Sight (two more hearts for two less vision) and Slow Pursuit (slower killer,
+  one more key). `GameConfig` and `GameState` gained the hooks (free catch, revival, catch cost,
+  magnetic pickup, blink refund, veil/drag durations, lantern range), and `RunModifiers` composes
+  them. `DraftFactory` now weights tiers by floor band and guarantees a rare on floors 5, 10, 15
+  and 20 when one is eligible, so a rare is an event rather than a lucky draw. The HUD replaced
+  the tiny one-line charge readout with five glass slots that show each key, its count, and a
+  glow while that verb is active.
+- **Tests for every new rule.** `GameStatePowerupTests` (13), `GameStateConditionTests` (9),
+  `CampaignGateTests` (3) and `GameStateCardRuleTests` (8) pin both halves of each verb, each
+  condition's on/off behaviour, the gate refusal, the seeded offer and each new card hook;
+  `RunModifiersTests`, `CardCatalogTests` and `DraftFactoryTests` cover the card pass and the
+  banded draw. 45 new tests (748 total).
+
+What changed in the previous pass (the run's score, and a maze that grows):
 
 - **The death card names the floor the run ended on.** `PixelCards.Caught` now takes the floor's
   number, the run's floor count and the floor's name, and prints `YOU MADE IT TO / FLOOR 7 OF 20`
@@ -60,10 +106,11 @@ What changed in the previous pass (Phase 9 — the difficulty curve and the scor
   existing rule test still means what it did. A catch throws only the hunter that made it and
   stuns all of them; a hunter prices another's cell as four steps so two rarely stack; the music
   follows the nearest one. The footer draws one red pip per hunter, so the count is visible.
-- **The player's cadence is a sawtooth, not a slide.** Floor 1 is slower (0.14 s a cell), each arc
-  tightens to its own end (0.10 s by the Warren, 0.07 s by the Tide, 0.08 s at the bottom), and
-  the heavy floors reset it. `FloorCatalog` documents the arc; `FloorCatalogTests` scores a floor
-  as hunter-steps per second and requires most floors to raise it and floor 20 to be the highest.
+- **The player's cadence is flat; the hunt is not.** Every floor uses
+  `FloorCatalog.PlayerCadenceSeconds` (0.26 s a cell), so speed comes only from cards or sprint.
+  Hunters start at 1.20 s and ramp to 0.22 s, so floor 1 is a clear player advantage and the last
+  floor's base hunter outpaces the base player. `FloorCatalogTests` pins the constant, the start
+  advantage, the late hunter advantage, and scores the descent as hunter-steps per second.
 - **The lantern spills onto the rock.** `GameConfig.NearSightRadius` (default 2, capped by the
   torch) adds the cells within straight-line distance of the player to the visible set, walls or
   no walls. That is the missing piece behind the "wall with a hole in it" look: wall faces are
@@ -668,9 +715,11 @@ work is chrome (9-slice frames, card art) rather than identity.
 
 **Open from the second playtest (2026-10-21):** the player never used a powerup, did not enjoy the
 cards, and wants the later floors to play differently. The death screen and the growing maze from
-that session are shipped. `FUTURE.md` §18 proposes retiring barriers and wisps for a five-verb kit
-(Blink, Veil, Drag, Lantern, Shove) and adding two run-scoped **descent conditions** chosen at
-floors 8 and 14. None of that is implemented yet; its first slice is Blink + Drag + Regrowth.
+that session are shipped. `FUTURE.md` §18 proposed retiring barriers and wisps for a five-verb
+kit (Blink, Veil, Drag, Lantern, Shove) and adding two run-scoped **descent conditions** chosen at
+floors 8 and 14; that whole pass is now shipped, including the gate screen, the HUD marks, the
+three replacement floor gimmicks and the card rewrite. What it needs next is the playtest, not
+more code.
 
 0. **Play floors 1–4 with a hand on the keys.** The playtest that produced this pass stopped at
    floor 4, and it reported four things: static, unreadable walls, a hold that did not walk, and
@@ -687,9 +736,9 @@ floors 8 and 14. None of that is implemented yet; its first slice is Blink + Dra
    effects at 0.9, duck to 35%) are guesses that only an ear can settle. The knobs are
    `AudioEngine.MusicGain`/`EffectGain`/`DuckDepth`, `MusicMix.Gains` and the per-theme `Mix` in
    `MusicCatalog`.
-3. **Phase 8's remaining content.** Seven of the thirteen catalog cards are still unbuilt (the
-   curse pair needs rare-with-a-price, the rest need hazards or blueprint changes), and the run has
-   no save/continue yet: remaining cards, hazards and suspend/resume.
+3. **Phase 8's remaining content.** Five of the twenty-eight planned cards are still unbuilt (the
+   rest need hazards, echoes or blueprint changes), and the run has no save/continue yet:
+   remaining cards, hazards and suspend/resume.
 4. **Give the cards art.** Every screen is now in the compiled face, but a draft card is still
    type on a rectangle: `Pictograms` (24x24 card art) and `UiForge` (9-slice panels, card frames)
    in `tools/AssetForge` are the missing pieces. The HUD reads like the floor yet still lives in
@@ -700,7 +749,7 @@ floors 8 and 14. None of that is implemented yet; its first slice is Blink + Dra
    `GameConfig.HunterStackCost`; the first thing to try if 10 feels unfair is a slower hunter, not
    a smaller one.
 6. **Play a run and judge the movement and the weather.** The harness measures the canvas and the
-   mixer, but whether 0.14 s per cell on floor 1 plus a 0.62 s hunter still allows escape by
+   mixer, but whether 0.26 s per cell on floor 1 plus a 1.20 s hunter still allows escape by
    reflex, and whether 30 particles are visible enough at 3x, needs a human at the window.
 7. **Keep the seams clean.** `GameFactory.CreateFloor` remains the only place a floor is built,
    `Campaign` the only place floors, hearts and drafts are sequenced, and `GameState` the only
@@ -711,6 +760,17 @@ floors 8 and 14. None of that is implemented yet; its first slice is Blink + Dra
 
 ## Completed
 
+- [x] 2026-10-21 — The card overhaul. The catalog is twenty-three cards; ten new rule hooks in
+      `GameConfig`/`GameState` (free first catch, per-floor revival, catch cost, magnetic keys,
+      blink refunds, veil/drag durations, lantern range); `RunModifiers` composition and draft
+      totals; floor-banded tier weights and a guaranteed rare every fifth floor; a five-slot
+      powerup HUD; 20 new tests (748).
+- [x] 2026-10-21 — The five-verb kit and the descent gates. `PowerupKind`/`PowerupCharges` with
+      per-floor refills and the teaching ladder; five verbs in `GameState` with their prices; five
+      `GameEvent` moments (plus wall/exit/eclipse events); HUD counts in both renderers; the
+      condition enum, catalog, seeded offer and `Campaign` gate; eight condition rules including
+      two that mutate the maze behind a connectivity check; `CardEffect`/`RunModifiers` charge
+      deltas and four rewritten cards; three replacement floor gimmicks; 25 new tests (728).
 - [x] 2026-10-21 — Twenty distinct places. `Theme` gained a floor motif, wall motif, signature
       feature and weather; `MotifTiles` draws nine new floor grammars, seven new wall grammars,
       their faces, eleven signature objects and a mirrored emblem; every face and feature carries
@@ -985,17 +1045,16 @@ floors 8 and 14. None of that is implemented yet; its first slice is Blink + Dra
 - **The draft screen's look is unjudged.** Card sizing, the two-row layout above three offers and
   the wrapped face text are drawn and measured, but the pixels cannot be read here. The knobs are
   local to `RaylibRenderer.DrawDraft`/`DrawCardFace`.
-- **Lucky Find cannot appear in the shipped run.** Its price is paid one draft later, and a
-  three-floor run has no second draft after its first, so the draft withholds it rather than offer
-  a free upgrade. It is catalogued and tested, and appears in runs of four or more floors. That is
-  deliberate (see `DECISIONS.md`) but means one of the thirteen cards is currently unreachable.
-- **Card balance is unproven.** Thirteen trades were chosen for rule expressiveness, not for a tuned
-  curve; `Blood Pact` (+1 heart for a 12% faster killer) and `Deep Roots` (18 s seals for one
-  barrier fewer) are the two most likely to be either mandatory or a trap. The numbers are in
-  `CardCatalog`.
-- **Tiers do not gate by floor yet.** With three floors, the planned bands (commons 1–8, uncommons
-  from 5, rares from 11) would collapse onto floor 1, so the tier currently weights the draw and
-  colours the card instead. The bands arrive with the twenty-floor campaign.
+- **Lucky Find is a mid-run card only.** Its price is paid one draft later, so the draft
+  withholds it unless at least two drafts remain; it cannot appear in the last two drafts of a
+  run. It is catalogued and tested, and its eligibility is guarded rather than left to the RNG.
+- **Card balance is unproven.** Twenty-three trades were chosen for rule expressiveness, not for a
+  tuned curve; `Glass Cannon` (25% faster for a two-heart catch) and `Debt of Sight` (+2 hearts for
+  two steps less vision) are the two most likely to be either mandatory or a trap. The numbers are
+  in `CardCatalog`.
+- **Tiers are weighted, not hard-gated.** The draw shifts from commons towards rares as the run
+  descends and every fifth floor guarantees a rare when one is eligible, but a lucky floor-1 draft
+  can still contain one. A strict band gate is a later tuning decision, not missing machinery.
 - **The campaign has no save yet.** Quitting mid-run throws the run away; the save file is
   Phase 8 because it depends on the final floor/card data. A run is currently short enough
   (three floors) that this is tolerable, but it must not survive into the twenty-floor build.
@@ -1059,9 +1118,10 @@ floors 8 and 14. None of that is implemented yet; its first slice is Blink + Dra
 1. **Objectives — answered:** collect keys, exit unlocks when all are collected (3 by
    default). Defaults for `KeyCount` and their scaling with maze size are still tunable in
    `GameConfig`.
-2. **Skill mechanic — answered:** three barriers that seal for 10 s and then become a 3-second
-   toll, plus two wisps that pull the killer off its route for 6 s. Both share one aiming mode.
-   Whether *two* mechanics is too much for the course demo is a team decision.
+2. **Skill mechanic — answered, then revised:** the shipped kit is now **five one-key verbs**
+   (Blink, Veil, Drag, Lantern, Shove) with per-floor charges. Barriers and wisps survive as
+   floor rules and tests but are no longer placed by the player. The open question is which
+   verbs the playtest actually reaches for, not how many mechanics to build.
 3. **Braided mazes — answered for now:** shipped as two decorators (`DeadEndBraider` at 55% and
    `BraidedMazeGenerator` with 8 loops) on top of the graded perfect generator, which is
    untouched. Either can be switched off (`DeadEndBraidPercent = 0`, `ExtraLoops = 0`).
@@ -1081,7 +1141,7 @@ Run these from the repository root (the folder containing `MazeGame.sln`):
 
 ```bash
 dotnet build                      # must report 0 Warning(s), 0 Error(s)
-dotnet test                       # currently 574/574 passing
+dotnet test                       # currently 748/748 passing
 dotnet run --project tools/AssetForge -- --check   # atlases and themes are healthy
 dotnet run --project src/MazeGame.UI              # Raylib window
 dotnet run --project src/MazeGame.UI -- --console # terminal fallback
@@ -1096,7 +1156,7 @@ If `dotnet` is not on `PATH` (this is the case on the setup machine):
 ```
 
 Controls: on the title, W/S or the arrows select and Enter/Space confirms. In play, WASD or arrow
-keys move, **hold Shift to sprint** (window only; the console has no sprint yet), `B` or Space aims
-a barrier, `R` aims a wisp (then WASD moves the cursor, B/Space/Enter places it, Esc cancels), and
-Q or Esc quits. After a run, `R` or Enter descends
-again. The same keys work in the window and in the terminal.
+keys move, **hold Shift to sprint** (window only; the console has no sprint yet), and the five
+powerups are Space (Blink), V (Veil), T (Drag), L (Lantern) and F (Shove). At a gate, A/D selects a
+condition and Enter takes it. Q or Esc quits; after a run, R or Enter descends again. The same keys
+work in the window and in the terminal.

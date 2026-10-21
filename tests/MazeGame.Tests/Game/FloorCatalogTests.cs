@@ -10,10 +10,10 @@ namespace MazeGame.Tests.Game;
 /// its own place and rule, and the descent getting meaner as it goes.
 /// </summary>
 /// <remarks>
-/// Pace is no longer a straight line down the list: several floors are deliberately slow and lit,
-/// or fast and blind, because that is the gimmick. The tests therefore assert the *shape* of the
-/// descent — the last floor is the fastest, most floors tighten, and the player always outruns the
-/// killer — rather than a strictly falling number.
+/// Player pace is a run-wide constant: the descent gets meaner through enemy pace and hunter count,
+/// and only cards make the player faster. The tests therefore assert that every floor builds the
+/// same player cadence, that the player starts ahead of the hunt, that the late hunters can outpace
+/// the base player, and that the *enemy* pressure rises across the run.
 /// </remarks>
 public sealed class FloorCatalogTests
 {
@@ -167,9 +167,11 @@ public sealed class FloorCatalogTests
 
         for (var index = 1; index < floors.Count; index++)
         {
+            // The opening floors are deliberately slow, and the lit Salt Choir is a scripted
+            // breather; every other floor has to keep the hunt moving.
             Assert.True(
-                floors[index].EnemyStepSeconds <= 1.0,
-                $"floor {index + 1} gives the killer {floors[index].EnemyStepSeconds}s a step; only a slow, lit floor is allowed to be a breather.");
+                floors[index].EnemyStepSeconds <= 1.4,
+                $"floor {index + 1} gives the killer {floors[index].EnemyStepSeconds}s a step; only the opening or a slow, lit floor is allowed to be a breather.");
 
             // Pressure is steps per second times hunters: the number of hunters is the big dial,
             // and the step time is the small one. A floor that is slower per hunter can still be
@@ -231,20 +233,39 @@ public sealed class FloorCatalogTests
     }
 
     [Fact]
-    public void Shipped_ThePlayerStartsSlowAndEarnsSpeedInEachArc()
+    public void Shipped_PlayerSpeedIsConstantAndOnlyCardsChangeIt()
     {
-        var floors = FloorCatalog.Shipped;
+        // A roguelike's power curve belongs to the draft, not to the floor number: the player must
+        // not wake up faster on floor 12 for free. Enemy pace and hunter count carry the descent.
+        Assert.Equal(0.26, FloorCatalog.PlayerCadenceSeconds, 3);
 
-        Assert.Equal(0.14, floors[0].PlayerStepSeconds, 3);
+        foreach (var floor in FloorCatalog.Shipped)
+        {
+            Assert.Equal(
+                FloorCatalog.PlayerCadenceSeconds,
+                floor.PlayerStepSeconds,
+                3);
+        }
+    }
+
+    [Fact]
+    public void Shipped_OnlyACardCanBeatTheBaseCadence()
+    {
+        // The last floor is the check that matters: its config must still be the base pace, and a
+        // speed card must be what shortens it. A floor number must never do the card's job.
+        var config = new GameConfig().ForFloor(FloorCatalog.ByNumber(20), startingHearts: 3);
+
+        Assert.Equal(FloorCatalog.PlayerCadenceSeconds, config.PlayerStepSeconds, 9);
+
+        var faster = RunModifiers.None.With(CardCatalog.ById("light-feet")!).Apply(config);
+
         Assert.True(
-            floors[8].PlayerStepSeconds < floors[0].PlayerStepSeconds,
-            "the first arc never gives the player any speed back.");
+            faster.PlayerStepSeconds < config.PlayerStepSeconds,
+            "Light Feet must still speed up the player on the last floor.");
+
         Assert.True(
-            floors[14].PlayerStepSeconds < floors[9].PlayerStepSeconds - 0.02,
-            "a two-hunter arc has to be faster than its own start, or the new hunters are the only change.");
-        Assert.True(
-            floors[19].PlayerStepSeconds < floors[15].PlayerStepSeconds,
-            "the last arc does not tighten the player's pace.");
+            faster.PlayerStepSeconds < config.EnemyStepSeconds,
+            "one speed card must be enough to outrun the last floor's base hunter.");
     }
 
     /// <summary>Returns a floor's danger as hunter-steps per second.</summary>
@@ -253,30 +274,31 @@ public sealed class FloorCatalogTests
         floor.HunterCount / floor.EnemyStepSeconds;
 
     [Fact]
-    public void Shipped_EveryFloorHasTimedMovementAndOutrunsTheKiller()
+    public void Shipped_ThePlayerStartsAheadButTheHuntCatchesUp()
     {
-        foreach (var floor in FloorCatalog.Shipped)
+        var floors = FloorCatalog.Shipped;
+
+        foreach (var floor in floors)
         {
             Assert.True(
                 floor.PlayerStepSeconds > 0,
                 $"floor {floor.Number} would be instant, which is a test-floor setting, not a shipped one");
-
-            // The chase's shape comes from this ratio: the player must always be the faster one.
-            Assert.True(
-                floor.PlayerStepSeconds < floor.EnemyStepSeconds,
-                $"floor {floor.Number} would let the killer outrun the player");
         }
-    }
 
-    [Fact]
-    public void Shipped_NoFloorLetsThePlayerStepSlowerThanATenth()
-    {
-        foreach (var floor in FloorCatalog.Shipped)
-        {
-            Assert.True(
-                floor.PlayerStepSeconds <= 0.15,
-                $"floor {floor.Number} moves at {floor.PlayerStepSeconds}s a cell, which feels stuck rather than heavy.");
-        }
+        // Floor 1 is the teaching floor: the player has a clear speed advantage.
+        Assert.True(
+            floors[0].PlayerStepSeconds < floors[0].EnemyStepSeconds,
+            "the player does not start faster than the first hunter");
+
+        // By the bottom, the base hunter is quicker than the base player. That is the pressure
+        // that makes speed cards a real draft decision rather than a nice-to-have.
+        Assert.True(
+            floors[^1].EnemyStepSeconds < floors[^1].PlayerStepSeconds,
+            "the last floor never forces the player to spend a card on speed");
+
+        Assert.True(
+            floors[^1].EnemyStepSeconds < floors[0].EnemyStepSeconds,
+            "the enemy pace never ramps up across the run");
     }
 
     [Fact]

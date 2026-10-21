@@ -195,12 +195,27 @@ internal static class RaylibFrontend
                     if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) || Pressed(KeyboardKey.Space))
                     {
                         // The cleared card is the results beat; the choice itself is the next
-                        // screen, so the player reads what the floor cost before picking.
-                        screen = Screen.Draft;
+                        // screen. A gate comes first: the run changes its rules before it offers
+                        // a card, so the draft's heart preview already includes Mute.
+                        screen = campaign!.ConditionOffer is not null ? Screen.ConditionDraft : Screen.Draft;
                         selected = 0;
 
                         // The killer is not on this screen; drop to the bed while the cards are up.
                         audio?.SetIntensity(MusicIntensity.Calm);
+                    }
+                    else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
+                    {
+                        return campaign;
+                    }
+
+                    break;
+
+                case Screen.ConditionDraft:
+                    if (ReadConditionChoice(campaign!, ref selected))
+                    {
+                        audio?.PlayCardResolved(true);
+                        screen = Screen.Draft;
+                        selected = 0;
                     }
                     else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
                     {
@@ -283,7 +298,7 @@ internal static class RaylibFrontend
             // Every floor is drawn in its own theme's palette, so the atlas is chosen here — the
             // one place both "a run started" and "the next floor was built" pass through. The
             // score is arranged here too, while the intro card holds the screen.
-            pixels.SetFloor(campaign!.CurrentFloor);
+            pixels.SetFloor(campaign!.CurrentFloor, campaign.ActiveConditions);
             pixels.SetTheme(campaign.CurrentFloor.ThemeId);
             audio?.PlayFloor(
                 campaign.CurrentFloor.ThemeId,
@@ -323,6 +338,15 @@ internal static class RaylibFrontend
                         pixels.Font,
                         campaign.CurrentFloor,
                         campaign.FloorCount,
+                        RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId),
+                        campaign.ActiveConditions);
+                    break;
+
+                case Screen.ConditionDraft:
+                    PixelCards.ConditionPick(
+                        pixels.Font,
+                        campaign.ConditionOffer!,
+                        selected,
                         RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId));
                     break;
 
@@ -393,15 +417,33 @@ internal static class RaylibFrontend
             return true;
         }
 
-        if (Pressed(KeyboardKey.B) || Pressed(KeyboardKey.Space))
+        if (Pressed(KeyboardKey.Space))
         {
-            command = aiming ? GameCommand.ConfirmAim : GameCommand.BeginAim;
+            command = GameCommand.Blink;
             return true;
         }
 
-        if (Pressed(KeyboardKey.R))
+        if (Pressed(KeyboardKey.V))
         {
-            command = aiming ? GameCommand.ConfirmAim : GameCommand.BeginLureAim;
+            command = GameCommand.Veil;
+            return true;
+        }
+
+        if (Pressed(KeyboardKey.T))
+        {
+            command = GameCommand.Drag;
+            return true;
+        }
+
+        if (Pressed(KeyboardKey.L))
+        {
+            command = GameCommand.Lantern;
+            return true;
+        }
+
+        if (Pressed(KeyboardKey.F))
+        {
+            command = GameCommand.Shove;
             return true;
         }
 
@@ -539,6 +581,40 @@ internal static class RaylibFrontend
     }
 
     /// <summary>
+    /// Reads one condition choice at a gate: move the highlight or take the rule under it.
+    /// </summary>
+    /// <param name="campaign">The run whose gate is open.</param>
+    /// <param name="selected">The highlighted condition, moved in place.</param>
+    /// <returns><see langword="true"/> when a condition was taken this frame.</returns>
+    private static bool ReadConditionChoice(Campaign campaign, ref int selected)
+    {
+        var offer = campaign.ConditionOffer;
+
+        if (offer is null || offer.Options.Count == 0)
+        {
+            return true;
+        }
+
+        if (Pressed(KeyboardKey.A) || Pressed(KeyboardKey.Left) ||
+            Pressed(KeyboardKey.W) || Pressed(KeyboardKey.Up))
+        {
+            selected = (selected + offer.Options.Count - 1) % offer.Options.Count;
+        }
+        else if (Pressed(KeyboardKey.D) || Pressed(KeyboardKey.Right) ||
+                 Pressed(KeyboardKey.S) || Pressed(KeyboardKey.Down))
+        {
+            selected = (selected + 1) % offer.Options.Count;
+        }
+
+        if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) || Pressed(KeyboardKey.Space))
+        {
+            return campaign.TakeCondition(offer.Options[Math.Clamp(selected, 0, offer.Options.Count - 1)]);
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Reads one draft command for this frame: move the highlight, take a card, or skip.
     /// </summary>
     /// <param name="campaign">The run, whose open draft is being chosen from.</param>
@@ -669,6 +745,9 @@ internal static class RaylibFrontend
 
         /// <summary>The choice between two floors.</summary>
         Draft,
+
+        /// <summary>The choice of a descent condition at a gate.</summary>
+        ConditionDraft,
 
         /// <summary>The run summary after the final floor.</summary>
         RunComplete,

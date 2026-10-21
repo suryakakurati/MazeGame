@@ -62,6 +62,8 @@ public sealed class ConsoleRenderer : IRenderer
     {
         var frame = new StringBuilder();
 
+        var charges = state.PowerupsRemaining;
+
         frame.Append("hearts ")
             .Append(state.Hearts)
             .Append('/')
@@ -70,27 +72,32 @@ public sealed class ConsoleRenderer : IRenderer
             .Append(state.KeysCollected)
             .Append('/')
             .Append(state.Config.KeyCount)
-            .Append("   barriers ")
-            .Append(state.BarriersRemaining)
-            .Append("   wisps ")
-            .Append(state.LuresRemaining)
+            .Append("   blink ")
+            .Append(charges.Blink)
+            .Append("  veil ")
+            .Append(charges.Veil)
+            .Append("  drag ")
+            .Append(charges.Drag)
+            .Append("  lantern ")
+            .Append(charges.Lantern)
+            .Append("  shove ")
+            .Append(charges.Shove)
             .Append("   exit ")
             .Append(state.IsExitUnlocked ? "OPEN" : "LOCKED")
             .Append("   ")
             .Append(state.Status)
-            .Append(state.AimMode switch
-            {
-                PlacementMode.Barrier => "   AIMING A BARRIER",
-                PlacementMode.Lure => "   AIMING A WISP",
-                _ => string.Empty,
-            })
             .AppendLine();
+
+        var conditions = DescentConditionCatalog.Line(state.Conditions);
+
+        if (conditions.Length > 0)
+        {
+            frame.AppendLine(conditions);
+        }
 
         AppendMaze(frame, state);
 
-        frame.AppendLine(state.IsAiming
-            ? "AIMING: WASD / arrows move the reticle    Space or Enter: place    Esc: cancel"
-            : "WASD / arrows: move    B: aim a barrier    R: aim a wisp    Q: quit");
+        frame.AppendLine("WASD / arrows: move    Space: blink   V: veil   T: drag   L: lantern   F: shove   Q: quit");
 
         return frame.ToString();
     }

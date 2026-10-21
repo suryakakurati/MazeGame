@@ -9,11 +9,13 @@ namespace MazeGame.Core.Game;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Thirteen cards from the planned catalog are shipped here: the ones whose trade is expressible
-/// with the rules the game already has. The movement cards (Light Feet, Momentum, Sprint Lungs,
-/// Hollow Bones) arrived with timed player steps, since before them there was no step time to
-/// trade against. The curse pair (The Debt plus Quiet) still needs the rare-with-a-price
-/// machinery, so it waits rather than shipping as a dead card.
+/// Twenty-three cards from the planned catalog are shipped here: the ones whose trade is
+/// expressible with the rules the game already has. The movement cards (Light Feet, Momentum,
+/// Sprint Lungs, Hollow Bones) arrived with timed player steps, the four powerup cards (Blink
+/// Step, Long Veil, Lantern Oil, Quick Hands) with the five-verb kit, and the second wave (from
+/// Featherfall to Slow Pursuit) with the rule hooks that let a card change a catch, a pickup or a
+/// powerup's duration. No card trades on a verb the player cannot use, and no card is a pure
+/// upgrade.
 /// </para>
 /// <para>
 /// Every entry names its price in the same sentence as its benefit, and every entry has a test
@@ -23,7 +25,7 @@ namespace MazeGame.Core.Game;
 public static class CardCatalog
 {
     /// <summary>Gets how many cards the shipped catalog holds.</summary>
-    public const int ShippedCount = 13;
+    public const int ShippedCount = 23;
 
     private static readonly Card[] Cards =
     [
@@ -37,21 +39,19 @@ public static class CardCatalog
         },
         new()
         {
-            Id = "deep-roots",
-            Name = "Deep Roots",
+            Id = "blink-step",
+            Name = "Blink Step",
             Tier = CardTier.Common,
-            FaceText = "Seals hold for 18 seconds instead of 10, but you carry one barrier fewer.",
-            Effect = new CardEffect { BarrierSealSeconds = 18, BarrierBudget = -1 },
-            IncompatibleWith = "thornwright",
+            FaceText = "One more blink each floor, but the killer's light reaches 2 steps further.",
+            Effect = new CardEffect { BlinkCharges = 1, EnemyAuraDistance = 2 },
         },
         new()
         {
-            Id = "thornwright",
-            Name = "Thornwright",
+            Id = "long-veil",
+            Name = "Long Veil",
             Tier = CardTier.Common,
-            FaceText = "One extra barrier, but every seal cracks after 4 seconds.",
-            Effect = new CardEffect { BarrierBudget = 1, BarrierSealSeconds = 4 },
-            IncompatibleWith = "deep-roots",
+            FaceText = "Two more veils each floor, but every step you take is 10% slower.",
+            Effect = new CardEffect { VeilCharges = 2, PlayerStepScale = 1.10 },
         },
         new()
         {
@@ -71,19 +71,99 @@ public static class CardCatalog
         },
         new()
         {
-            Id = "bait",
-            Name = "Bait",
-            Tier = CardTier.Common,
-            FaceText = "A wisp stuns the killer for a second when it reaches it, but you carry one wisp fewer.",
-            Effect = new CardEffect { LureStunSeconds = 1, LureCount = -1 },
+            Id = "lantern-oil",
+            Name = "Lantern Oil",
+            Tier = CardTier.Uncommon,
+            FaceText = "One more lantern each floor, but your torch loses a step for the rest of the run.",
+            Effect = new CardEffect { LanternCharges = 1, VisionRadius = -1 },
         },
         new()
         {
-            Id = "smoke-wisp",
-            Name = "Smoke Wisp",
+            Id = "quick-hands",
+            Name = "Quick Hands",
             Tier = CardTier.Uncommon,
-            FaceText = "Wisps pull the killer for 10 seconds, but your torch shrinks by 2 steps while one burns.",
-            Effect = new CardEffect { LureSeconds = 10, LureVisionPenalty = 2 },
+            FaceText = "Two more shoves each floor, but the killer gives you 8% less time between steps.",
+            Effect = new CardEffect { ShoveCharges = 2, EnemyStepScale = 0.92 },
+        },
+        new()
+        {
+            Id = "featherfall",
+            Name = "Featherfall",
+            Tier = CardTier.Rare,
+            FaceText = "The first catch each floor costs no heart, but your heart ceiling is one lower.",
+            Effect = new CardEffect { FirstCatchFree = true, MaxHearts = -1 },
+        },
+        new()
+        {
+            Id = "magnetic-keys",
+            Name = "Greedy Grasp",
+            Tier = CardTier.Uncommon,
+            FaceText = "Keys within one step fly to you, but every floor from now on demands one more key.",
+            Effect = new CardEffect { MagneticKeys = true, KeyCount = 1 },
+        },
+        new()
+        {
+            Id = "bloom",
+            Name = "Bloom",
+            Tier = CardTier.Rare,
+            FaceText = "One fatal catch each floor leaves you at a heart, but your torch loses two steps.",
+            Effect = new CardEffect { ReviveOnce = true, VisionRadius = -2 },
+        },
+        new()
+        {
+            Id = "blink-ledger",
+            Name = "Blink Ledger",
+            Tier = CardTier.Uncommon,
+            FaceText = "Every key you take gives back a blink, but the killer gains 8% speed.",
+            Effect = new CardEffect { BlinkRefundOnKey = true, EnemyStepScale = 0.92 },
+        },
+        new()
+        {
+            Id = "ghost-veil",
+            Name = "Ghost Veil",
+            Tier = CardTier.Common,
+            FaceText = "Your veil lasts two seconds longer, but the killer's light reaches two steps further.",
+            Effect = new CardEffect { VeilDurationSeconds = 2, EnemyAuraDistance = 2 },
+        },
+        new()
+        {
+            Id = "long-drag",
+            Name = "Long Drag",
+            Tier = CardTier.Uncommon,
+            FaceText = "Drag lasts two seconds longer, but its hangover lasts three seconds longer too.",
+            Effect = new CardEffect { DragSeconds = 2, DragPenaltySeconds = 3 },
+        },
+        new()
+        {
+            Id = "wide-light",
+            Name = "Wide Light",
+            Tier = CardTier.Common,
+            FaceText = "You can throw the lantern two cells further, but you carry one veil fewer.",
+            Effect = new CardEffect { LanternRange = 2, VeilCharges = -1 },
+        },
+        new()
+        {
+            Id = "glass-cannon",
+            Name = "Glass Cannon",
+            Tier = CardTier.Rare,
+            FaceText = "You move 40% faster, but every catch costs two hearts instead of one.",
+            Effect = new CardEffect { PlayerStepScale = 0.60, CatchCost = 1 },
+        },
+        new()
+        {
+            Id = "debt-of-sight",
+            Name = "Debt of Sight",
+            Tier = CardTier.Rare,
+            FaceText = "You can hold two more hearts, but your torch loses two steps for the rest of the run.",
+            Effect = new CardEffect { MaxHearts = 2, VisionRadius = -2 },
+        },
+        new()
+        {
+            Id = "slow-pursuit",
+            Name = "Slow Pursuit",
+            Tier = CardTier.Uncommon,
+            FaceText = "The killer moves 12% slower, but every floor demands one more key.",
+            Effect = new CardEffect { EnemyStepScale = 1.12, KeyCount = 1 },
         },
         new()
         {
@@ -97,20 +177,20 @@ public static class CardCatalog
         {
             Id = "light-feet",
             Name = "Light Feet",
-            Tier = CardTier.Uncommon,
-            FaceText = "You walk 15% faster, but you can hold one heart fewer.",
-            Effect = new CardEffect { PlayerStepScale = 0.85, MaxHearts = -1 },
+            Tier = CardTier.Common,
+            FaceText = "You walk 35% faster, but you can hold one heart fewer.",
+            Effect = new CardEffect { PlayerStepScale = 0.65, MaxHearts = -1 },
         },
         new()
         {
             Id = "momentum",
             Name = "Momentum",
             Tier = CardTier.Uncommon,
-            FaceText = "Each straight step makes you faster, up to 25%, but a turn slows you by 15% for 2 seconds.",
+            FaceText = "Each straight step makes you faster, up to 35%, but a turn slows you by 15% for 2 seconds.",
             Effect = new CardEffect
             {
-                MomentumRampPerStep = 0.05,
-                MomentumMaxBonus = 0.25,
+                MomentumRampPerStep = 0.06,
+                MomentumMaxBonus = 0.35,
                 TurnPenaltyScale = 0.15,
                 TurnPenaltySeconds = 2.0,
             },

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.ObjectModel;
 using MazeGame.Core.Maze;
 
 namespace MazeGame.Core.Game;
@@ -201,6 +202,72 @@ public sealed record GameConfig
     public double TurnPenaltySeconds { get; init; }
 
     /// <summary>
+    /// Gets the powerup charges this floor starts with. Defaults to the full kit at its
+    /// middle-of-the-run counts; a floor definition usually overrides it with the teaching ladder.
+    /// </summary>
+    public PowerupCharges Powerups { get; init; } = PowerupCharges.Default;
+
+    /// <summary>
+    /// Gets the run-scoped descent conditions in force on this floor, if any.
+    /// </summary>
+    /// <remarks>
+    /// Conditions are composed into the floor's inputs rather than checked with an <c>if</c> in
+    /// every rule, so an ordinary test floor has none and behaves exactly as it did before.
+    /// </remarks>
+    public IReadOnlyList<DescentCondition> Conditions { get; init; } = Array.Empty<DescentCondition>();
+
+    /// <summary>
+    /// Gets the powerup a Mute floor has taken away, or null when Mute is not active.
+    /// </summary>
+    /// <remarks>
+    /// The campaign rotates this per floor, so Mute is a different missing button each time
+    /// rather than a permanent hole in the kit.
+    /// </remarks>
+    public PowerupKind? MutedPowerup { get; init; }
+
+    /// <summary>Gets a value indicating whether the first catch on the floor costs no heart.</summary>
+    /// <remarks>
+    /// The free catch still throws the hunter back and grants the grace window, so it is a whole
+    /// miss rather than a smaller one. A card grants this, and the floor consumes it once.
+    /// </remarks>
+    public bool FirstCatchFree { get; init; }
+
+    /// <summary>Gets a value indicating whether keys within one step are collected automatically.</summary>
+    /// <remarks>
+    /// The pull happens after a step or a blink, never on the same cell, so a key still has to be
+    /// walked near. Drift and the exit unlock see the pickup at once.
+    /// </remarks>
+    public bool MagneticKeys { get; init; }
+
+    /// <summary>Gets a value indicating whether the first fatal catch on the floor leaves one heart.</summary>
+    /// <remarks>
+    /// The revival is per floor, not per run: each new floor spends it again. It still resets the
+    /// chase, so it buys a whole attempt rather than a single frame.
+    /// </remarks>
+    public bool ReviveOnce { get; init; }
+
+    /// <summary>Gets a value indicating whether taking a key gives back a blink charge.</summary>
+    public bool BlinkRefundOnKey { get; init; }
+
+    /// <summary>
+    /// Gets how many hearts a single catch costs. Defaults to 1. Must be at least 1, so a catch is
+    /// always a real cost; a free catch is expressed by <see cref="FirstCatchFree"/> instead.
+    /// </summary>
+    public int CatchCost { get; init; } = 1;
+
+    /// <summary>Gets how long a completed veil lasts. Defaults to 3 seconds.</summary>
+    public double VeilDurationSeconds { get; init; } = 3.0;
+
+    /// <summary>Gets how long Drag slows the hunt. Defaults to 3 seconds.</summary>
+    public double DragSeconds { get; init; } = 3.0;
+
+    /// <summary>Gets how long the hunt is faster after Drag ends. Defaults to 5 seconds.</summary>
+    public double DragPenaltySeconds { get; init; } = 5.0;
+
+    /// <summary>Gets how far, in cells, a lantern may be thrown. Defaults to 4.</summary>
+    public int LanternRange { get; init; } = 4;
+
+    /// <summary>
     /// Gets how many hunters stalk the floor. Defaults to 1. Must be at least 1, and the maze must
     /// hold the player, every hunter, the exit and the keys.
     /// </summary>
@@ -361,6 +428,64 @@ public sealed record GameConfig
     /// </exception>
     public void Validate()
     {
+        Powerups.Validate();
+
+        if (Conditions is null)
+        {
+            throw new ArgumentException("The condition list cannot be null.", nameof(Conditions));
+        }
+
+        var seenConditions = new HashSet<DescentCondition>();
+
+        foreach (var condition in Conditions)
+        {
+            if (!Enum.IsDefined(condition))
+            {
+                throw new ArgumentOutOfRangeException(nameof(Conditions), condition, "Unknown descent condition.");
+            }
+
+            if (!seenConditions.Add(condition))
+            {
+                throw new ArgumentException($"The floor carries {condition} twice.", nameof(Conditions));
+            }
+        }
+
+        if (MutedPowerup is { } muted && !Enum.IsDefined(muted))
+        {
+            throw new ArgumentOutOfRangeException(nameof(MutedPowerup), muted, "Unknown powerup to mute.");
+        }
+
+        if (CatchCost < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(CatchCost), CatchCost, "A catch must cost at least one heart.");
+        }
+
+        if (!(VeilDurationSeconds > 0) || double.IsInfinity(VeilDurationSeconds))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(VeilDurationSeconds),
+                VeilDurationSeconds,
+                "A veil must last a finite, positive number of seconds.");
+        }
+
+        if (!(DragSeconds >= 0) || double.IsInfinity(DragSeconds))
+        {
+            throw new ArgumentOutOfRangeException(nameof(DragSeconds), DragSeconds, "Drag time must be finite and not negative.");
+        }
+
+        if (!(DragPenaltySeconds >= 0) || double.IsInfinity(DragPenaltySeconds))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(DragPenaltySeconds),
+                DragPenaltySeconds,
+                "Drag's hangover must be finite and not negative.");
+        }
+
+        if (LanternRange < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(LanternRange), LanternRange, "A lantern cannot have a negative range.");
+        }
+
         if (Rows < 1)
         {
             throw new ArgumentOutOfRangeException(nameof(Rows), Rows, "A game needs at least one row.");
@@ -638,17 +763,49 @@ public sealed record GameConfig
     /// </summary>
     /// <param name="floor">The floor to derive settings for.</param>
     /// <param name="startingHearts">
-    /// Hearts the player brings to the floor. Must be between 1 and <see cref="FloorDefinition.MaxHearts"/>.
+    /// Hearts the player brings to the floor. Must be between 1 and <see cref="FloorDefinition.MaxHearts"/>,
+    /// or one above it when Mute is active.
+    /// </param>
+    /// <param name="conditions">
+    /// The descent conditions in force, or null for none. Mute adds a heart and takes a tool away.
     /// </param>
     /// <returns>A new config; this instance is unchanged.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="floor"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when the floor is invalid or the carried hearts do not fit the floor's ceiling.
     /// </exception>
-    public GameConfig ForFloor(FloorDefinition floor, int startingHearts)
+    public GameConfig ForFloor(
+        FloorDefinition floor,
+        int startingHearts,
+        IReadOnlyList<DescentCondition>? conditions = null)
     {
         ArgumentNullException.ThrowIfNull(floor);
         floor.Validate();
+
+        var carried = conditions ?? Array.Empty<DescentCondition>();
+        var mute = carried.Contains(DescentCondition.Mute);
+        var heartBonus = mute ? 1 : 0;
+        var ceiling = floor.MaxHearts + heartBonus;
+
+        if (startingHearts < 1 || startingHearts > ceiling)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(startingHearts),
+                startingHearts,
+                $"Floor {floor.Number} starts with between 1 and {ceiling} hearts.");
+        }
+
+        var hearts = startingHearts + heartBonus;
+        var charges = floor.Powerups ?? PowerupCharges.ForFloor(floor.Number);
+        PowerupKind? muted = null;
+
+        if (mute)
+        {
+            // A different missing button each floor, deterministic from the floor number so a
+            // seeded run and a replay agree without another random stream.
+            muted = (PowerupKind)((floor.Number - 1) % Enum.GetValues<PowerupKind>().Length);
+            charges = charges.With(muted.Value, 0);
+        }
 
         var floorConfig = new GameConfig
         {
@@ -659,8 +816,14 @@ public sealed record GameConfig
             HunterCount = floor.HunterCount,
             EnemyStepSeconds = floor.EnemyStepSeconds,
             PlayerStepSeconds = floor.PlayerStepSeconds,
-            StartingHearts = startingHearts,
-            MaxHearts = floor.MaxHearts,
+            StartingHearts = hearts,
+            MaxHearts = ceiling,
+
+            // The floor's own kit, where it has one; otherwise the teaching ladder. Mute has
+            // already removed its tool above.
+            Powerups = charges,
+            Conditions = new ReadOnlyCollection<DescentCondition>(new List<DescentCondition>(carried)),
+            MutedPowerup = muted,
 
             // The floor's own gimmick, where it has one; otherwise the run's shared rule.
             BarrierBudget = floor.BarrierBudget ?? BarrierBudget,

@@ -18,8 +18,9 @@ namespace MazeGame.Core.Game;
 /// Four guards keep the draft honest: a card already held is not offered again (unless the
 /// catalog marks it stackable), a card that contradicts a held one is not offered, no card may
 /// change vision once the run already holds two that do, and no card is offered when the part of
-/// the run that pays for it does not exist. Rares are drawn less often than commons, which is what
-/// makes a rare feel like an event without a floor-band gate.
+/// the run that pays for it does not exist. Rares are drawn less often than commons early in the
+/// run and more often late, and every fifth floor's draft guarantees one when one is still
+/// eligible, so a rare feels like an event without being a lottery.
 /// </para>
 /// </remarks>
 public static class DraftFactory
@@ -130,7 +131,7 @@ public static class DraftFactory
 
         while (offers.Count < offerCount && pool.Count > 0)
         {
-            var index = ChooseIndex(pool, random);
+            var index = ChooseIndex(pool, random, floorNumber);
             if (index < 0)
             {
                 break;
@@ -138,6 +139,27 @@ public static class DraftFactory
 
             offers.Add(pool[index]);
             pool.RemoveAt(index);
+        }
+
+        // Every fifth floor is a milestone: the draft guarantees a rare when one is still eligible.
+        // A weighted draw alone would make that a promise the RNG could break, so a missed rare is
+        // swapped in for the last offer. The swap is seeded, so a replay is unchanged.
+        if (floorNumber % 5 == 0 && offers.Count > 0 && !ContainsRare(offers))
+        {
+            var rares = new List<Card>();
+
+            foreach (var card in pool)
+            {
+                if (card.Tier == CardTier.Rare)
+                {
+                    rares.Add(card);
+                }
+            }
+
+            if (rares.Count > 0)
+            {
+                offers[^1] = rares[random.NextInt(rares.Count)];
+            }
         }
 
         return new ReadOnlyCollection<Card>(offers);
@@ -181,14 +203,15 @@ public static class DraftFactory
     }
 
     /// <summary>
-    /// Picks an index from <paramref name="pool"/> weighted by tier, or -1 when every weight is zero.
+    /// Picks an index from <paramref name="pool"/> weighted by tier and floor, or -1 when every
+    /// weight is zero.
     /// </summary>
-    private static int ChooseIndex(List<Card> pool, SeededRandom random)
+    private static int ChooseIndex(List<Card> pool, SeededRandom random, int floorNumber)
     {
         var total = 0;
         foreach (var card in pool)
         {
-            total += WeightOf(card.Tier);
+            total += WeightOf(card.Tier, floorNumber);
         }
 
         if (total == 0)
@@ -200,7 +223,7 @@ public static class DraftFactory
 
         for (var index = 0; index < pool.Count; index++)
         {
-            var weight = WeightOf(pool[index].Tier);
+            var weight = WeightOf(pool[index].Tier, floorNumber);
             if (roll < weight)
             {
                 return index;
@@ -214,16 +237,32 @@ public static class DraftFactory
     }
 
     /// <summary>
-    /// Returns how likely a tier is to be drawn. Curses weigh nothing: they are never offered on
-    /// their own, only as the price attached to something else.
+    /// Returns how likely a tier is to be drawn at this point in the run. Curses weigh nothing:
+    /// they are never offered on their own, only as the price attached to something else. The
+    /// weights shift the draw towards rares as the run descends, so the last floors are where the
+    /// build-defining cards live.
     /// </summary>
-    private static int WeightOf(CardTier tier) => tier switch
+    private static int WeightOf(CardTier tier, int floorNumber) => tier switch
     {
-        CardTier.Common => CommonWeight,
-        CardTier.Uncommon => UncommonWeight,
-        CardTier.Rare => RareWeight,
+        CardTier.Common => floorNumber >= 15 ? 3 : floorNumber >= 10 ? 4 : floorNumber >= 5 ? 5 : CommonWeight,
+        CardTier.Uncommon => UncommonWeight + 1,
+        CardTier.Rare => floorNumber >= 15 ? 4 : floorNumber >= 10 ? 3 : floorNumber >= 5 ? 2 : RareWeight,
         _ => 0,
     };
+
+    /// <summary>Returns whether <paramref name="offers"/> already contains a rare card.</summary>
+    private static bool ContainsRare(List<Card> offers)
+    {
+        foreach (var card in offers)
+        {
+            if (card.Tier == CardTier.Rare)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Derives the draft's seed from the run seed and floor number, the same stable way the

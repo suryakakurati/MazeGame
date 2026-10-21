@@ -60,6 +60,21 @@ public static class GameCommands
             case GameCommand.CancelAim:
                 state.CancelPlacement();
                 break;
+            case GameCommand.Blink:
+                state.TryBlink();
+                break;
+            case GameCommand.Veil:
+                state.TryVeil();
+                break;
+            case GameCommand.Drag:
+                state.TryDrag();
+                break;
+            case GameCommand.Lantern:
+                state.TryThrowLantern();
+                break;
+            case GameCommand.Shove:
+                state.TryShove();
+                break;
             case GameCommand.Quit:
                 return false;
         }

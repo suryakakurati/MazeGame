@@ -11,7 +11,7 @@ namespace MazeGame.Core.Game;
 /// way a floor is played.
 /// </para>
 /// <para>
-/// Most fields are additive. The three nullable ones are absolute: a card that says "seals last
+/// Most fields are additive. The two nullable ones are absolute: a card that says "seals last
 /// 18 seconds" means exactly that, and the catalog marks the cards that disagree as mutually
 /// exclusive so two absolutes can never compete.
 /// </para>
@@ -101,6 +101,48 @@ public sealed record CardEffect
     /// repeats, so it lives in the run modifiers rather than in a queue of pending heals.
     /// </summary>
     public int HealOnFloorClear { get; init; }
+
+    /// <summary>Gets the change to the blinks available on each floor.</summary>
+    public int BlinkCharges { get; init; }
+
+    /// <summary>Gets the change to the veils available on each floor.</summary>
+    public int VeilCharges { get; init; }
+
+    /// <summary>Gets the change to the drags available on each floor.</summary>
+    public int DragCharges { get; init; }
+
+    /// <summary>Gets the change to the lantern throws available on each floor.</summary>
+    public int LanternCharges { get; init; }
+
+    /// <summary>Gets the change to the shoves available on each floor.</summary>
+    public int ShoveCharges { get; init; }
+
+    /// <summary>Gets a value indicating whether the first catch each floor costs no heart.</summary>
+    public bool FirstCatchFree { get; init; }
+
+    /// <summary>Gets a value indicating whether keys within one step are collected automatically.</summary>
+    public bool MagneticKeys { get; init; }
+
+    /// <summary>Gets a value indicating whether the first fatal catch each floor leaves one heart.</summary>
+    public bool ReviveOnce { get; init; }
+
+    /// <summary>Gets a value indicating whether taking a key returns a blink charge.</summary>
+    public bool BlinkRefundOnKey { get; init; }
+
+    /// <summary>Gets the change to the hearts a single catch costs.</summary>
+    public int CatchCost { get; init; }
+
+    /// <summary>Gets the change to how long a completed veil lasts, in seconds.</summary>
+    public double VeilDurationSeconds { get; init; }
+
+    /// <summary>Gets the change to how long Drag slows the hunt, in seconds.</summary>
+    public double DragSeconds { get; init; }
+
+    /// <summary>Gets the change to how long the hunt speeds up after Drag, in seconds.</summary>
+    public double DragPenaltySeconds { get; init; }
+
+    /// <summary>Gets the change to how far a lantern may be thrown, in cells.</summary>
+    public int LanternRange { get; init; }
 
     /// <summary>Gets the extra offers the next draft makes (one draft only).</summary>
     public int NextDraftOfferBonus { get; init; }

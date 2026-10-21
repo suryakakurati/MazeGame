@@ -244,6 +244,59 @@ internal sealed class AudioDirector : IDisposable
                     _engine.Play(SfxId.WispConsumed, 0.7f);
                     break;
 
+                case GameEvent.Blink:
+                    _engine.Play(SfxId.NearMiss, 0.7f, 1.18f, 0.2f);
+                    break;
+
+                case GameEvent.Veiled:
+                    _engine.Play(SfxId.WispLit, 0.45f, 0.82f, -0.1f);
+                    break;
+
+                case GameEvent.Drag:
+                    _engine.Play(SfxId.LungeTell, 0.7f, 0.72f);
+                    break;
+
+                case GameEvent.LanternThrown:
+                    _engine.Play(SfxId.WispLit, 0.65f, 1.0f, 0.3f);
+                    break;
+
+                case GameEvent.LanternReturned:
+                    _engine.Play(SfxId.WispConsumed, 0.5f, 1.1f);
+                    break;
+
+                case GameEvent.Shoved:
+                    _engine.Play(SfxId.SealBroken, 0.85f, 1.12f);
+                    break;
+
+                case GameEvent.Graced:
+                    _engine.Play(SfxId.Heartbeat, 0.7f, 0.9f);
+                    break;
+
+                case GameEvent.Revived:
+                    _engine.Play(SfxId.FloorCleared, 0.6f, 0.8f);
+                    break;
+
+                case GameEvent.WallSealed:
+                case GameEvent.WallClosed:
+                    _engine.Play(SfxId.SealPlaced, 0.7f, 0.82f);
+                    break;
+
+                case GameEvent.WallOpened:
+                    _engine.Play(SfxId.SealBroken, 0.55f, 0.86f);
+                    break;
+
+                case GameEvent.ExitMoved:
+                    _engine.Play(SfxId.KeyPulse, 0.7f, 0.8f);
+                    break;
+
+                case GameEvent.EclipseFell:
+                    _engine.Play(SfxId.LungeTell, 0.55f, 0.65f);
+                    break;
+
+                case GameEvent.EclipseLifted:
+                    _engine.Play(SfxId.WispLit, 0.4f, 1.2f);
+                    break;
+
                 case GameEvent.FloorCleared:
                     _engine.Play(SfxId.FloorCleared, 0.8f);
                     break;

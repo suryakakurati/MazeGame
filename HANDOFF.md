@@ -24,7 +24,25 @@ If they are not green, fixing that is the first task, not the new feature.
 
 ## Project state at handoff (2026-10-21)
 
-**The latest pass (the score on the death screen, and a growing maze) is in:** a lost run now
+**The latest pass (five powerup verbs and descent conditions) is in:** the player's tools are
+Blink (Space), Veil (V), Drag (T), Lantern (L) and Shove (F), each with per-floor charges that
+refill when a floor is built (`PowerupKind`, `PowerupCharges`, `GameState.TryBlink` and friends,
+`GameCommands`). They replaced barriers and wisps, which survive as floor rules and tests but no
+longer have an input. Floors 8 and 14 are gates: `Campaign.ConditionOffer` opens, `TakeCondition`
+resolves it, and `TryAdvanceFloor` refuses to descend until it is; the eight rules live in
+`DescentCondition` and `DescentConditionCatalog` and reach later floors through
+`GameConfig.Conditions`. Regrowth and Fracture mutate the maze on timers behind a connectivity
+check; Eclipse, Listener, Pack, Hunted, Mute and Drift are rule flags. The four cards built on
+barriers/wisps were rewritten around charge deltas (`CardEffect`/`RunModifiers`), and The Gilded
+Cage, The Foundry and The Moth Garden became powerup gimmicks. **The card system was then
+overhauled**: the catalog is twenty-three cards, with ten rule-backed additions (free first catch,
+revival, two-heart catches, magnetic keys, blink refunds, longer veil/drag/lantern,
+extra hearts for vision), floor-banded draft weights and a guaranteed rare every fifth floor. The
+HUD now shows the five powerup charges as keyed slots (`RaylibLayout.HudHeight` is 76). The suite is
+**748 tests**, all green, including `GameStatePowerupTests`, `GameStateConditionTests`,
+`CampaignGateTests` and `GameStateCardRuleTests`.
+
+**The pass before that (the score on the death screen, and a growing maze) is in:** a lost run now
 ends on `PixelCards.Caught(font, floorNumber, floorCount, floorName)`, which prints "YOU MADE IT TO /
 FLOOR 7 OF 20" and the floor's name. The card is drawn by `RaylibFrontend.DrawFrame` on
 `Screen.RunLost` instead of by `PixelRenderer.Draw`, because only the campaign knows the run's
@@ -53,9 +71,10 @@ reachable on the real catalogue.
 **The pass before that (the hunt escalates, and so does the music) is in:** floors 1–9 carry one hunter,
 10–15 two and 16–20 three, each with its own cell, route, clock and stun (`GameState.Enemies`,
 `HunterView`; a catch throws only the culprit and stuns them all, and the footer grows one pip per
-hunter). The player's cadence is a sawtooth — 0.14 s a cell on floor 1, tightening within each arc
-and resetting on the heavy floors — and `FloorCatalogTests` scores a floor as hunter-steps per
-second, so difficulty is a product of pace and hunter count. `GameConfig.NearSightRadius` (default
+hunter). The player's cadence is a constant 0.26 s a cell on every floor — cards and sprint are the
+only speed-ups — while hunters start at 1.20 s and ramp to 0.22 s, so the player starts faster and
+must draft speed to stay ahead. `FloorCatalogTests` scores a floor as hunter-steps per second, so
+difficulty is a product of enemy pace and hunter count. `GameConfig.NearSightRadius` (default
 2, clamped by the torch) lights the cells around the player through walls, and the pixel renderer
 draws a south/east wall face itself when the neighbour is unknown; that pair is the fix for the
 "wall with a gap in it" look. The score is twenty pieces now: `MusicTheme` carries a `MusicStyle`,
@@ -309,6 +328,8 @@ visible inconsistency left in the phase. `PROGRESS.md` → **Next Steps** has th
   `TryMove` / the aiming commands / `Tick` and draws. If you are tempted to add a
   rule to the renderer, add it to Core plus a test instead.
 - **Aiming is a Core mode, not a UI mode.** `PlacementMode` (barrier or wisp) freezes the
+  clock, but no frontend binds it any more: the player's tools are the five one-press verbs, and
+  the aiming API survives only for floor rules and tests. It still freezes the
   clock (`Tick` returns early) and `TryMove` is refused until the aim is confirmed or
   cancelled, so the pause cannot be bypassed by a different renderer. Both placeables share
   `AimCursor` / `MoveAimCursor` / `ConfirmPlacement` / `CancelPlacement`; only the

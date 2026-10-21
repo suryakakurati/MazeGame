@@ -326,6 +326,13 @@ public sealed class CampaignDraftTests
     }
 
     /// <summary>Builds the corridor floor with the run's cards applied, as the factory would.</summary>
+    private static GameState BuildFloor(
+        FloorDefinition floor,
+        int hearts,
+        RunModifiers modifiers,
+        IReadOnlyList<DescentCondition> conditions) =>
+        BuildFloor(floor, hearts, modifiers);
+
     private static GameState BuildFloor(FloorDefinition floor, int hearts, RunModifiers modifiers) =>
         new(
             modifiers.Apply(new GameConfig

@@ -201,7 +201,7 @@ public sealed class CampaignTests
     public void Campaign_WhenTheBuilderReturnsNull_Throws()
     {
         Assert.Throws<InvalidOperationException>(
-            () => new Campaign([Floor(1)], (_, _, _) => null!, RunSeed));
+            () => new Campaign([Floor(1)], (_, _, _, _) => null!, RunSeed));
     }
 
     [Fact]
@@ -263,6 +263,13 @@ public sealed class CampaignTests
     /// Builds the 1x3 floor described above with the requested hearts and the run's cards applied.
     /// The exit is open with no keys, so stepping east clears it.
     /// </summary>
+    private static GameState BuildFloor(
+        FloorDefinition floor,
+        int hearts,
+        RunModifiers modifiers,
+        IReadOnlyList<DescentCondition> conditions) =>
+        BuildFloor(floor, hearts, modifiers);
+
     private static GameState BuildFloor(FloorDefinition floor, int hearts, RunModifiers modifiers) =>
         new(
             modifiers.Apply(new GameConfig
@@ -279,8 +286,45 @@ public sealed class CampaignTests
             new DijkstraPathfinder(),
             new FixedRandom(0));
 
-    private static void ClearFloor(Campaign campaign) =>
-        Assert.True(campaign.Floor.TryMove(Direction.East));
+    /// <summary>
+    /// Walks the corridor to every key and then to the exit. A card can add keys, so the one-step
+    /// clear the old test used is no longer enough once the run has taken one.
+    /// </summary>
+    private static void ClearFloor(Campaign campaign)
+    {
+        var floor = campaign.Floor;
+
+        for (var guard = 0; guard < 64 && floor.Status == GameStatus.InProgress; guard++)
+        {
+            var target = NearestKey(floor) ?? floor.Exit;
+            var direction = target.Column > floor.Player.Column ? Direction.East : Direction.West;
+
+            Assert.True(floor.TryMove(direction));
+            floor.Tick(0.12);
+        }
+
+        Assert.Equal(GameStatus.Won, floor.Status);
+    }
+
+    /// <summary>Returns the key closest to the player along the one-row corridor.</summary>
+    private static Cell? NearestKey(GameState floor)
+    {
+        Cell? best = null;
+        var bestDistance = int.MaxValue;
+
+        foreach (var key in floor.Keys)
+        {
+            var distance = Math.Abs(key.Column - floor.Player.Column);
+
+            if (distance < bestDistance)
+            {
+                best = key;
+                bestDistance = distance;
+            }
+        }
+
+        return best;
+    }
 
     /// <summary>
     /// Lets the killer catch the player until <paramref name="hearts"/> remain, failing the test
@@ -319,6 +363,13 @@ public sealed class CampaignTests
 
             Assert.NotNull(campaign.Draft);
             ResolveDraftWithACard(campaign);
+
+            // Floors 8 and 14 are gates: the run will not descend until a rule is chosen.
+            if (campaign.ConditionOffer is { IsResolved: false } gate)
+            {
+                Assert.True(campaign.TakeCondition(gate.Options[0]));
+            }
+
             Assert.True(campaign.TryAdvanceFloor(), $"the run refused to descend from floor {floor}.");
         }
 

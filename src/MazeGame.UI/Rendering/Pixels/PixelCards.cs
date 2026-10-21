@@ -191,16 +191,145 @@ public static class PixelCards
             Dim);
     }
 
+    /// <summary>
+    /// Draws a gate: two descent conditions, one of which must be taken.
+    /// </summary>
+    /// <param name="font">The loaded font.</param>
+    /// <param name="offer">The open condition offer.</param>
+    /// <param name="selectedIndex">The condition the keyboard is on.</param>
+    /// <param name="accent">The cleared floor's accent colour.</param>
+    /// <exception cref="ArgumentNullException">Thrown when an argument is null.</exception>
+    public static void ConditionPick(PixelFont font, ConditionOffer offer, int selectedIndex, Color accent)
+    {
+        ArgumentNullException.ThrowIfNull(font);
+        ArgumentNullException.ThrowIfNull(offer);
+
+        var width = Raylib.GetScreenWidth();
+        var height = Raylib.GetScreenHeight();
+        var centreX = width / 2;
+        var options = offer.Options;
+        var selected = options.Count == 0 ? -1 : Math.Clamp(selectedIndex, 0, options.Count - 1);
+
+        Begin(width, height);
+
+        font.DrawCentered("THE DESCENT SHIFTS", centreX, 38, 2, Dim);
+        Heading(font, "CHOOSE A RULE", centreX, 62, width - 64, accent);
+        font.DrawCentered(
+            "IT APPLIES TO EVERY FLOOR BELOW",
+            centreX,
+            98,
+            2,
+            Dim);
+
+        const int sideMargin = 36;
+        const int gap = 18;
+        var cardWidth = Math.Min(360, (width - (2 * sideMargin) - gap) / 2);
+        var cardHeight = Math.Min(300, height - 260);
+        var gridWidth = (cardWidth * options.Count) + (gap * Math.Max(0, options.Count - 1));
+        var left = centreX - (gridWidth / 2);
+        var top = 136;
+
+        for (var index = 0; index < options.Count; index++)
+        {
+            DrawConditionCard(
+                font,
+                options[index],
+                index + 1,
+                left + (index * (cardWidth + gap)),
+                top,
+                cardWidth,
+                cardHeight,
+                index == selected,
+                accent);
+        }
+
+        var promptScale = width >= 700 ? 2 : 1;
+        font.DrawCentered(
+            Fit("A / D: CHOOSE   ENTER: TAKE THE RULE", promptScale, width - 24),
+            centreX,
+            height - 54,
+            promptScale,
+            Text);
+        font.DrawCentered("THERE IS NO SKIP", centreX, height - 26, 1, Dim);
+    }
+
+    /// <summary>
+    /// Draws one descent condition: its name, its one-line rule and the take prompt.
+    /// </summary>
+    private static void DrawConditionCard(
+        PixelFont font,
+        DescentCondition condition,
+        int number,
+        int left,
+        int top,
+        int cardWidth,
+        int cardHeight,
+        bool isSelected,
+        Color accent)
+    {
+        var body = isSelected ? new Color(6, 24, 26, 248) : new Color(3, 12, 14, 238);
+        var border = isSelected ? accent : Fade(accent, 0.38);
+
+        Raylib.DrawRectangle(left, top, cardWidth, cardHeight, body);
+        Raylib.DrawRectangle(left, top, cardWidth, 2, Fade(accent, isSelected ? 0.95 : 0.55));
+        Frame(left, top, cardWidth, cardHeight, border);
+
+        if (isSelected)
+        {
+            Frame(left + 3, top + 3, cardWidth - 6, cardHeight - 6, Fade(accent, 0.30));
+            Raylib.DrawRectangle(left, top + 5, 3, cardHeight - 10, accent);
+        }
+
+        var centreX = left + (cardWidth / 2);
+        var inner = cardWidth - 24;
+
+        font.DrawCentered("DESCENT RULE", centreX, top + 14, 1, Dim);
+
+        var nameScale = cardWidth >= 240 ? 3 : 2;
+        var lines = Wrap(DescentConditionCatalog.Name(condition).ToUpperInvariant(), nameScale, inner);
+        var y = top + 34;
+
+        foreach (var line in lines)
+        {
+            font.DrawCentered(line, centreX, y, nameScale, Text);
+            y += (PixelFont.LineHeight * nameScale) + 6;
+        }
+
+        var descriptionScale = cardWidth >= 240 ? 2 : 1;
+        var description = Wrap(DescentConditionCatalog.Description(condition), descriptionScale, inner);
+        var lineHeight = (PixelFont.LineHeight * descriptionScale) + 4;
+
+        foreach (var line in description)
+        {
+            font.DrawCentered(line, centreX, y, descriptionScale, Dim);
+            y += lineHeight;
+        }
+
+        font.DrawCentered(
+            isSelected ? "TAKE" : FormattableString.Invariant($"[{number}]"),
+            centreX,
+            top + cardHeight - 28,
+            2,
+            isSelected ? accent : Fade(Dim, 0.7));
+    }
+
     /// <summary>Draws the card shown before a floor begins.</summary>
     /// <param name="font">The loaded font.</param>
     /// <param name="floor">The floor about to start.</param>
     /// <param name="floorCount">How many floors the run has.</param>
     /// <param name="accent">The floor's accent colour.</param>
+    /// <param name="conditions">The descent conditions in force, or an empty list.</param>
     /// <exception cref="ArgumentNullException">Thrown when an argument is null.</exception>
-    public static void FloorIntro(PixelFont font, FloorDefinition floor, int floorCount, Color accent)
+    public static void FloorIntro(
+        PixelFont font,
+        FloorDefinition floor,
+        int floorCount,
+        Color accent,
+        IReadOnlyList<DescentCondition> conditions)
     {
         ArgumentNullException.ThrowIfNull(font);
         ArgumentNullException.ThrowIfNull(floor);
+        ArgumentNullException.ThrowIfNull(conditions);
 
         var width = Raylib.GetScreenWidth();
         var height = Raylib.GetScreenHeight();
@@ -226,7 +355,17 @@ public static class PixelCards
 
         if (floor.Gimmick is { Length: > 0 } gimmick)
         {
-            font.DrawCentered(gimmick.ToUpperInvariant(), width / 2, centreY - 32, 2, Dim);
+            font.DrawCentered(Fit(gimmick.ToUpperInvariant(), 2, width - 96), width / 2, centreY - 40, 2, Dim);
+        }
+
+        if (conditions.Count > 0)
+        {
+            font.DrawCentered(
+                Fit(DescentConditionCatalog.Line(conditions), 1, width - 64),
+                width / 2,
+                centreY - 18,
+                1,
+                accent);
         }
 
         Rule(width / 2, centreY + 4, accent);

@@ -52,14 +52,15 @@ public sealed record FloorDefinition
     public double EnemyStepSeconds { get; init; } = 0.6;
 
     /// <summary>
-    /// Gets the seconds the player waits between steps on this floor. Defaults to 0.11, about five
-    /// and a half times the killer's 0.6 s pace on the first floor; later floors tighten it so the
-    /// chase keeps the same shape. Zero is allowed and means instant movement, which is what hand-
-    /// built test floors use. Must be finite and not negative.
+    /// Gets the seconds the player waits between steps on this floor. Defaults to 0.11, the base
+    /// used by hand-built test floors. The shipped catalog uses one constant (0.26) on every floor;
+    /// only a card or sprint makes the player faster. Zero is allowed and means instant movement.
+    /// Must be finite and not negative.
     /// </summary>
     /// <remarks>
-    /// This is the per-floor base that cards may multiply (Light Feet, Momentum, Heavy). It lives
-    /// on the floor rather than the run so the descent can tighten without a card.
+    /// This is the floor's base cadence, which cards may multiply (Light Feet, Momentum, Heavy).
+    /// It stays per-floor for tests and deliberately exceptional content; the shipped descent does
+    /// not hand out speed for free.
     /// </remarks>
     public double PlayerStepSeconds { get; init; } = 0.11;
 
@@ -99,6 +100,12 @@ public sealed record FloorDefinition
     /// from off screen. It also sets the camera's zoom — more vision is a wider view.
     /// </remarks>
     public int? VisionRadius { get; init; }
+
+    /// <summary>
+    /// Gets the powerup charges this floor starts with, or null to use the teaching ladder for
+    /// its number.
+    /// </summary>
+    public PowerupCharges? Powerups { get; init; }
 
     /// <summary>Gets how many barriers this floor allows, or null to inherit the run's budget.</summary>
     public int? BarrierBudget { get; init; }
@@ -231,6 +238,8 @@ public sealed record FloorDefinition
         {
             throw new ArgumentOutOfRangeException(nameof(BarrierBudget), BarrierBudget, "A barrier budget cannot be negative.");
         }
+
+        Powerups?.Validate();
 
         if (LureCount is < 0)
         {

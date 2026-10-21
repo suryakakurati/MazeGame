@@ -34,6 +34,21 @@ public enum GameCommand
     /// <summary>Stop aiming without spending a barrier or a wisp.</summary>
     CancelAim,
 
+    /// <summary>Step through the wall the player faces.</summary>
+    Blink,
+
+    /// <summary>Stand still to become unseen.</summary>
+    Veil,
+
+    /// <summary>Slow the hunt for a moment.</summary>
+    Drag,
+
+    /// <summary>Throw the lantern ahead.</summary>
+    Lantern,
+
+    /// <summary>Shove the hunter in front of the player.</summary>
+    Shove,
+
     /// <summary>Leave the game.</summary>
     Quit,
 }

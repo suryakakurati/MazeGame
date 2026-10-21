@@ -901,9 +901,9 @@ later can declare its own requirement.
 **Consequences:** One of nine catalogued cards is unreachable in the current run; it is covered by
 tests and appears in any run of four or more floors. `DraftFactory` also treats a negative
 remaining count as "last draft", so a miscomputed length can never open a hole. The other three
-draft guards — no duplicates unless stackable, no contradictory pair (Deep Roots vs Thornwright),
-at most two vision-changing cards per run — are enforced in the same place, with tests over a fake
-two-card catalog so each rule is the only thing that can decide the outcome.
+draft guards — no duplicates unless stackable, no contradictory pair, at most two vision-changing
+cards per run — are enforced in the same place, with tests over a fake two-card catalog so each
+rule is the only thing that can decide the outcome.
 
 ## 2026-10-20 — A wisp's stun and its vision cost are floor rules, and its light goes out
 
@@ -1542,3 +1542,111 @@ every size check that used the rectangle had to become shape-aware (`GameState` 
 cell count and throws with the count in the message). `ShapedFloorTests` builds all twenty shipped
 floors and proves the exit and every key are reachable, which is the invariant this feature could
 silently break.
+
+## 2026-10-21 — Five verbs replace barriers and wisps, and charges refill per floor
+
+**Decision:** The player's tools are `PowerupKind.Blink`, `Veil`, `Drag`, `Lantern` and `Shove`,
+each with its own `PowerupCharges` count, refilled when a floor is built. A charge is spent only
+when the verb succeeds. `FloorDefinition.Powerups` and `GameConfig.Powerups` carry the counts, and
+`PowerupCharges.ForFloor` is the teaching ladder (Blink on 1, Veil on 2, Drag on 4, Lantern on 6,
+Shove on 8, then two step-ups). Barriers and wisps remain in `GameState` as rules and tests but
+have no input and no HUD chip; `BeginBarrierPlacement`/`BeginLurePlacement` are unreachable from
+the frontends.
+
+**Reason:** The playtest never used barriers or wisps, and both share the same flaw: they ask the
+player to place something and hope. Replacing them with one-press verbs makes each tool a reaction
+to what is already on screen, and giving each its own refilling charges removes the hoarding that
+made the old shared budgets feel precious in the wrong way. Keeping the old aiming commands would
+have left two invisible modes in the input layer; keeping the old rules costs nothing because a
+future floor can pre-place a seal.
+
+**Consequences:** Every verb is a rule in `GameState`, so the frontends only translate keys and
+draw counts. `CardEffect` and `RunModifiers` grew five charge deltas (clamped at zero) so a card can
+trade against a verb; the four cards built on the retired verbs were rewritten rather than left in
+the pool as dead content. The three floor gimmicks about seals and moths became powerup overrides.
+The HUD's `SEALS`/`WISPS` chips are gone, so any screenshot of the old kit is out of date.
+
+## 2026-10-21 — Descent conditions are chosen at floor 8 and floor 14, and the gate is a hard stop
+
+**Decision:** A run draws two `DescentCondition`s, one at the floor-8 gate and one at floor 14,
+from `DescentConditionCatalog.Offer(runSeed, gateFloor, active)` — a seeded shuffle that excludes
+what the run already carries. `Campaign.ConditionOffer` opens at a cleared floor, `TakeCondition`
+resolves it, and `TryAdvanceFloor` refuses to descend until `_chosenGates` contains the next
+floor's number. Conditions ride `GameConfig.Conditions` into every later floor. Regrowth and
+Fracture mutate the maze on timers; Fracture's close step is checked by `ConnectivityPreserved`
+and a candidate that would cut off the exit, a key or a hunter is put back.
+
+**Reason:** Later floors were the same floor with more hunters. Two permanent rules drawn from
+eight make the bottom of a run different between runs without adding a new card every floor, and a
+gate the player can see is more legible than a random modifier appearing on the intro card. The
+hard stop is deliberate: checking the chosen set rather than the live offer means a frontend that
+never read the offer cannot skip the choice, and there is no skip option because the run has to
+change.
+
+**Consequences:** The gates are keyed to floor numbers 8 and 14, so a synthetic campaign that uses
+those numbers also has to resolve the gate (the whole-run walk in `CampaignTests` does). Mute adds
+a heart to the floor and removes one rotating tool, which is the one condition that touches the
+heart ceiling and the kit at once; the campaign's `HeartsOnNextFloor` had to include Mute's heart
+or the next floor would refuse the carried hearts. Regrowth can only seal a dead end holding
+nothing the floor needs, so it cannot break reachability; Fracture's tests assert the wall events
+and a path to the exit rather than a particular wall.
+
+## 2026-10-21 — The card catalog grows to twenty-three, and rares become a guarantee
+
+**Decision:** Ten rule-backed cards joined the catalog (Featherfall, Greedy Grasp, Bloom, Blink
+Ledger, Ghost Veil, Long Drag, Wide Light, Glass Cannon, Debt of Sight, Slow Pursuit), each backed
+by a `GameConfig`/`GameState` hook rather than an `if` in the draft. `DraftFactory` now weights
+tiers by floor band (commons shrink, rares grow) and guarantees a rare in the draft after floors 5,
+10, 15 and 20 when one is still eligible.
+
+**Reason:** The first card pass was legible but mostly small numbers, and a playtest said the cards
+were not fun. The second wave gives the player decisions that change a whole floor's plan — a free
+first catch, a revival, a catch that costs two hearts, keys that fly to you, a veil that lasts
+longer — while keeping the "both halves in one sentence" rule. The floor-band weights and the
+milestone rare keep the late draft exciting even after the pool has thinned, which a flat
+common-rare weighting stopped doing by floor 15.
+
+**Consequences:** The catalog is content, not code: a new card is a record plus, if it needs a new
+rule, one validated config knob and one test of each half. The milestone swap runs after the normal
+draw and only replaces the last offer when no rare was drawn, so it cannot duplicate an offer and
+stays seeded. Glass Cannon's two-heart catch is the one card that makes the heart economy harsher
+than the shipped three hearts assume; it is a rare on purpose. The HUD's five powerup slots were
+part of the same pass: the old one-line readout was too small to read at the minimum window, and a
+player who uses the verbs needs their charges at a glance.
+
+## 2026-10-21 — The HUD's second row is the powerup row
+
+**Decision:** `RaylibLayout.HudHeight` grows from 60 to 76 px. The top row keeps the floor identity
+and the key/exit chips; the second row holds five 58x22 slots, one per powerup, each with its key,
+its remaining charges and an accent glow while that verb is active. A spent slot is dim, not
+hidden. The console renderer prints the same five counts in its HUD line.
+
+**Reason:** The first version drew the charges as a one-pixel-scale grey line at the bottom right
+of the status strip. At the minimum window it competed with the floor gimmick and the condition
+line, and a playtest could not find it — the player used the verbs but had no idea what was left.
+A row of keyed slots is the smallest form that answers "what do I have, and what is on" without a
+menu.
+
+**Consequences:** `HudHeight` is derived into the window size (`RaylibLayout.WindowSize`) and both
+renderers use the constant, so the extra 16 px moves the floor down rather than clipping it. The
+draft totals also report the new numeric cards (catch cost, veil/drag durations, lantern range);
+the boolean ones are left to the card faces.
+
+## 2026-10-21 — Slower start, faster hunters, stronger speed cards
+
+**Decision:** The player's cadence is a constant `FloorCatalog.PlayerCadenceSeconds` (0.26 s a
+cell) on every floor. Hunters start at 1.20 s on floor 1 and ramp to 0.22 s on floor 20, so the
+player starts with a clear speed advantage and the last floor's base hunter is faster than the base
+player. Speed cards were strengthened to close that gap: Light Feet is now Common at 35% faster,
+Glass Cannon is 40%, and Momentum caps at 35%. The Tide and The Vault keep their non-speed
+gimmicks.
+
+**Reason:** The previous flat 0.18 s pace made the player faster than every hunter forever, so
+speed cards were optional and the hunt never pressured the build. The playtest asked for a slower
+opening and a real ramp: enemies should accelerate, the player should start ahead, and a reliable
+speed card — not a pick every floor — should be enough to stay ahead once the hunt catches up.
+
+**Consequences:** Floor 1 is a teaching floor, not a chase; by the last arc the base hunter can
+outrun an uncarded player, and one Light Feet (0.169 s) beats the last floor's 0.22 s hunter. The
+catalog test now asserts the start advantage, the late hunter advantage, and that one speed card
+outruns the final base hunter. Sprint remains a temporary, stamina-limited exception.

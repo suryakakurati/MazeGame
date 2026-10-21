@@ -920,10 +920,12 @@ reproducible with different layouts per floor. The window gained a floor intro c
 floor-cleared card and a run summary, and the console prints a floor heading and carries hearts
 forward. The frontends now take `Func<Campaign>` instead of `Func<GameState>`.
 
-Phase 3 is shipped as well. Nine cards went live then, and the four movement cards joined them once
-player steps were timed — thirteen today (`wide-eyes`, `deep-roots`, `thornwright`,
-`blood-pact`, `second-wind`, `bait`, `smoke-wisp`, `trophy-hunter`, `lucky-find`, `light-feet`,
-`momentum`, `sprint-lungs`, `hollow-bones`), each one a
+Phase 3 is shipped as well. Nine cards went live then, the four movement cards joined them once
+player steps were timed, and a second wave of ten rule-backed cards followed in the 2026-10-21
+overhaul — twenty-three today (`wide-eyes`, `blink-step`, `long-veil`, `blood-pact`, `second-wind`,
+`lantern-oil`, `quick-hands`, `trophy-hunter`, `lucky-find`, `light-feet`, `momentum`,
+`sprint-lungs`, `hollow-bones`, `featherfall`, `magnetic-keys`, `bloom`, `blink-ledger`,
+`ghost-veil`, `long-drag`, `wide-light`, `glass-cannon`, `debt-of-sight`, `slow-pursuit`), each one a
 `Card` record carrying a `CardEffect` of numbers, composed by `RunModifiers` over the floor's
 `GameConfig` and clamped before the floor is built — no card is an `if` inside `GameState`. The
 draft is a gate in `Campaign`: clearing a floor that is not the last opens three seeded offers
@@ -1184,9 +1186,12 @@ Almost nothing — that is the point of this revision.
 
 ## 18. Second playtest: a new powerup kit and descent variance
 
-**Status:** proposals from the 2026-10-21 playthrough, revised after the first set was rejected.
-Nothing in this section is built. The two concrete asks from that session (the floor reached on the
-death card, and a maze that grows with the descent) are shipped; see `PROGRESS.md`.
+**Status:** proposals from the 2026-10-21 playthrough, revised after the first set was rejected,
+**shipped in full** on 2026-10-21 (see `PROGRESS.md` Phase 11). The five verbs, all eight descent
+conditions, the floor-8/floor-14 gates, the floor gimmicks that replaced the retired verbs, and
+the card pass that rewrote the four barrier/wisp cards around powerup charges are in the build;
+their costs and prices are as written below. The two earlier asks (the floor reached on the death
+card, and a maze that grows with the descent) were already shipped.
 
 The first set of ideas tried to make barriers, wisps and sprint easier to use. That was the wrong
 move: all three ask the player to place something and hope, so making them cheaper would not make
@@ -1278,13 +1283,15 @@ variance, and they arrive at gates the player can see.
 - **Barriers and wisps are retired from the player's hands.** Their rules can stay in `GameState`
   for a floor that places a pre-built seal, but the inputs, the aim mode and the two HUD chips go.
   The code should be left behind a flag for one pass so the two kits can be compared, then deleted.
-- **Three floors need new gimmicks.** The Gilded Cage ("no seals") and The Foundry ("six seals")
-  are about a retired verb, and The Moth Garden ("moths are cheap") is about the other. They become
-  floors about the new verbs: no Blink, extra Shove, a free Lantern, and so on.
-- **The card catalog needs a matching pass.** Deep Roots, Thornwright, Bait, Smoke Wisp and the two
-  wisp knobs are built on the retired verbs. Do not leave them in the pool as dead cards; either
-  rewrite them around the new verbs or cut them until the card pass. This is content work, not a
-  rule change, and it should land in the same pass as the kit.
+- **Three floors got new gimmicks (done).** The Gilded Cage is "no blink down here"
+  (0 charges), The Foundry is "shoves are cheap" (+2), and The Moth Garden is "lanterns are
+  cheap" (+2). Each is a `Powerups` override on the floor definition, so a floor can still grant
+  any kit it wants.
+- **The card catalog needed a matching pass (done).** Deep Roots, Thornwright, Bait and Smoke Wisp
+  were built on the retired verbs, so they were rewritten as Blink Step (+1 blink, wider aura),
+  Long Veil (+2 veils, slower steps), Lantern Oil (+1 lantern, −1 vision) and Quick Hands (+2
+  shoves, faster killer). `CardEffect` and `RunModifiers` gained the five charge deltas, clamped at
+  zero, and the draft totals line now reports them. No card trades on a verb the player lacks.
 
 ### Cost and the first slice
 
@@ -1306,3 +1313,6 @@ make the powerups something the player reaches for, the other three verbs will n
 the condition pool can be cut back to Regrowth and Eclipse. If it does, the next pass adds Veil,
 Lantern and Shove and the floor-8/floor-14 choice screen, and the card catalog is rewritten around
 the verbs that survived.
+
+The player chose the full kit, so the full kit is what shipped. The slice's test — does the player
+reach for a verb without being told — is now a playtest question rather than a build decision.

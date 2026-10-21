@@ -19,7 +19,7 @@ public sealed class CardCatalogTests
     public void Catalog_ShipsTheExpectedNumberOfCards()
     {
         Assert.Equal(CardCatalog.ShippedCount, CardCatalog.All.Count);
-        Assert.Equal(13, CardCatalog.ShippedCount);
+        Assert.Equal(23, CardCatalog.ShippedCount);
     }
 
     [Fact]
@@ -86,10 +86,10 @@ public sealed class CardCatalogTests
     }
 
     [Fact]
-    public void Incompatibility_IsSymmetricAndPointsAtRealCards()
+    public void Incompatibility_MarksOnlyRealSymmetricPairs()
     {
-        var pairs = 0;
-
+        // No shipped card sets an absolute that another could contradict, so the catalog is
+        // empty of marks; the rule itself is still checked so a future pair has to be symmetric.
         foreach (var card in CardCatalog.All)
         {
             if (card.IncompatibleWith is not { } otherId)
@@ -97,27 +97,13 @@ public sealed class CardCatalogTests
                 continue;
             }
 
-            pairs++;
-
             var other = CardCatalog.ById(otherId);
             Assert.NotNull(other);
             Assert.Equal(card.Id, other!.IncompatibleWith);
             Assert.False(card.IsCompatibleWith(other));
         }
 
-        Assert.Equal(2, pairs);
-    }
-
-    [Fact]
-    public void DeepRootsAndThornwright_AreTheMutuallyExclusivePair()
-    {
-        // Both set an absolute seal lifetime, so holding both would make one card a lie.
-        var deepRoots = Assert.IsType<Card>(CardCatalog.ById("deep-roots"));
-        var thornwright = Assert.IsType<Card>(CardCatalog.ById("thornwright"));
-
-        Assert.False(deepRoots.IsCompatibleWith(thornwright));
-        Assert.False(thornwright.IsCompatibleWith(deepRoots));
-        Assert.True(deepRoots.IsCompatibleWith(deepRoots));
+        Assert.DoesNotContain(CardCatalog.All, card => card.IncompatibleWith is not null);
     }
 
     [Fact]
@@ -157,6 +143,20 @@ public sealed class CardCatalogTests
                 effect.LureSeconds is not null ||
                 effect.LureStunSeconds != 0 ||
                 effect.LureVisionPenalty != 0 ||
+                effect.BlinkCharges != 0 ||
+                effect.VeilCharges != 0 ||
+                effect.DragCharges != 0 ||
+                effect.LanternCharges != 0 ||
+                effect.ShoveCharges != 0 ||
+                effect.FirstCatchFree ||
+                effect.MagneticKeys ||
+                effect.ReviveOnce ||
+                effect.BlinkRefundOnKey ||
+                effect.CatchCost != 0 ||
+                effect.VeilDurationSeconds != 0 ||
+                effect.DragSeconds != 0 ||
+                effect.DragPenaltySeconds != 0 ||
+                effect.LanternRange != 0 ||
                 effect.HealNow != 0 ||
                 effect.HealOnFloorClear != 0 ||
                 effect.NextDraftOfferBonus != 0 ||

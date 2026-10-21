@@ -17,17 +17,23 @@ graph/pathfinding libraries are used.
 > its own light: collect the keys, open the arch, and descend.
 > **You have three hearts**: a catch costs one, throws the killer to a distant dead end and stuns
 > it, and **hearts carry between floors**, so only the third catch on the whole run ends it. Walking
-> is a cadence (0.14 s per cell on floor 1, tightening within each arc as you descend), one press is
-> buffered, **Shift sprints** on a stamina bar. The explorer snaps to its tile (one press, one tile)
-> while the killer slides between cells. The hunt itself escalates: **one hunter for nine floors,
-> two from floor 10, three from floor 16**, each with its own route and clock. All twenty floors
+> is a cadence (a constant 0.26 s per cell; enemies start at 1.20 s and ramp to 0.22 s, so the
+> player starts ahead and has to draft speed to stay ahead; only cards and sprint make you faster),
+> one press is buffered, **Shift sprints** on a stamina bar. The explorer snaps to its tile (one
+> press, one tile) while the killer slides between cells. The hunt itself escalates: **one hunter
+> for nine floors, two from floor 10, three from floor 16**, each with its own route and clock, and
+> by the bottom the base hunter is quicker than the base player — speed cards close the gap. All twenty floors
 > differ in **shape, weather, light and music**, not only in
 > colour: twelve floor motifs, ten wall motifs, eleven signature objects, twelve kinds of drifting
-> weather, a per-floor HUD and card emblem, and a gimmick (a closed lantern, no barriers, a killer
-> without its glow). Each has an intro card, a floor-cleared card, **a draft of three cards
-> between floors — take one or skip for a heart** — from a catalog of thirteen, including four
-> movement cards, and a run summary (688 unit tests; the sprite compiler has produced 2,264
-> validated pixel-art tiles across twenty themes, and the game draws the floor from them).
+> weather, a per-floor HUD and card emblem, and a gimmick (a closed lantern, no blink, a killer
+> without its glow). Every floor refills **five one-key powerups** — Blink, Veil, Drag, Lantern and
+> Shove — whose charges are shown as five slots in the HUD, and at floors 8 and 14 the run stops at
+> a gate to take one of two **descent conditions** that bends the rest of the descent. Each floor
+> has an intro card, a floor-cleared card, **a draft of three cards between floors — take one or
+> skip for a heart** — from a catalog of twenty-three, including four movement cards, four powerup
+> cards and ten second-wave cards that change catches, keys, durations and revivals, and a run
+> summary (748 unit tests; the sprite compiler has produced 2,264 validated pixel-art tiles across
+> twenty themes, and the game draws the floor from them).
 > **It has a score and effects, and no audio files**: every sound is synthesised from code — 22
 > one-shots and twenty floor pieces, each with its own melody, key, meter and style, mixed as stems
 > so the chase arrives on the next bar. The styles are different kinds of music (drone, lullaby,
@@ -73,11 +79,11 @@ the tiles under it at any window size.
 
 `dotnet run --project src/MazeGame.UI` opens the title screen; `--console` plays the same
 campaign in the terminal, and the console view is also used automatically when no window can be
-opened (over SSH, for example). A run is twenty floors, each with its own theme and gimmick, with
-three barriers, two wisps,
-a vision radius of 3 cells and a key count per floor; the killer starts at 0.6 s per step and
-speeds up each floor. All of that is tunable in `GameConfig` and `FloorCatalog`. Every run
-generates new caves (`Seed = null`); set a seed to replay the exact same campaign.
+opened (over SSH, for example). A run is twenty floors, each with its own theme and gimmick, a
+five-verb powerup kit with charges that refill each floor, a vision radius of 3 cells and a key
+count per floor; the killer starts at 0.6 s per step and speeds up each floor. All of that is
+tunable in `GameConfig` and `FloorCatalog`. Every run generates new caves (`Seed = null`); set a
+seed to replay the exact same campaign.
 
 The first restore downloads the Raylib native library for your platform (see
 `ARCHITECTURE.md` for the exact package version).
@@ -90,11 +96,11 @@ The first restore downloads the Raylib native library for your platform (see
 | Enter or Space (title) | Confirm the highlighted entry |
 | W A S D / arrow keys | Walk: a tap is one tile, a hold keeps walking at the cadence |
 | Shift (hold) | Sprint, while the stamina bar lasts |
-| B or Space | Start aiming a barrier (the game pauses) |
-| R | Start aiming a wisp (the game pauses) |
-| WASD / arrows (while aiming) | Move the aim cursor anywhere on the map |
-| B, Space or Enter (while aiming) | Place the aimed barrier or wisp on the cursor |
-| Esc (while aiming) | Cancel the aim |
+| Space | Blink through the wall you face (the breach stays open) |
+| V | Veil: stand still for half a second to go unseen for 3 seconds |
+| T | Drag: slow the hunt to 40% for 3 seconds |
+| L | Lantern: throw your light up to 4 cells ahead |
+| F | Shove: push the hunter in front of you two cells back |
 | A / D, arrows (draft) | Move between the cards |
 | Enter, Space or 1–4 (draft) | Take the highlighted card |
 | S (draft) | Skip: take a heart instead |
@@ -112,9 +118,12 @@ A run is twenty floors. Clearing a floor's arch shows a floor-cleared card; Ente
 **draft**: three cards, each naming its own price in the same sentence as its benefit ("Vision
 +2, but the killer's light reaches 3 steps further"). Take one with Enter or its number, or skip
 with S for one heart. Whatever you take applies to every floor from then on, and the draft screen
-shows the run's totals underneath the title. Then the next floor begins with the hearts you have
-left. The third arch wins the run and shows a summary; there is no draft after it. Losing all
-three hearts ends the run whichever floor you are on.
+shows the run's totals underneath the title. Rares grow more likely as you descend, and every
+fifth floor's draft guarantees one, so the late run is where the build-defining cards live. Then
+the next floor begins with the hearts you have left. At floors 8 and 14 the run stops at a **gate**: two descent conditions, one taken for the
+rest of the run, so the late floors are not the same floor with more hunters. The twentieth arch
+wins the run and shows a summary; there is no draft after it. Losing all three hearts ends the
+run whichever floor you are on.
 
 Not every floor is a rectangle: eight of the twenty are carved as a blob or an oval, with the cells
 outside the outline left as solid rock, so the cave itself changes shape as you descend. Walls are
@@ -132,9 +141,8 @@ The HUD names the floor and its gimmick, and the cards carry its emblem and pale
 You are a small hooded figure carrying a lantern; the hunters are tall, spindly silhouettes with
 pink rim light and two pale eyes (two of them on floor 10, three from floor 16); keys are magenta beacons — a pool of light on the floor, a shaft
 rising out of the cell, a pulsing ring and glowing fungus at the core, so they read at the edge of
-the torch; the exit is a stone arch (cyan once open); barriers are thorny barricades of cave moss.
-The terminal view uses `@` for you, `K` for the killer, `k` for a key, `E` for the exit, `#` for a
-sealed barrier, `=` for a spent one, `*` for a wisp and `X` for the aiming cursor.
+the torch; the exit is a stone arch (cyan once open).
+The terminal view uses `@` for you, `K` for the killer, `k` for a key and `E` for the exit.
 
 Walking is timed rather than instant: a step takes about a tenth of a second, a press during that
 window is remembered for the next step, and holding a direction keeps walking at that cadence — the
@@ -150,15 +158,17 @@ a quarter of it to come back. Sprint is for breaking line of sight, not for goin
    gives you 1.5 seconds of grace, and **keeps your keys and barriers**. Only the third catch
    ends the run, so a mistake costs time rather than progress. The screen washes red when you
    lose a heart, and the last heart pulses.
-3. When the killer gets close, press B to aim, move the cursor anywhere on the map (`X` in
-   the terminal) and confirm. A fresh barrier is **sealed**: the killer treats it as a wall,
-   so it takes another route when one exists, and only tears it apart (3 seconds) when the
-   seal is the only way through. After 10 seconds the seal cracks into a husk that still costs
-   it 3 seconds to cross. Aiming pauses the clock, so take your time placing it on the corridor
-   it is about to use.
-4. Press R to throw a **wisp** instead: a glowing decoy that burns for 6 seconds. For as long
-   as it glows the killer walks to whichever of you and the wisp is cheaper by Dijkstra, so a
-   wisp dropped down a side passage buys you the time to take the other fork.
+3. Each floor refills five powerups, one key each, and the HUD shows how many charges are
+   left. **Space** blinks through the wall you face and leaves the breach open, so you make a
+   shortcut the hunters can use too. **V** veils you after half a second of standing still, for
+   three seconds of being unseen, but any step breaks it. **T** drags the hunt down to 40% for
+   three seconds, then leaves it 10% faster for five. **L** throws your light up to four cells
+   ahead and the hunters walk toward it while your own cell goes dark. **F** shoves the hunter
+   in front of you two cells back and stuns it, and every other hunter is given its next step
+   at once for the noise.
+4. A powerup is spent only when it succeeds, so blinking into rock or shoving empty air costs
+   nothing. Using the right verb at the right moment is the skill; hoarding charges just wastes
+   them, because every floor refills the kit.
 
 The maze is hidden by fog of war: you see your own cell and 3 steps down the corridors from
 it, and walls block the light. Cells you have already seen stay dimly drawn so you can
@@ -258,24 +268,29 @@ IReadOnlyList<Cell> route = pathfinder.FindPath(
 // route[0] == playerCell, route[^1] == exitCell, adjacent steps never cross a wall
 ```
 
-### The player's skill mechanic (barriers and wisps)
+### The player's skill mechanic (five verbs)
 
-The player carries a small, finite supply of barriers (three by default) and wisps (two). Press
-B or R and the game pauses so you can aim: WASD moves an `X` cursor anywhere on the map,
-Space/Enter drops the item there, Esc cancels.
+The player's tools are not a shared resource: each verb has its own charges, refilled when a
+floor starts, and a charge is spent only when the verb succeeds. `PowerupCharges.ForFloor`
+teaches one verb at a time (Blink on floor 1, Veil on floor 2, Drag on floor 4, Lantern on floor
+6, Shove on floor 8) and then deepens the counts.
 
-A barrier has two phases:
+- **Blink** removes the wall the player faces and steps one cell through it. The breach is a
+  real change to the maze for the rest of the floor, so it is both a shortcut and a hole the
+  hunters can use.
+- **Veil** channels for 0.6 s while the player stands still, then hides them for 3 s. Hunters
+  keep walking to the last cell they saw; any step, or being caught, breaks it.
+- **Drag** scales the hunters' clock to 40% for 3 s, then to 110% for 5 s. Both the individual
+  and Pack clocks read the same multiplier, so they cannot disagree about what time it is.
+- **Lantern** throws the light source up to four cells down a corridor. While it burns, the
+  player's own cell is dark and `LightOrigin` is the lantern, so the hunters follow the light
+  rather than the player.
+- **Shove** moves the hunter two cells back (stopping at a wall, rock or another hunter) and
+  stuns it for 2 s; every other hunter immediately gets its next step for the noise.
 
-1. **Sealed** for `BarrierSealSeconds` (10). The cell is priced at `SealedBarrierCost` (40), so
-   the killer takes another route while one exists. If the seal is the only way through, the
-   killer tears it apart, which takes `BarrierBreakSeconds` (3) and destroys the barrier.
-2. **Spent.** Once the seal lapses, the husk stays on the map and costs `ObstacleCost` (5), or
-   3 seconds, to cross.
-
-The wisp is the other half of the same idea: it is a decoy, not a wall. While it glows (6
-seconds), the killer runs to whichever of the player and the wisp is cheaper by Dijkstra. A
-wisp in a side branch pulls the chase off your route, and a wisp thrown *between* you and the
-killer is simply ignored, because the player is closer.
+Barriers and wisps still exist as floor rules and are still tested, but the player no longer
+places them. They are left in place for a future floor that pre-builds a seal, not offered as
+buttons.
 
 Measured on eight 15x15 seeds with the shipped settings: 81% of the cells on the killer's
 route admit a detour around a seal (up from 40% before the dead ends were braided), and the

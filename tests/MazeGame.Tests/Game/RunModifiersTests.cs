@@ -45,21 +45,21 @@ public sealed class RunModifiersTests
     }
 
     [Fact]
-    public void DeepRoots_LengthensSealsAndCostsABarrier()
+    public void BlinkStep_BuysABlinkAndWidensTheAura()
     {
-        var applied = RunModifiers.None.With(Card("deep-roots")).Apply(Floor());
+        var applied = RunModifiers.None.With(Card("blink-step")).Apply(Floor());
 
-        Assert.Equal(18.0, applied.BarrierSealSeconds, precision: 9);
-        Assert.Equal(2, applied.BarrierBudget);
+        Assert.Equal(PowerupCharges.Default.Blink + 1, applied.Powerups.Blink);
+        Assert.Equal(8, applied.EnemyAuraDistance);
     }
 
     [Fact]
-    public void Thornwright_BuysABarrierAndShortensSeals()
+    public void LongVeil_BuysVeilsAndSlowsEveryStep()
     {
-        var applied = RunModifiers.None.With(Card("thornwright")).Apply(Floor());
+        var applied = RunModifiers.None.With(Card("long-veil")).Apply(Floor());
 
-        Assert.Equal(4, applied.BarrierBudget);
-        Assert.Equal(4.0, applied.BarrierSealSeconds, precision: 9);
+        Assert.Equal(PowerupCharges.Default.Veil + 2, applied.Powerups.Veil);
+        Assert.Equal(0.11 * 1.10, applied.PlayerStepSeconds, precision: 9);
     }
 
     [Fact]
@@ -86,24 +86,31 @@ public sealed class RunModifiersTests
     }
 
     [Fact]
-    public void Bait_MakesTheWispStunAndCostsACharge()
+    public void LanternOil_BuysAThrowAndDimsTheTorch()
     {
-        var applied = RunModifiers.None.With(Card("bait")).Apply(Floor());
+        var applied = RunModifiers.None.With(Card("lantern-oil")).Apply(Floor());
 
-        Assert.Equal(1.0, applied.LureStunSeconds, precision: 9);
-        Assert.Equal(1, applied.LureCount);
-        Assert.Equal(6.0, applied.LureSeconds, precision: 9);
+        Assert.Equal(PowerupCharges.Default.Lantern + 1, applied.Powerups.Lantern);
+        Assert.Equal(2, applied.VisionRadius);
     }
 
     [Fact]
-    public void SmokeWisp_PullsLongerAndNarrowsTheTorchWhileItBurns()
+    public void QuickHands_BuysShovesAndSpeedsTheKillerUp()
     {
-        var applied = RunModifiers.None.With(Card("smoke-wisp")).Apply(Floor());
+        var applied = RunModifiers.None.With(Card("quick-hands")).Apply(Floor());
 
-        Assert.Equal(10.0, applied.LureSeconds, precision: 9);
-        Assert.Equal(2, applied.LureVisionPenalty);
-        Assert.Equal(2, applied.LureCount);
-        Assert.Equal(3, applied.VisionRadius);
+        Assert.Equal(PowerupCharges.Default.Shove + 2, applied.Powerups.Shove);
+        Assert.Equal(0.6 * 0.92, applied.EnemyStepSeconds, precision: 9);
+    }
+
+    [Fact]
+    public void Apply_ClampsPowerupChargesAtZero()
+    {
+        var card = CustomCard(new CardEffect { BlinkCharges = -9 });
+
+        var applied = RunModifiers.None.With(card).Apply(Floor());
+
+        Assert.Equal(0, applied.Powerups.Blink);
     }
 
     [Fact]
@@ -128,6 +135,95 @@ public sealed class RunModifiersTests
     }
 
     [Fact]
+    public void Featherfall_GivesTheFirstCatchForFree()
+    {
+        var applied = RunModifiers.None.With(Card("featherfall")).Apply(Floor());
+
+        Assert.True(applied.FirstCatchFree);
+    }
+
+    [Fact]
+    public void GreedyGrasp_PullsKeysAndDemandsOneMore()
+    {
+        var applied = RunModifiers.None.With(Card("magnetic-keys")).Apply(Floor());
+
+        Assert.True(applied.MagneticKeys);
+        Assert.Equal(4, applied.KeyCount);
+    }
+
+    [Fact]
+    public void Bloom_RevivesOnceAndDimsTheTorch()
+    {
+        var applied = RunModifiers.None.With(Card("bloom")).Apply(Floor());
+
+        Assert.True(applied.ReviveOnce);
+        Assert.Equal(1, applied.VisionRadius);
+    }
+
+    [Fact]
+    public void BlinkLedger_ReturnsBlinksAndSpeedsTheKillerUp()
+    {
+        var applied = RunModifiers.None.With(Card("blink-ledger")).Apply(Floor());
+
+        Assert.True(applied.BlinkRefundOnKey);
+        Assert.Equal(0.6 * 0.92, applied.EnemyStepSeconds, precision: 9);
+    }
+
+    [Fact]
+    public void GhostVeil_LastsLongerAndWidensTheAura()
+    {
+        var applied = RunModifiers.None.With(Card("ghost-veil")).Apply(Floor());
+
+        Assert.Equal(5.0, applied.VeilDurationSeconds, precision: 9);
+        Assert.Equal(8, applied.EnemyAuraDistance);
+    }
+
+    [Fact]
+    public void LongDrag_ExtendsTheSlowWindowAndTheHangover()
+    {
+        var applied = RunModifiers.None.With(Card("long-drag")).Apply(Floor());
+
+        Assert.Equal(5.0, applied.DragSeconds, precision: 9);
+        Assert.Equal(8.0, applied.DragPenaltySeconds, precision: 9);
+    }
+
+    [Fact]
+    public void WideLight_BuysRangeAndCostsAVeil()
+    {
+        var applied = RunModifiers.None.With(Card("wide-light")).Apply(Floor());
+
+        Assert.Equal(6, applied.LanternRange);
+        Assert.Equal(PowerupCharges.Default.Veil - 1, applied.Powerups.Veil);
+    }
+
+    [Fact]
+    public void GlassCannon_BuysSpeedAndDoublesTheCostOfACatch()
+    {
+        var applied = RunModifiers.None.With(Card("glass-cannon")).Apply(Floor());
+
+        Assert.Equal(0.11 * 0.60, applied.PlayerStepSeconds, precision: 9);
+        Assert.Equal(2, applied.CatchCost);
+    }
+
+    [Fact]
+    public void DebtOfSight_BuysHeartsAndNarrowsTheTorch()
+    {
+        var applied = RunModifiers.None.With(Card("debt-of-sight")).Apply(Floor());
+
+        Assert.Equal(5, applied.MaxHearts);
+        Assert.Equal(1, applied.VisionRadius);
+    }
+
+    [Fact]
+    public void SlowPursuit_SlowsTheKillerAndDemandsAKey()
+    {
+        var applied = RunModifiers.None.With(Card("slow-pursuit")).Apply(Floor());
+
+        Assert.Equal(0.6 * 1.12, applied.EnemyStepSeconds, precision: 9);
+        Assert.Equal(4, applied.KeyCount);
+    }
+
+    [Fact]
     public void Apply_ClampsVisionAtOneStep()
     {
         // Two dimming cards leave one step of sight; a third is clamped rather than blinding the
@@ -146,7 +242,7 @@ public sealed class RunModifiersTests
     {
         var applied = RunModifiers.None.With(Card("light-feet")).Apply(Floor() with { StartingHearts = 2 });
 
-        Assert.Equal(0.11 * 0.85, applied.PlayerStepSeconds, precision: 9);
+        Assert.Equal(0.11 * 0.65, applied.PlayerStepSeconds, precision: 9);
 
         // The slot is taken from the ceiling, never from a heart the player is already holding:
         // the clamp is what keeps a card from throwing a wound at the player.
@@ -159,8 +255,8 @@ public sealed class RunModifiersTests
     {
         var applied = RunModifiers.None.With(Card("momentum")).Apply(Floor());
 
-        Assert.Equal(0.05, applied.MomentumRampPerStep, precision: 9);
-        Assert.Equal(0.25, applied.MomentumMaxBonus, precision: 9);
+        Assert.Equal(0.06, applied.MomentumRampPerStep, precision: 9);
+        Assert.Equal(0.35, applied.MomentumMaxBonus, precision: 9);
         Assert.Equal(0.15, applied.TurnPenaltyScale, precision: 9);
         Assert.Equal(2.0, applied.TurnPenaltySeconds, precision: 9);
     }
@@ -191,8 +287,9 @@ public sealed class RunModifiersTests
             .With(Card("hollow-bones"))
             .Apply(Floor());
 
-        // 15% faster and 25% slower roughly cancel, which is the honest result of holding both.
-        Assert.Equal(0.11 * 0.85 * 1.25, applied.PlayerStepSeconds, precision: 9);
+        // 35% faster and 25% slower still leave the player faster, which is the honest result of
+        // holding both: the speed card has to be strong enough to be worth its heart cost.
+        Assert.Equal(0.11 * 0.65 * 1.25, applied.PlayerStepSeconds, precision: 9);
     }
 
     [Fact]
@@ -300,12 +397,13 @@ public sealed class RunModifiersTests
     }
 
     [Fact]
-    public void Describe_ShowsAnAbsoluteSealTime()
+    public void Describe_ShowsPowerupCharges()
     {
-        var text = RunModifiers.None.With(Card("deep-roots")).Describe();
+        var text = RunModifiers.None.With(Card("blink-step")).With(Card("quick-hands")).Describe();
 
-        Assert.Contains("SEALS 18s", text, StringComparison.Ordinal);
-        Assert.Contains("BARRIERS -1", text, StringComparison.Ordinal);
+        Assert.Contains("BLINK +1", text, StringComparison.Ordinal);
+        Assert.Contains("SHOVE +2", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("VEIL", text, StringComparison.Ordinal);
     }
 
     [Fact]

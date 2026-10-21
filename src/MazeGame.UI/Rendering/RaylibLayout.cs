@@ -21,8 +21,11 @@ internal static class RaylibLayout
     /// <summary>Margin around the maze, in pixels.</summary>
     public const int Margin = 28;
 
-    /// <summary>Height of the status strip above the maze, in pixels.</summary>
-    public const int HudHeight = 60;
+    /// <summary>
+    /// Height of the status strip above the maze, in pixels. Two rows: the floor identity and the
+    /// key/exit chips on top, the five powerup charges underneath.
+    /// </summary>
+    public const int HudHeight = 76;
 
     /// <summary>Height of the control-hint strip below the maze, in pixels.</summary>
     public const int FooterHeight = 44;

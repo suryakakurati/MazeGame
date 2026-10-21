@@ -180,12 +180,16 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     /// carry its emblem. Called once per floor, beside <see cref="SetTheme"/>.
     /// </summary>
     /// <param name="floor">The floor about to be played.</param>
+    /// <param name="conditions">
+    /// The descent conditions riding on this floor, or null for a plain floor. They ride the HUD
+    /// as small marks beside the floor name, so the player always knows what is bending the rules.
+    /// </param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="floor"/> is null.</exception>
-    public void SetFloor(FloorDefinition floor)
+    public void SetFloor(FloorDefinition floor, IReadOnlyList<DescentCondition>? conditions = null)
     {
         ArgumentNullException.ThrowIfNull(floor);
 
-        _floorChrome = FloorChrome.For(floor);
+        _floorChrome = FloorChrome.For(floor, conditions);
         _lightStamp = int.MinValue;
     }
 

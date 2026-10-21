@@ -95,4 +95,13 @@ public readonly record struct Cell
     /// <returns>A cell at the same position without that wall.</returns>
     internal Cell WithoutWall(Direction direction) =>
         new(Row, Column, (byte)(_walls & ~(byte)direction));
+
+    /// <summary>
+    /// Returns a copy of this cell with one wall restored. Adding a wall that is already
+    /// standing returns an equal cell.
+    /// </summary>
+    /// <param name="direction">The side whose wall should be restored.</param>
+    /// <returns>A cell at the same position with that wall standing.</returns>
+    internal Cell WithWall(Direction direction) =>
+        new(Row, Column, (byte)(_walls | (byte)direction));
 }

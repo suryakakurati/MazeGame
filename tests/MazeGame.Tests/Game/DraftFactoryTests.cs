@@ -75,24 +75,23 @@ public sealed class DraftFactoryTests
     [Fact]
     public void Offers_NeverOfferACardThatContradictsAHeldOne()
     {
-        var deepRoots = Card("deep-roots");
-        var thornwright = Card("thornwright");
-        var catalog = new[] { deepRoots, thornwright };
+        var left = Card("wide-eyes") with { Id = "test-left", IncompatibleWith = "test-right" };
+        var right = Card("wide-eyes") with { Id = "test-right", IncompatibleWith = "test-left" };
+        var catalog = new[] { left, right };
 
-        var withRoots = DraftFactory.Offers(1, 1, [deepRoots], 2, draftsRemaining: 2, catalog);
-        var withThorns = DraftFactory.Offers(1, 1, [thornwright], 2, draftsRemaining: 2, catalog);
+        var withLeft = DraftFactory.Offers(1, 1, [left], 2, draftsRemaining: 2, catalog);
+        var withRight = DraftFactory.Offers(1, 1, [right], 2, draftsRemaining: 2, catalog);
 
-        // Both absolutes set the seal lifetime, so the pair is refused at the draft rather than
-        // leaving one card silently doing nothing.
-        Assert.Empty(withRoots);
-        Assert.Empty(withThorns);
+        // The pair is refused at the draft rather than leaving one card silently doing nothing.
+        Assert.Empty(withLeft);
+        Assert.Empty(withRight);
     }
 
     [Fact]
     public void Offers_StopOfferingVisionCardsAfterTwo()
     {
-        var smokeWisp = Card("smoke-wisp");
-        var catalog = new[] { smokeWisp };
+        var lanternOil = Card("lantern-oil");
+        var catalog = new[] { lanternOil };
         var twoVisionCards = new[] { Card("wide-eyes"), Card("second-wind") };
 
         var offers = DraftFactory.Offers(
@@ -147,7 +146,7 @@ public sealed class DraftFactoryTests
     [Fact]
     public void Offers_WithATinyCatalog_ReturnWhatExists()
     {
-        var catalog = new[] { Card("bait") };
+        var catalog = new[] { Card("wide-eyes") };
 
         var offers = DraftFactory.Offers(1, 1, [], 3, draftsRemaining: 2, catalog);
 
@@ -158,7 +157,7 @@ public sealed class DraftFactoryTests
     public void Offers_WithOnlyACurse_ReturnNothing()
     {
         // Curses are never offered alone; they exist as the price of a rare.
-        var curse = Card("deep-roots") with { Id = "quiet", Tier = CardTier.Curse };
+        var curse = Card("wide-eyes") with { Id = "quiet", Tier = CardTier.Curse };
 
         var offers = DraftFactory.Offers(1, 1, [], 3, draftsRemaining: 2, [curse]);
 
@@ -168,12 +167,41 @@ public sealed class DraftFactoryTests
     [Fact]
     public void Offers_RepeatAStackableCard()
     {
-        var stackable = Card("bait") with { IsStackable = true };
+        var stackable = Card("wide-eyes") with { IsStackable = true };
 
         var offers = DraftFactory.Offers(1, 1, [stackable], 1, draftsRemaining: 2, [stackable]);
 
         Assert.Single(offers);
         Assert.Equal(stackable.Id, offers[0].Id);
+    }
+
+    [Fact]
+    public void Offers_EveryFifthFloorIncludesARare()
+    {
+        foreach (var floor in new[] { 5, 10, 15 })
+        {
+            for (var seed = 0; seed < 20; seed++)
+            {
+                var offers = DraftFactory.Offers(seed, floor, [], 3, draftsRemaining: 2);
+
+                Assert.Contains(offers, card => card.Tier == CardTier.Rare);
+            }
+        }
+    }
+
+    [Fact]
+    public void Offers_LateFloorsDrawMoreRaresThanEarlyOnes()
+    {
+        var early = 0;
+        var late = 0;
+
+        for (var seed = 0; seed < 200; seed++)
+        {
+            early += DraftFactory.Offers(seed, 1, [], 3, draftsRemaining: 2).Count(card => card.Tier == CardTier.Rare);
+            late += DraftFactory.Offers(seed, 18, [], 3, draftsRemaining: 2).Count(card => card.Tier == CardTier.Rare);
+        }
+
+        Assert.True(late > early, $"late floors drew {late} rares against {early} early");
     }
 
     [Fact]

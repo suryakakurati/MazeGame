@@ -29,6 +29,12 @@ public enum GameEvent
     /// <summary>The killer caught the player and that was the last heart.</summary>
     HeartLostLast,
 
+    /// <summary>A card turned a catch aside: no heart was lost.</summary>
+    Graced,
+
+    /// <summary>A fatal catch left the player at one heart instead of ending the run.</summary>
+    Revived,
+
     /// <summary>The killer stepped one cell while hunting the player.</summary>
     KillerStep,
 
@@ -46,6 +52,42 @@ public enum GameEvent
 
     /// <summary>The killer reached the wisp, spending it.</summary>
     WispConsumed,
+
+    /// <summary>The player stepped through a wall, leaving a breach.</summary>
+    Blink,
+
+    /// <summary>A veil completed and the player is now unseen.</summary>
+    Veiled,
+
+    /// <summary>The hunt slowed for a moment.</summary>
+    Drag,
+
+    /// <summary>The lantern left the player's hand.</summary>
+    LanternThrown,
+
+    /// <summary>The lantern came back: retrieved, timed out or put out by a hunter.</summary>
+    LanternReturned,
+
+    /// <summary>A hunter was shoved away and stunned.</summary>
+    Shoved,
+
+    /// <summary>A dead end sealed under Regrowth.</summary>
+    WallSealed,
+
+    /// <summary>A wall opened under Fracture.</summary>
+    WallOpened,
+
+    /// <summary>A passage closed under Fracture.</summary>
+    WallClosed,
+
+    /// <summary>The exit moved under Drift.</summary>
+    ExitMoved,
+
+    /// <summary>The dark half of an Eclipse began.</summary>
+    EclipseFell,
+
+    /// <summary>The lit half of an Eclipse returned.</summary>
+    EclipseLifted,
 
     /// <summary>The player reached the unlocked exit: this floor is cleared.</summary>
     FloorCleared,

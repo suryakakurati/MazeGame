@@ -46,9 +46,10 @@ public sealed record Card
     /// Gets the id of a card this one cannot be held with, or <see langword="null"/>.
     /// </summary>
     /// <remarks>
-    /// The pair that needs this is <c>deep-roots</c> and <c>thornwright</c>: both set an absolute
-    /// seal lifetime, so holding both would make one of them a lie. Preventing it at the draft is
-    /// honest; letting both sit in the run and picking a winner silently is not.
+    /// A pair needs this when two cards set the same absolute (a seal lifetime, say), so holding
+    /// both would make one of them a lie. Preventing it at the draft is honest; letting both sit
+    /// in the run and picking a winner silently is not. No shipped card needs it today: the
+    /// powerup cards only add charges, which compose.
     /// </remarks>
     public string? IncompatibleWith { get; init; }
 

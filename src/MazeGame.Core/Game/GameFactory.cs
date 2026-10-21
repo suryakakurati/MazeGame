@@ -104,29 +104,51 @@ public sealed class GameFactory
     /// <exception cref="InvalidOperationException">
     /// Thrown when the random factory returns <see langword="null"/>.
     /// </exception>
-    public GameState CreateFloor(FloorDefinition floor, int startingHearts, RunModifiers modifiers)
+    public GameState CreateFloor(FloorDefinition floor, int startingHearts, RunModifiers modifiers) =>
+        CreateFloor(floor, startingHearts, modifiers, Array.Empty<DescentCondition>());
+
+    /// <summary>
+    /// Builds one floor with the run-scoped conditions in force.
+    /// </summary>
+    /// <param name="floor">The floor's data.</param>
+    /// <param name="startingHearts">Hearts the player has left.</param>
+    /// <param name="modifiers">The cards taken this run.</param>
+    /// <param name="conditions">The descent conditions active from this floor on.</param>
+    /// <returns>A playable floor that starts <see cref="GameStatus.InProgress"/>.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown when any argument is null.
+    /// </exception>
+    public GameState CreateFloor(
+        FloorDefinition floor,
+        int startingHearts,
+        RunModifiers modifiers,
+        IReadOnlyList<DescentCondition> conditions)
     {
         ArgumentNullException.ThrowIfNull(floor);
         ArgumentNullException.ThrowIfNull(modifiers);
+        ArgumentNullException.ThrowIfNull(conditions);
 
         // The floor's own numbers first, so a bad floor definition fails with its own message,
         // then the cards over them, which may change the key count and the heart ceiling.
         //
         // The hearts are checked against the *composed* floor: a card can raise a floor's ceiling
-        // (Blood Pact), so the floor definition's own ceiling cannot be the last word on how many
-        // hearts it accepts. Clamping there instead would silently eat a heart on the way in.
-        var config = modifiers.Apply(_config.ForFloor(floor, Math.Min(startingHearts, floor.MaxHearts)));
+        // (Blood Pact, Hearth), so the floor definition's own ceiling cannot be the last word on
+        // how many hearts it accepts. ForFloor is given the floor's own ceiling, then the lifted
+        // hearts are restored over the composed maximum once the cards have run.
+        var floorCeiling = floor.MaxHearts + (conditions.Contains(DescentCondition.Mute) ? 1 : 0);
+        var config = modifiers.Apply(
+            _config.ForFloor(floor, Math.Min(startingHearts, floorCeiling), conditions));
 
-        if (startingHearts > config.MaxHearts)
+        if (startingHearts > config.StartingHearts)
         {
-            throw new ArgumentOutOfRangeException(
-                nameof(startingHearts),
-                startingHearts,
-                $"Floor {floor.Number} allows at most {config.MaxHearts} hearts.");
-        }
+            if (startingHearts > config.MaxHearts)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(startingHearts),
+                    startingHearts,
+                    $"Floor {floor.Number} accepts at most {config.MaxHearts} hearts with the run's cards.");
+            }
 
-        if (startingHearts != config.StartingHearts)
-        {
             config = config with { StartingHearts = startingHearts };
         }
 

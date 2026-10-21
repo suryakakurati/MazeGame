@@ -12,17 +12,29 @@ namespace MazeGame.UI.Rendering;
 /// <param name="Name">The floor's display name.</param>
 /// <param name="Gimmick">The floor's one-line rule, or null when it has none.</param>
 /// <param name="Style">Its accent, weather and light.</param>
-public sealed record FloorChrome(int Number, string Name, string? Gimmick, FloorStyle Style)
+/// <param name="Conditions">The descent conditions in force, or an empty list.</param>
+public sealed record FloorChrome(
+    int Number,
+    string Name,
+    string? Gimmick,
+    FloorStyle Style,
+    IReadOnlyList<DescentCondition> Conditions)
 {
     /// <summary>Builds the identity for a floor definition.</summary>
     /// <param name="floor">The floor about to be played.</param>
+    /// <param name="conditions">The descent conditions in force, or null for none.</param>
     /// <returns>The identity the HUD draws.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="floor"/> is null.</exception>
-    public static FloorChrome For(FloorDefinition floor)
+    public static FloorChrome For(FloorDefinition floor, IReadOnlyList<DescentCondition>? conditions = null)
     {
         ArgumentNullException.ThrowIfNull(floor);
 
-        return new FloorChrome(floor.Number, floor.Name, floor.Gimmick, FloorStyleCatalog.For(floor.ThemeId));
+        return new FloorChrome(
+            floor.Number,
+            floor.Name,
+            floor.Gimmick,
+            FloorStyleCatalog.For(floor.ThemeId),
+            conditions ?? Array.Empty<DescentCondition>());
     }
 }
 

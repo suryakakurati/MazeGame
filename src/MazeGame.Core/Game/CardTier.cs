@@ -9,10 +9,10 @@ namespace MazeGame.Core.Game;
 /// rares feel like an event, and the card face is coloured by it in the window.
 /// </para>
 /// <para>
-/// The plan also gates tiers by floor band (commons on floors 1–8, uncommons from 5, rares from
-/// 11). That gate is deliberately not implemented while the shipped run has three floors: every
-/// band would collapse onto floor 1. It arrives with the twenty-floor campaign, and the weight
-/// below is what makes the current run feel graded in the meantime.
+/// The draft's floor bands are weights, not hard gates: commons thin out and rares grow more
+/// likely as the run descends, and every fifth floor's draft guarantees one rare when one is
+/// still eligible. That keeps early floors legible without making a late run a different
+/// catalog.
 /// </para>
 /// </remarks>
 public enum CardTier

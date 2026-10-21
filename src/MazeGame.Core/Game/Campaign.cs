@@ -26,12 +26,15 @@ namespace MazeGame.Core.Game;
 public sealed class Campaign
 {
     private readonly IReadOnlyList<FloorDefinition> _floors;
-    private readonly Func<FloorDefinition, int, RunModifiers, GameState> _createFloor;
+    private readonly Func<FloorDefinition, int, RunModifiers, IReadOnlyList<DescentCondition>, GameState> _createFloor;
     private readonly int _runSeed;
+    private readonly List<DescentCondition> _conditions = [];
+    private readonly HashSet<int> _chosenGates = [];
 
     private int _floorIndex;
     private GameState _floor;
     private Draft? _draft;
+    private ConditionOffer? _conditionOffer;
     private RunModifiers _modifiers = RunModifiers.None;
 
     /// <summary>
@@ -49,7 +52,7 @@ public sealed class Campaign
     /// <param name="floors">The run's floors, in order. The list is snapshotted.</param>
     /// <param name="createFloor">
     /// Builds one playable floor from a definition, the hearts the player enters it with, and the
-    /// cards held. The production implementation is <see cref="GameFactory.CreateFloor"/>.
+    /// cards held. The production implementation is <c>GameFactory.CreateFloor</c>.
     /// </param>
     /// <param name="runSeed">
     /// The run's seed, used to derive the draft offers, or <see langword="null"/> for a fresh
@@ -68,7 +71,7 @@ public sealed class Campaign
     /// </exception>
     public Campaign(
         IReadOnlyList<FloorDefinition> floors,
-        Func<FloorDefinition, int, RunModifiers, GameState> createFloor,
+        Func<FloorDefinition, int, RunModifiers, IReadOnlyList<DescentCondition>, GameState> createFloor,
         int? runSeed = null)
     {
         ArgumentNullException.ThrowIfNull(floors);
@@ -148,6 +151,39 @@ public sealed class Campaign
     /// <summary>Gets the cards taken this run and the totals they add up to.</summary>
     public RunModifiers Modifiers => _modifiers;
 
+    /// <summary>Gets the descent conditions chosen this run, in the order they were taken.</summary>
+    public IReadOnlyList<DescentCondition> ActiveConditions => _conditions;
+
+    /// <summary>
+    /// Gets the condition choice open at a gate, or <see langword="null"/> when the run is not at
+    /// one.
+    /// </summary>
+    /// <remarks>
+    /// Reading this after a floor is cleared is what opens the offer, exactly as <see cref="Draft"/> is
+    /// what opens the card choice. A gate is resolved once; the run then carries its choice for
+    /// the rest of the descent.
+    /// </remarks>
+    public ConditionOffer? ConditionOffer
+    {
+        get
+        {
+            if (!IsFloorCleared || IsOnLastFloor)
+            {
+                return null;
+            }
+
+            var next = _floors[_floorIndex + 1].Number;
+
+            if (!IsConditionGate(next) || _chosenGates.Contains(next))
+            {
+                return null;
+            }
+
+            return _conditionOffer ??= new ConditionOffer(
+                DescentConditionCatalog.Offer(_runSeed, next, _conditions));
+        }
+    }
+
     /// <summary>Gets the hearts already banked for the next floor, including a pending skip-to-heal.</summary>
     /// <remarks>
     /// The skip-to-heal and a card's one-shot heal cannot be applied to a cleared floor, so they
@@ -177,7 +213,8 @@ public sealed class Campaign
             }
 
             var next = _floors[_floorIndex + 1];
-            var ceiling = Math.Max(1, next.MaxHearts + _modifiers.MaxHearts);
+            var muteBonus = _conditions.Contains(DescentCondition.Mute) ? 1 : 0;
+            var ceiling = Math.Max(1, next.MaxHearts + _modifiers.MaxHearts + muteBonus);
             return Math.Min(_floor.Hearts + _carryHearts + _modifiers.HealOnFloorClear, ceiling);
         }
     }
@@ -280,7 +317,34 @@ public sealed class Campaign
     }
 
     /// <summary>
-    /// Moves from the cleared floor to the next one, carrying the hearts and cards of the run.
+    /// Takes <paramref name="condition"/> from the open gate and makes it part of the run.
+    /// </summary>
+    /// <param name="condition">The condition to take; it must be on the table.</param>
+    /// <returns>
+    /// <see langword="true"/> when it was taken; <see langword="false"/> when no gate is open or
+    /// the condition is not one of the offers.
+    /// </returns>
+    /// <remarks>
+    /// There is no skip. The gate exists to make the late run different, so the player has to
+    /// choose one of the rules on the table.
+    /// </remarks>
+    public bool TakeCondition(DescentCondition condition)
+    {
+        var offer = ConditionOffer;
+
+        if (offer is null || !offer.TryTake(condition))
+        {
+            return false;
+        }
+
+        _conditions.Add(condition);
+        _chosenGates.Add(_floors[_floorIndex + 1].Number);
+        return true;
+    }
+
+    /// <summary>
+    /// Moves from the cleared floor to the next one, carrying the hearts, cards and conditions of
+    /// the run.
     /// </summary>
     /// <returns>
     /// <see langword="true"/> when a new floor was built; <see langword="false"/> when the current
@@ -301,14 +365,29 @@ public sealed class Campaign
         }
 
         var next = _floors[_floorIndex + 1];
+
+        // A gate is not a suggestion: the run cannot step onto floor 8 or 14 until its rule has
+        // been chosen. Checking the chosen set rather than the live offer also stops a frontend
+        // that never read the offer from skipping it.
+        if (IsConditionGate(next.Number) && !_chosenGates.Contains(next.Number))
+        {
+            return false;
+        }
+
         var hearts = HeartsOnNextFloor;
 
         _floorIndex++;
         _draft = null;
+        _conditionOffer = null;
         _carryHearts = 0;
         _floor = Build(next, hearts);
         return true;
     }
+
+    /// <summary>Returns whether <paramref name="floorNumber"/> is a condition gate.</summary>
+    /// <param name="floorNumber">The floor the run is about to enter.</param>
+    /// <returns><see langword="true"/> for the two gates.</returns>
+    private static bool IsConditionGate(int floorNumber) => floorNumber is 8 or 14;
 
     /// <summary>
     /// Builds the draft for the floor that was just cleared.
@@ -352,6 +431,6 @@ public sealed class Campaign
     /// <param name="floor">The floor to build.</param>
     /// <param name="hearts">Hearts the player brings to it.</param>
     private GameState Build(FloorDefinition floor, int hearts) =>
-        _createFloor(floor, hearts, _modifiers)
+        _createFloor(floor, hearts, _modifiers, _conditions)
         ?? throw new InvalidOperationException("The floor builder returned null.");
 }

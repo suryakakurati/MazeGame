@@ -157,6 +157,73 @@ public sealed class Grid
     }
 
     /// <summary>
+    /// Restores the wall between the cell at <paramref name="row"/>, <paramref name="column"/> and
+    /// its neighbour in <paramref name="direction"/>, closing a passage. Both cells are updated, so
+    /// the wall is standing from either side.
+    /// </summary>
+    /// <param name="row">Zero-based row index of the cell.</param>
+    /// <param name="column">Zero-based column index of the cell.</param>
+    /// <param name="direction">The side whose wall should stand.</param>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when the cell, its neighbour in that direction, or the direction itself is
+    /// outside the grid.
+    /// </exception>
+    /// <remarks>
+    /// Adding a wall that already stands is harmless and changes nothing, exactly as removing a
+    /// missing wall is. Rock is left alone: a wall between a floor cell and a solid one is the
+    /// maze's edge, and conditions such as Fracture only close passages they opened first.
+    /// </remarks>
+    public void AddWall(int row, int column, Direction direction)
+    {
+        ValidateDirection(direction);
+        ValidatePosition(row, column);
+
+        var (rowDelta, columnDelta) = direction.Delta();
+        var neighbourRow = row + rowDelta;
+        var neighbourColumn = column + columnDelta;
+        ValidatePosition(neighbourRow, neighbourColumn);
+
+        if (_solid[row, column] || _solid[neighbourRow, neighbourColumn])
+        {
+            return;
+        }
+
+        _cells[row, column] = _cells[row, column].WithWall(direction);
+        _cells[neighbourRow, neighbourColumn] =
+            _cells[neighbourRow, neighbourColumn].WithWall(direction.Opposite());
+    }
+
+    /// <summary>
+    /// Returns the directions in which the cell at <paramref name="row"/>, <paramref name="column"/>
+    /// has an open passage. A solid cell has none.
+    /// </summary>
+    /// <param name="row">Zero-based row index.</param>
+    /// <param name="column">Zero-based column index.</param>
+    /// <returns>The open sides, in north, east, south, west order.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when the position is outside the grid.</exception>
+    public IReadOnlyList<Direction> OpenDirections(int row, int column)
+    {
+        ValidatePosition(row, column);
+
+        if (_solid[row, column])
+        {
+            return Array.Empty<Direction>();
+        }
+
+        var open = new List<Direction>(4);
+
+        foreach (var direction in new[] { Direction.North, Direction.East, Direction.South, Direction.West })
+        {
+            if (!HasWall(row, column, direction))
+            {
+                open.Add(direction);
+            }
+        }
+
+        return open;
+    }
+
+    /// <summary>
     /// Converts a cell position into the single integer index used by flat structures
     /// such as <see cref="DisjointSet"/>: <c>row * Columns + column</c>, counting rows
     /// first.

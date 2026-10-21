@@ -46,6 +46,29 @@ namespace MazeGame.Core.Game;
 /// </remarks>
 public sealed class GameState
 {
+    /// <summary>How long the player must stand still to complete a veil.</summary>
+    private const double VeilChannelSeconds = 0.6;
+
+    /// <summary>How long a thrown lantern burns before it returns.</summary>
+    private const double LanternSeconds = 5.0;
+
+    /// <summary>How often Regrowth seals a dead end.</summary>
+    private const double RegrowthIntervalSeconds = 18.0;
+
+    /// <summary>How often Fracture moves a wall.</summary>
+    private const double FractureIntervalSeconds = 22.0;
+
+    /// <summary>How long the lit half of an Eclipse lasts.</summary>
+    private const double EclipseLitSeconds = 10.0;
+
+    /// <summary>How long the dark half of an Eclipse lasts.</summary>
+    private const double EclipseDarkSeconds = 6.0;
+
+    /// <summary>How long a shove stuns the hunter it moves.</summary>
+    private const double ShoveStunSeconds = 2.0;
+
+    /// <summary>How many cells a shove pushes a hunter.</summary>
+    private const int ShovePushCells = 2;
     // The four directions, stored once so the visibility search does not allocate a fresh
     // array for every cell it visits.
     private static readonly Direction[] NeighbourDirections =
@@ -70,12 +93,13 @@ public sealed class GameState
     private readonly GameConfig _config;
     private readonly Grid _maze;
     private readonly IPathfinder _pathfinder;
+    private readonly IRandom _random;
     private readonly HashSet<Cell> _keys;
     private readonly HashSet<Cell> _barriers = [];
     private readonly Dictionary<Cell, double> _barrierSeals = [];
     private readonly HashSet<Cell> _visible = [];
     private readonly HashSet<Cell> _enemyGlow = [];
-    private readonly Cell _exit;
+    private Cell _exit;
     private readonly Queue<GameEvent> _events = new();
 
     private Cell _player;
@@ -84,9 +108,31 @@ public sealed class GameState
     private double _lureSecondsLeft;
     private int _barriersRemaining;
     private int _luresRemaining;
+
+    // The new kit. Charges are per floor; the state is the rule, the HUD only reads it.
+    private PowerupCharges _powerupsRemaining;
+    private Direction _facing = Direction.South;
+    private double _veilChannelLeft;
+    private double _veilSecondsLeft;
+    private double _dragSecondsLeft;
+    private double _dragPenaltyLeft;
+    private Cell? _lantern;
+    private double _lanternSecondsLeft;
+
+    // Descent conditions. Each timer is zero unless its condition is in force.
+    private double _regrowthSecondsLeft;
+    private double _fractureSecondsLeft;
+    private double _eclipseSecondsLeft;
+    private bool _eclipseDark;
+    private double _packElapsed;
+
     private int _hearts;
     private readonly int _maxHearts;
     private double _invulnerableSeconds;
+
+    // Card-granted reprieves. Both are consumed once per floor, so a new floor is a new chance.
+    private bool _freeCatchUsed;
+    private bool _reviveUsed;
     private GameStatus _status = GameStatus.InProgress;
     private PlacementMode _aiming;
 
@@ -155,8 +201,15 @@ public sealed class GameState
         _config = config;
         _maze = maze;
         _pathfinder = pathfinder;
+        _random = random;
         _barriersRemaining = config.BarrierBudget;
         _luresRemaining = config.LureCount;
+        _powerupsRemaining = config.MutedPowerup is { } muted
+            ? config.Powerups.With(muted, 0)
+            : config.Powerups;
+        _regrowthSecondsLeft = RegrowthIntervalSeconds;
+        _fractureSecondsLeft = FractureIntervalSeconds;
+        _eclipseSecondsLeft = EclipseLitSeconds;
         _hearts = config.StartingHearts;
         _maxHearts = config.MaxHearts;
         _sprintStaminaLeft = config.SprintStaminaSeconds;
@@ -472,6 +525,61 @@ public sealed class GameState
     /// </summary>
     public int BarriersRemaining => _barriersRemaining;
 
+    /// <summary>Gets the powerup charges left on this floor.</summary>
+    /// <remarks>
+    /// The HUD reads this every frame. A charge is spent when the verb succeeds, not when it is
+    /// requested, so a blink into rock or a shove at empty air costs nothing.
+    /// </remarks>
+    public PowerupCharges PowerupsRemaining => _powerupsRemaining;
+
+    /// <summary>Gets the direction the player is facing, which the one-press verbs use.</summary>
+    /// <remarks>
+    /// Facing is updated by a direction press even when the step is blocked, so a player can turn
+    /// to a wall and blink through it without first finding an open route.
+    /// </remarks>
+    public Direction Facing => _facing;
+
+    /// <summary>Gets a value indicating whether the player is unseen.</summary>
+    public bool IsVeiled => _veilSecondsLeft > 0;
+
+    /// <summary>Gets a value indicating whether the player is standing still to complete a veil.</summary>
+    public bool IsVeilCharging => _veilChannelLeft > 0;
+
+    /// <summary>Gets how much of the veil is left, in seconds.</summary>
+    public double VeilSecondsRemaining => _veilSecondsLeft;
+
+    /// <summary>Gets a value indicating whether the hunt is currently slowed.</summary>
+    public bool IsDragActive => _dragSecondsLeft > 0;
+
+    /// <summary>Gets a value indicating whether the hunt is faster after a Drag ended.</summary>
+    public bool IsDragPenalty => _dragPenaltyLeft > 0;
+
+    /// <summary>Gets a value indicating whether a lantern is burning away from the player.</summary>
+    public bool IsLanternActive => _lantern is not null;
+
+    /// <summary>Gets the cell the thrown lantern is on, or null when it is in the player's hand.</summary>
+    public Cell? LanternCell => _lantern;
+
+    /// <summary>Gets how many seconds the thrown lantern has left.</summary>
+    public double LanternSecondsRemaining => _lanternSecondsLeft;
+
+    /// <summary>
+    /// Gets where the player's light comes from: the thrown lantern while it burns, otherwise the
+    /// player's own cell.
+    /// </summary>
+    public Cell LightOrigin => _lantern ?? _player;
+
+    /// <summary>Gets the descent conditions in force on this floor.</summary>
+    public IReadOnlyList<DescentCondition> Conditions => _config.Conditions;
+
+    /// <summary>Gets a value indicating whether the dark half of an Eclipse is running.</summary>
+    public bool IsEclipseDark => _eclipseDark;
+
+    /// <summary>Tests whether <paramref name="condition"/> is in force on this floor.</summary>
+    /// <param name="condition">The condition to test.</param>
+    /// <returns><see langword="true"/> when it is in the floor's config.</returns>
+    public bool HasCondition(DescentCondition condition) => _config.Conditions.Contains(condition);
+
     /// <summary>
     /// Gets a value indicating whether the exit can be used. It opens once every key is
     /// collected, and it can still be walked over while locked.
@@ -675,8 +783,30 @@ public sealed class GameState
     /// when it clears, so the cost comes and goes with the glow. It never reduces sight below the
     /// player's own cell.
     /// </remarks>
-    public int EffectiveVisionRadius =>
-        Math.Max(0, _config.VisionRadius - (_lure is not null ? _config.LureVisionPenalty : 0));
+    public int EffectiveVisionRadius
+    {
+        get
+        {
+            var radius = _config.VisionRadius;
+
+            if (_lure is not null)
+            {
+                radius -= _config.LureVisionPenalty;
+            }
+
+            if (_eclipseDark)
+            {
+                radius--;
+            }
+
+            if (IsVeiled)
+            {
+                radius--;
+            }
+
+            return Math.Max(0, radius);
+        }
+    }
 
     /// <summary>
     /// Gets the radius of the lantern spill that ignores walls: the configured
@@ -803,6 +933,10 @@ public sealed class GameState
             return false;
         }
 
+        // Facing is a rule because Blink and Shove read it: a press toward a wall must turn the
+        // player even though the step itself is refused.
+        _facing = direction;
+
         // Timed steps: while the last step is still cooling down, this press is remembered for the
         // end of it instead of being queued. One input only, so mashing cannot outrun the cadence,
         // and a hold reads as continuous walking.
@@ -823,6 +957,8 @@ public sealed class GameState
     /// <returns><see langword="true"/> when the player moved, even if that ended the game.</returns>
     private bool Step(Direction direction)
     {
+        _facing = direction;
+
         // HasWall validates the position and the direction, and an outer wall always reports
         // true, so a step out of the maze is rejected here rather than indexing off the grid.
         if (_maze.HasWall(_player.Row, _player.Column, direction))
@@ -830,6 +966,11 @@ public sealed class GameState
             return false;
         }
 
+        // A step is movement, and movement gives the player away: a veil, charged or active,
+        // ends the moment the player commits to a cell.
+        BreakVeil();
+
+        var sprinting = IsSprinting;
         var (rowDelta, columnDelta) = direction.Delta();
         var destination = _maze.GetCell(_player.Row + rowDelta, _player.Column + columnDelta);
 
@@ -861,9 +1002,17 @@ public sealed class GameState
         // which is also why the pickup event is raised from the removal rather than the cell.
         Raise(GameEvent.Step);
 
-        if (_keys.Remove(_player))
+        CollectKeyAt(_player);
+
+        if (_config.MagneticKeys)
         {
-            Raise(GameEvent.KeyPicked);
+            CollectAdjacentKeys();
+        }
+
+        // Walking onto the lantern picks it back up; it is the only way to end the effect early.
+        if (_lantern is { } lantern && _player == lantern)
+        {
+            ClearLantern();
         }
 
         if (caughtBy is not null)
@@ -876,6 +1025,14 @@ public sealed class GameState
         {
             _status = GameStatus.Won;
             Raise(GameEvent.FloorCleared);
+            return true;
+        }
+
+        // The Listener turns the hunt into a turn-based exchange: every player step is the only
+        // thing that winds the hunters forward. Sprinting is loud enough to be worth two.
+        if (HasCondition(DescentCondition.Listener))
+        {
+            CreditListenerStep(sprinting);
         }
 
         return true;
@@ -1074,6 +1231,377 @@ public sealed class GameState
     public void CancelPlacement() => _aiming = PlacementMode.None;
 
     /// <summary>
+    /// Blinks through the wall the player faces, leaving the breach open.
+    /// </summary>
+    /// <returns><see langword="true"/> when the player moved.</returns>
+    /// <remarks>
+    /// The breach is a real change to the maze: the wall is removed for the rest of the floor and
+    /// the hunters can use it, which is what makes Blink a shortcut with a bill. It cannot leave
+    /// the floor or enter rock, and it costs a charge only when it succeeds.
+    /// </remarks>
+    public bool TryBlink()
+    {
+        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None ||
+            _powerupsRemaining.Blink <= 0)
+        {
+            return false;
+        }
+
+        var (rowDelta, columnDelta) = _facing.Delta();
+        var row = _player.Row + rowDelta;
+        var column = _player.Column + columnDelta;
+
+        if (!_maze.HasWall(_player.Row, _player.Column, _facing) ||
+            row < 0 || row >= _maze.Rows || column < 0 || column >= _maze.Columns ||
+            _maze.IsSolid(row, column))
+        {
+            return false;
+        }
+
+        var destination = _maze.GetCell(row, column);
+        var caughtBy = HunterAt(destination);
+
+        if (caughtBy is not null && _invulnerableSeconds > 0)
+        {
+            return false;
+        }
+
+        _powerupsRemaining = _powerupsRemaining.Adjust(PowerupKind.Blink, -1);
+        _maze.RemoveWall(_player.Row, _player.Column, _facing);
+
+        BreakVeil();
+        _playerFrom = _player;
+        _player = destination;
+        _playerStepLeft = NextPlayerStepSeconds();
+        _playerStepTotal = _playerStepLeft;
+        InvalidateEnemyRoute();
+        RecomputeVisibility();
+        Raise(GameEvent.Blink);
+
+        CollectKeyAt(_player);
+
+        if (_config.MagneticKeys)
+        {
+            CollectAdjacentKeys();
+        }
+
+        if (_lantern is { } lantern && _player == lantern)
+        {
+            ClearLantern();
+        }
+
+        if (caughtBy is not null)
+        {
+            TakeHit(caughtBy);
+            return true;
+        }
+
+        if (_player == _exit && IsExitUnlocked)
+        {
+            _status = GameStatus.Won;
+            Raise(GameEvent.FloorCleared);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Starts a veil: the player must stand still for half a second, then goes unseen for three.
+    /// </summary>
+    /// <returns><see langword="true"/> when the channel started.</returns>
+    /// <remarks>
+    /// The charge is spent when the veil completes, not when the channel starts, so a player who
+    /// moves during the wind-up loses nothing but the moment. Moving during the veil breaks it.
+    /// </remarks>
+    public bool TryVeil()
+    {
+        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None ||
+            IsVeiled || IsVeilCharging || _powerupsRemaining.Veil <= 0)
+        {
+            return false;
+        }
+
+        _veilChannelLeft = VeilChannelSeconds;
+        return true;
+    }
+
+    /// <summary>
+    /// Slows the hunt to 40% for three seconds, then leaves it 10% faster for five.
+    /// </summary>
+    /// <returns><see langword="true"/> when the drag started.</returns>
+    public bool TryDrag()
+    {
+        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None ||
+            IsDragActive || _powerupsRemaining.Drag <= 0)
+        {
+            return false;
+        }
+
+        _powerupsRemaining = _powerupsRemaining.Adjust(PowerupKind.Drag, -1);
+        _dragSecondsLeft = _config.DragSeconds;
+        _dragPenaltyLeft = 0;
+        InvalidateEnemyRoute();
+        Raise(GameEvent.Drag);
+        return true;
+    }
+
+    /// <summary>
+    /// Throws the lantern up to four cells ahead and lets the hunters follow it.
+    /// </summary>
+    /// <returns><see langword="true"/> when the lantern left the player's hand.</returns>
+    /// <remarks>
+    /// While it burns, <see cref="LightOrigin"/> is the lantern and the player's own cell is dark.
+    /// Walking onto it, waiting it out, or a hunter reaching it ends the effect. The throw stops at
+    /// the first wall and refuses a cell a hunter already stands on, so a charge is never wasted on
+    /// a lantern that is consumed immediately.
+    /// </remarks>
+    public bool TryThrowLantern()
+    {
+        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None ||
+            IsLanternActive || _powerupsRemaining.Lantern <= 0)
+        {
+            return false;
+        }
+
+        var (rowDelta, columnDelta) = _facing.Delta();
+        var cell = _player;
+
+        for (var distance = 0; distance < _config.LanternRange; distance++)
+        {
+            if (_maze.HasWall(cell.Row, cell.Column, _facing))
+            {
+                break;
+            }
+
+            var row = cell.Row + rowDelta;
+            var column = cell.Column + columnDelta;
+
+            if (row < 0 || row >= _maze.Rows || column < 0 || column >= _maze.Columns ||
+                _maze.IsSolid(row, column))
+            {
+                break;
+            }
+
+            cell = _maze.GetCell(row, column);
+        }
+
+        if (cell == _player || HunterAt(cell) is not null)
+        {
+            return false;
+        }
+
+        _powerupsRemaining = _powerupsRemaining.Adjust(PowerupKind.Lantern, -1);
+        _lantern = cell;
+        _lanternSecondsLeft = LanternSeconds;
+        InvalidateEnemyRoute();
+        RecomputeVisibility();
+        Raise(GameEvent.LanternThrown);
+        return true;
+    }
+
+    /// <summary>
+    /// Shoves the hunter in the cell the player faces two cells back and stuns it.
+    /// </summary>
+    /// <returns><see langword="true"/> when a hunter was moved.</returns>
+    /// <remarks>
+    /// The shove is loud: every other hunter is given its next step immediately. That is the price
+    /// of the only melee answer in the kit, and it keeps a shove from being a free reset.
+    /// </remarks>
+    public bool TryShove()
+    {
+        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None ||
+            _powerupsRemaining.Shove <= 0)
+        {
+            return false;
+        }
+
+        var (rowDelta, columnDelta) = _facing.Delta();
+
+        if (_maze.HasWall(_player.Row, _player.Column, _facing))
+        {
+            return false;
+        }
+
+        var target = _maze.GetCell(_player.Row + rowDelta, _player.Column + columnDelta);
+        var hunter = HunterAt(target);
+
+        if (hunter is null)
+        {
+            return false;
+        }
+
+        _powerupsRemaining = _powerupsRemaining.Adjust(PowerupKind.Shove, -1);
+
+        // Push until two cells are gained or the next cell is a wall, rock or another hunter.
+        var landing = target;
+
+        for (var pushed = 0; pushed < ShovePushCells; pushed++)
+        {
+            if (_maze.HasWall(landing.Row, landing.Column, _facing))
+            {
+                break;
+            }
+
+            var row = landing.Row + rowDelta;
+            var column = landing.Column + columnDelta;
+
+            if (row < 0 || row >= _maze.Rows || column < 0 || column >= _maze.Columns ||
+                _maze.IsSolid(row, column))
+            {
+                break;
+            }
+
+            var next = _maze.GetCell(row, column);
+
+            if (HunterAt(next) is { } occupant && occupant != hunter)
+            {
+                break;
+            }
+
+            landing = next;
+        }
+
+        hunter.From = hunter.Cell;
+        hunter.Cell = landing;
+        hunter.StepLeft = 0;
+        hunter.StepTotal = 0;
+        hunter.Elapsed = 0;
+        hunter.StunSeconds = Math.Max(hunter.StunSeconds, ShoveStunSeconds);
+        hunter.Route = null;
+        hunter.NextStep = 0;
+
+        foreach (var other in _hunters)
+        {
+            if (other != hunter && other.StunSeconds <= 0)
+            {
+                other.Elapsed = SecondsUntilNextStep(other);
+            }
+        }
+
+        InvalidateEnemyRoute();
+        RecomputeVisibility();
+        Raise(GameEvent.Shoved);
+        return true;
+    }
+
+    /// <summary>Ends a charged or active veil and returns the hunters to the chase.</summary>
+    private void BreakVeil()
+    {
+        if (_veilChannelLeft <= 0 && _veilSecondsLeft <= 0)
+        {
+            return;
+        }
+
+        _veilChannelLeft = 0;
+        _veilSecondsLeft = 0;
+
+        foreach (var hunter in _hunters)
+        {
+            hunter.KnownPlayer = null;
+        }
+
+        InvalidateEnemyRoute();
+        RecomputeVisibility();
+    }
+
+    /// <summary>Completes a veil once the channel has run out.</summary>
+    private void CompleteVeil()
+    {
+        _veilChannelLeft = 0;
+
+        if (_powerupsRemaining.Veil <= 0)
+        {
+            return;
+        }
+
+        _powerupsRemaining = _powerupsRemaining.Adjust(PowerupKind.Veil, -1);
+        _veilSecondsLeft = _config.VeilDurationSeconds;
+
+        // The hunters keep walking to the cell they last saw the player on; the veil is not a
+        // teleport, it is a moment of being unobserved.
+        foreach (var hunter in _hunters)
+        {
+            hunter.KnownPlayer = _player;
+            hunter.Route = null;
+            hunter.NextStep = 0;
+        }
+
+        RecomputeVisibility();
+        Raise(GameEvent.Veiled);
+    }
+
+    /// <summary>Collects the key on <paramref name="cell"/>, if there is one.</summary>
+    /// <param name="cell">The cell just entered.</param>
+    /// <remarks>
+    /// The pickup is the one place that pays a card's per-key bonuses, so a magnetic key and a key
+    /// under the player's feet behave identically: blink credit, then Drift's exit move.
+    /// </remarks>
+    private void CollectKeyAt(Cell cell)
+    {
+        if (!_keys.Remove(cell))
+        {
+            return;
+        }
+
+        Raise(GameEvent.KeyPicked);
+
+        if (_config.BlinkRefundOnKey)
+        {
+            _powerupsRemaining = _powerupsRemaining.Adjust(PowerupKind.Blink, 1);
+        }
+
+        // Drift moves the last leg of the floor as the hunt tightens. It happens after the pickup
+        // so the key that opened the arch is the one that moves it.
+        if (HasCondition(DescentCondition.Drift))
+        {
+            RelocateExit();
+        }
+    }
+
+    /// <summary>Collects any key touching the player's cell through an open passage.</summary>
+    /// <remarks>
+    /// Used by the magnetic-key card. Walls still block the pull, so the card is a reach of one
+    /// step rather than a vacuum through rock, and a floor with no keys costs nothing.
+    /// </remarks>
+    private void CollectAdjacentKeys()
+    {
+        foreach (var direction in NeighbourDirections)
+        {
+            if (_maze.HasWall(_player.Row, _player.Column, direction))
+            {
+                continue;
+            }
+
+            var (rowDelta, columnDelta) = direction.Delta();
+            var row = _player.Row + rowDelta;
+            var column = _player.Column + columnDelta;
+
+            if (row < 0 || row >= _maze.Rows || column < 0 || column >= _maze.Columns ||
+                _maze.IsSolid(row, column))
+            {
+                continue;
+            }
+
+            CollectKeyAt(_maze.GetCell(row, column));
+        }
+    }
+
+    /// <summary>Puts the lantern back in the player's hand and restores the light to them.</summary>
+    private void ClearLantern()
+    {
+        if (_lantern is null)
+        {
+            return;
+        }
+
+        _lantern = null;
+        _lanternSecondsLeft = 0;
+        InvalidateEnemyRoute();
+        RecomputeVisibility();
+        Raise(GameEvent.LanternReturned);
+    }
+
+    /// <summary>
     /// Advances the game clock by <paramref name="deltaSeconds"/> and lets the killer move
     /// when a step is due.
     /// </summary>
@@ -1129,6 +1657,51 @@ public sealed class GameState
             return;
         }
 
+        AdvanceConditions(deltaSeconds);
+
+        if (_status != GameStatus.InProgress)
+        {
+            return;
+        }
+
+        // Pack replaces the individual clocks with one: every hunter that is not stunned steps on
+        // the same beat, so the group commits instead of arriving in a trickle.
+        if (HasCondition(DescentCondition.Pack))
+        {
+            _packElapsed += deltaSeconds * HunterTimeScale;
+            var interval = _config.EnemyStepSeconds;
+
+            if (_packElapsed >= interval)
+            {
+                _packElapsed -= interval;
+
+                foreach (var hunter in _hunters)
+                {
+                    if (hunter.StunSeconds > 0)
+                    {
+                        hunter.Elapsed = 0;
+                        continue;
+                    }
+
+                    AdvanceEnemy(hunter, interval);
+
+                    if (_status != GameStatus.InProgress)
+                    {
+                        return;
+                    }
+                }
+            }
+
+            return;
+        }
+
+        // The Listener has no clock of its own: the player's steps are the only thing that winds
+        // the hunt, so this loop is skipped entirely when that condition is in force.
+        if (HasCondition(DescentCondition.Listener))
+        {
+            return;
+        }
+
         // Every hunter keeps its own clock, so two of them with different step times interleave
         // instead of moving in lockstep. A stunned one neither moves nor banks progress towards
         // its next step: the stun has to be a real window, not a step that lands the instant the
@@ -1143,7 +1716,7 @@ public sealed class GameState
 
             var interval = SecondsUntilNextStep(hunter);
 
-            hunter.Elapsed = Math.Min(hunter.Elapsed + deltaSeconds, interval);
+            hunter.Elapsed = Math.Min(hunter.Elapsed + (deltaSeconds * HunterTimeScale), interval);
             if (hunter.Elapsed < interval)
             {
                 continue;
@@ -1160,6 +1733,14 @@ public sealed class GameState
             }
         }
     }
+
+    /// <summary>Gets the current multiplier on how fast the hunters' clocks run.</summary>
+    /// <remarks>
+    /// Drag slows the clock to 40%; its hangover speeds it up by 10%. Both are one number so the
+    /// individual-hunter and Pack clocks cannot disagree about what time it is.
+    /// </remarks>
+    private double HunterTimeScale =>
+        _dragSecondsLeft > 0 ? 0.4 : _dragPenaltyLeft > 0 ? 1.1 : 1.0;
 
     /// <summary>
     /// Spends a buffered direction once the last step's cooldown has run out.
@@ -1331,6 +1912,51 @@ public sealed class GameState
             }
         }
 
+        if (_veilChannelLeft > 0)
+        {
+            _veilChannelLeft = Math.Max(0, _veilChannelLeft - deltaSeconds);
+
+            if (_veilChannelLeft <= 0)
+            {
+                CompleteVeil();
+            }
+        }
+
+        if (_veilSecondsLeft > 0)
+        {
+            _veilSecondsLeft = Math.Max(0, _veilSecondsLeft - deltaSeconds);
+
+            if (_veilSecondsLeft <= 0)
+            {
+                BreakVeil();
+            }
+        }
+
+        if (_dragSecondsLeft > 0)
+        {
+            _dragSecondsLeft = Math.Max(0, _dragSecondsLeft - deltaSeconds);
+
+            if (_dragSecondsLeft <= 0)
+            {
+                _dragPenaltyLeft = _config.DragPenaltySeconds;
+                InvalidateEnemyRoute();
+            }
+        }
+        else if (_dragPenaltyLeft > 0)
+        {
+            _dragPenaltyLeft = Math.Max(0, _dragPenaltyLeft - deltaSeconds);
+        }
+
+        if (_lantern is not null)
+        {
+            _lanternSecondsLeft = Math.Max(0, _lanternSecondsLeft - deltaSeconds);
+
+            if (_lanternSecondsLeft <= 0)
+            {
+                ClearLantern();
+            }
+        }
+
         UpdateSprint(deltaSeconds, stepping);
     }
 
@@ -1429,17 +2055,21 @@ public sealed class GameState
     private double SecondsUntilNextStep(Hunter hunter)
     {
         var route = EnemyRouteToTarget(hunter);
+        var hunted = HasCondition(DescentCondition.Hunted) && hunter == _hunters[0];
 
         if (route.Count <= hunter.NextStep)
         {
-            return _config.EnemyStepSeconds;
+            return hunted ? _config.EnemyStepSeconds * 0.8 : _config.EnemyStepSeconds;
         }
 
         var next = route[hunter.NextStep];
-
-        return _barrierSeals.ContainsKey(next)
+        var interval = _barrierSeals.ContainsKey(next)
             ? _config.BarrierBreakSeconds
             : _config.EnemyStepSeconds * CostOfEntering(next);
+
+        // Hunted is one relentless pursuer, not a faster pack: only the first hunter gets the
+        // 20% edge, so the other hunters stay readable and dodgeable.
+        return hunted ? interval * 0.8 : interval;
     }
 
     /// <summary>
@@ -1502,6 +2132,13 @@ public sealed class GameState
             return;
         }
 
+        // The lantern is what the hunters were walking toward, so reaching it puts the light
+        // out: the throw buys time, but it is not a safe place to leave the only light.
+        if (_lantern is { } lantern && hunter.Cell == lantern)
+        {
+            ClearLantern();
+        }
+
         // Reaching the wisp spends it: the decoy has done its job and the chase resumes.
         if (hunter.Cell == _lure)
         {
@@ -1540,18 +2177,42 @@ public sealed class GameState
             return;
         }
 
-        _hearts--;
-
-        if (_hearts <= 0)
+        // Featherfall spends a whole miss: no heart, but the hunter is still thrown back and the
+        // grace window still starts, so the catch is survived rather than ignored.
+        if (_config.FirstCatchFree && !_freeCatchUsed)
         {
-            _hearts = 0;
-            _status = GameStatus.Caught;
-            Raise(GameEvent.HeartLostLast);
-            Raise(GameEvent.RunLost);
-            return;
+            _freeCatchUsed = true;
+            Raise(GameEvent.Graced);
+        }
+        else
+        {
+            _hearts -= _config.CatchCost;
+
+            // Bloom turns the fatal catch into a heart, once per floor. The chase still resets
+            // below, so it is a fresh attempt rather than a reprieve in place.
+            if (_hearts <= 0 && _config.ReviveOnce && !_reviveUsed)
+            {
+                _reviveUsed = true;
+                _hearts = 1;
+                Raise(GameEvent.Revived);
+            }
+            else if (_hearts <= 0)
+            {
+                _hearts = 0;
+                _status = GameStatus.Caught;
+                Raise(GameEvent.HeartLostLast);
+                Raise(GameEvent.RunLost);
+                return;
+            }
+            else
+            {
+                Raise(GameEvent.HeartLost);
+            }
         }
 
-        Raise(GameEvent.HeartLost);
+        // Being caught is the opposite of being unseen. Clear the veil before the throw so the
+        // reprieve cannot be spent while the player is already invisible.
+        BreakVeil();
 
         // The search skips the other hunters: a throw has to be a throw, not a stack of two
         // monsters on one cell.
@@ -1684,7 +2345,13 @@ public sealed class GameState
             return hunter.Route;
         }
 
-        var toPlayer = _pathfinder.FindPath(_maze, hunter.Cell, _player, cell => CostOfEnteringFor(hunter, cell));
+        // While the lantern burns, it is the target: the hunters see the light, not the player.
+        // A veil freezes the target at the cell they last saw, so the player can step away while
+        // the hunt searches the room they left.
+        var destination = _lantern
+            ?? (IsVeiled ? hunter.KnownPlayer ?? _player : _player);
+
+        var toPlayer = _pathfinder.FindPath(_maze, hunter.Cell, destination, cell => CostOfEnteringFor(hunter, cell));
         hunter.Route = toPlayer;
 
         // A wisp under the hunter's own feet is not a target: its route would be a single
@@ -1748,13 +2415,17 @@ public sealed class GameState
         _visible.Clear();
         _enemyGlow.Clear();
 
-        // A burning wisp can shrink the torch, so read the radius in force rather than the
-        // floor's own number.
+        // A burning wisp, an Eclipse or a veil can shrink the torch, so read the radius in force
+        // rather than the floor's own number. The light comes from the lantern when it is thrown.
         var visionRadius = EffectiveVisionRadius;
         var searchRadius = Math.Max(visionRadius, _config.EnemyAuraDistance);
-        var playerDistances = DistancesFrom(_maze, _player, searchRadius);
+        var origin = LightOrigin;
+        var lightDistances = DistancesFrom(_maze, origin, searchRadius);
+        var playerDistances = origin == _player
+            ? lightDistances
+            : DistancesFrom(_maze, _player, _config.EnemyAuraDistance);
 
-        foreach (var (cell, distance) in playerDistances)
+        foreach (var (cell, distance) in lightDistances)
         {
             if (distance <= visionRadius)
             {
@@ -1762,10 +2433,10 @@ public sealed class GameState
             }
         }
 
-        // The lantern spills onto the rock around the player, walls or no walls. Walking distance
+        // The lantern spills onto the rock around the light, walls or no walls. Walking distance
         // alone leaves the far side of a wall undrawn, which reads as a hole in the corridor
         // rather than as stone; this is the one place sight is allowed to ignore a wall.
-        foreach (var cell in CellsWithin(_player, NearSightRadius))
+        foreach (var cell in CellsWithin(origin, NearSightRadius))
         {
             _visible.Add(cell);
         }
@@ -1784,10 +2455,14 @@ public sealed class GameState
         // A hunter further away than its aura is invisible, and so is the light it carries. Each
         // hunter is asked separately, so one that has just been thrown into the dark does not dim
         // the one standing three cells behind you.
-        foreach (var hunter in _hunters)
+        for (var index = 0; index < _hunters.Count; index++)
         {
-            if (!playerDistances.TryGetValue(hunter.Cell, out var enemyDistance) ||
-                enemyDistance > _config.EnemyAuraDistance)
+            var hunter = _hunters[index];
+            var alwaysVisible = HasCondition(DescentCondition.Hunted) && index == 0;
+
+            if (!alwaysVisible &&
+                (!playerDistances.TryGetValue(hunter.Cell, out var enemyDistance) ||
+                 enemyDistance > _config.EnemyAuraDistance))
             {
                 continue;
             }
@@ -1934,6 +2609,340 @@ public sealed class GameState
         return _barriers.Contains(cell) ? _config.ObstacleCost : 1;
     }
 
+    /// <summary>Runs the timed part of every descent condition in force.</summary>
+    /// <param name="deltaSeconds">The frame's length.</param>
+    /// <remarks>
+    /// Regrowth and Fracture mutate the maze, so both invalidate the hunters' cached routes and
+    /// rebuild visibility. Eclipse toggles the torch and repaints what the player knows.
+    /// </remarks>
+    private void AdvanceConditions(double deltaSeconds)
+    {
+        if (HasCondition(DescentCondition.Regrowth))
+        {
+            _regrowthSecondsLeft -= deltaSeconds;
+
+            if (_regrowthSecondsLeft <= 0)
+            {
+                SealDeadEnd();
+                _regrowthSecondsLeft = RegrowthIntervalSeconds;
+            }
+        }
+
+        if (HasCondition(DescentCondition.Fracture))
+        {
+            _fractureSecondsLeft -= deltaSeconds;
+
+            if (_fractureSecondsLeft <= 0)
+            {
+                FractureMaze();
+                _fractureSecondsLeft = FractureIntervalSeconds;
+            }
+        }
+
+        if (HasCondition(DescentCondition.Eclipse))
+        {
+            _eclipseSecondsLeft -= deltaSeconds;
+
+            if (_eclipseSecondsLeft <= 0)
+            {
+                _eclipseDark = !_eclipseDark;
+                _eclipseSecondsLeft = _eclipseDark ? EclipseDarkSeconds : EclipseLitSeconds;
+                RecomputeVisibility();
+                Raise(_eclipseDark ? GameEvent.EclipseFell : GameEvent.EclipseLifted);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Seals the mouth of one dead end, never one holding the player, a key, the exit, a hunter
+    /// or the lantern.
+    /// </summary>
+    /// <remarks>
+    /// A dead end has one passage, so closing it cannot disconnect anything the player needs; it
+    /// just makes the maze surrender a hiding place. If every dead end is occupied there is
+    /// nothing to do, and the next interval tries again.
+    /// </remarks>
+    private void SealDeadEnd()
+    {
+        var candidates = new List<(Cell Cell, Direction Direction)>();
+
+        for (var row = 0; row < _maze.Rows; row++)
+        {
+            for (var column = 0; column < _maze.Columns; column++)
+            {
+                if (_maze.IsSolid(row, column))
+                {
+                    continue;
+                }
+
+                var open = _maze.OpenDirections(row, column);
+                if (open.Count != 1)
+                {
+                    continue;
+                }
+
+                var cell = _maze.GetCell(row, column);
+
+                if (cell == _player ||
+                    _keys.Contains(cell) ||
+                    cell == _exit ||
+                    HunterAt(cell) is not null ||
+                    (_lantern is { } lantern && cell == lantern))
+                {
+                    continue;
+                }
+
+                candidates.Add((cell, open[0]));
+            }
+        }
+
+        if (candidates.Count == 0)
+        {
+            return;
+        }
+
+        var (deadEnd, passage) = candidates[_random.NextInt(candidates.Count)];
+        _maze.AddWall(deadEnd.Row, deadEnd.Column, passage);
+        Raise(GameEvent.WallSealed);
+        InvalidateEnemyRoute();
+        RecomputeVisibility();
+    }
+
+    /// <summary>
+    /// Opens one wall and closes another, skipping any close that would disconnect the exit, a
+    /// key or a hunter from the player.
+    /// </summary>
+    /// <remarks>
+    /// The opening is always safe: removing a wall can only add routes. The close is tried on
+    /// passages between two cells that both have another way out, then checked against the
+    /// things the floor still needs; a candidate that fails is put back and the next is tried.
+    /// </remarks>
+    private void FractureMaze()
+    {
+        (Cell Cell, Direction Direction)? opened = OpenRandomWall();
+        CloseRandomPassage(opened);
+        InvalidateEnemyRoute();
+        RecomputeVisibility();
+    }
+
+    /// <summary>Removes one interior wall at random and raises the event for it.</summary>
+    /// <returns>The wall that was opened, for the close step to avoid undoing it.</returns>
+    private (Cell Cell, Direction Direction)? OpenRandomWall()
+    {
+        var walls = new List<(Cell Cell, Direction Direction)>();
+
+        for (var row = 0; row < _maze.Rows; row++)
+        {
+            for (var column = 0; column < _maze.Columns; column++)
+            {
+                if (_maze.IsSolid(row, column))
+                {
+                    continue;
+                }
+
+                foreach (var direction in new[] { Direction.East, Direction.South })
+                {
+                    var (rowDelta, columnDelta) = direction.Delta();
+                    var neighbourRow = row + rowDelta;
+                    var neighbourColumn = column + columnDelta;
+
+                    if (neighbourRow < 0 || neighbourRow >= _maze.Rows ||
+                        neighbourColumn < 0 || neighbourColumn >= _maze.Columns ||
+                        _maze.IsSolid(neighbourRow, neighbourColumn) ||
+                        !_maze.HasWall(row, column, direction))
+                    {
+                        continue;
+                    }
+
+                    walls.Add((_maze.GetCell(row, column), direction));
+                }
+            }
+        }
+
+        if (walls.Count == 0)
+        {
+            return null;
+        }
+
+        var chosen = walls[_random.NextInt(walls.Count)];
+        _maze.RemoveWall(chosen.Cell.Row, chosen.Cell.Column, chosen.Direction);
+        Raise(GameEvent.WallOpened);
+        return chosen;
+    }
+
+    /// <summary>
+    /// Closes one passage that keeps every key, the exit and every hunter reachable.
+    /// </summary>
+    /// <param name="opened">The wall just opened, excluded so Fracture cannot simply undo itself.</param>
+    private void CloseRandomPassage((Cell Cell, Direction Direction)? opened)
+    {
+        var passages = new List<(Cell Cell, Direction Direction)>();
+
+        for (var row = 0; row < _maze.Rows; row++)
+        {
+            for (var column = 0; column < _maze.Columns; column++)
+            {
+                if (_maze.IsSolid(row, column) || _maze.OpenDirections(row, column).Count < 2)
+                {
+                    continue;
+                }
+
+                foreach (var direction in new[] { Direction.East, Direction.South })
+                {
+                    var (rowDelta, columnDelta) = direction.Delta();
+                    var neighbourRow = row + rowDelta;
+                    var neighbourColumn = column + columnDelta;
+
+                    if (neighbourRow < 0 || neighbourRow >= _maze.Rows ||
+                        neighbourColumn < 0 || neighbourColumn >= _maze.Columns ||
+                        _maze.IsSolid(neighbourRow, neighbourColumn) ||
+                        _maze.HasWall(row, column, direction) ||
+                        _maze.OpenDirections(neighbourRow, neighbourColumn).Count < 2)
+                    {
+                        continue;
+                    }
+
+                    var candidate = (_maze.GetCell(row, column), direction);
+
+                    if (opened is { } open &&
+                        open.Cell == candidate.Item1 && open.Direction == candidate.Item2)
+                    {
+                        continue;
+                    }
+
+                    passages.Add(candidate);
+                }
+            }
+        }
+
+        if (passages.Count == 0)
+        {
+            return;
+        }
+
+        _random.Shuffle(passages);
+
+        foreach (var (cell, direction) in passages)
+        {
+            _maze.AddWall(cell.Row, cell.Column, direction);
+
+            if (ConnectivityPreserved())
+            {
+                Raise(GameEvent.WallClosed);
+                return;
+            }
+
+            _maze.RemoveWall(cell.Row, cell.Column, direction);
+        }
+    }
+
+    /// <summary>
+    /// Returns whether the player can still reach the exit, every key and every hunter.
+    /// </summary>
+    /// <remarks>
+    /// Empty branches are allowed to be cut off: Regrowth deliberately seals dead ends, and a
+    /// closed corridor that holds nothing the floor needs is a legitimate new shape.
+    /// </remarks>
+    private bool ConnectivityPreserved()
+    {
+        var reachable = DistancesFrom(_maze, _player, _maze.CellCount);
+
+        if (!reachable.ContainsKey(_exit))
+        {
+            return false;
+        }
+
+        foreach (var key in _keys)
+        {
+            if (!reachable.ContainsKey(key))
+            {
+                return false;
+            }
+        }
+
+        foreach (var hunter in _hunters)
+        {
+            if (!reachable.ContainsKey(hunter.Cell))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Moves the exit to a far cell, away from the player and the things still on the floor.</summary>
+    /// <remarks>
+    /// Drift is announced by the sound layer and by the arch itself changing cells. The new cell
+    /// is the furthest reachable one that holds nothing, so it is always findable.
+    /// </remarks>
+    private void RelocateExit()
+    {
+        var distances = DistancesFrom(_maze, _player, _maze.CellCount);
+        Cell? best = null;
+        var bestDistance = -1;
+
+        foreach (var (cell, distance) in distances)
+        {
+            if (cell == _player ||
+                _keys.Contains(cell) ||
+                cell == _exit ||
+                HunterAt(cell) is not null ||
+                (_lantern is { } lantern && cell == lantern))
+            {
+                continue;
+            }
+
+            if (distance > bestDistance ||
+                (distance == bestDistance && best is { } current && Precedes(cell, current)))
+            {
+                best = cell;
+                bestDistance = distance;
+            }
+        }
+
+        if (best is not { } newExit || newExit == _exit)
+        {
+            return;
+        }
+
+        _exit = newExit;
+        Raise(GameEvent.ExitMoved);
+    }
+
+    /// <summary>
+    /// Winds the hunters forward by one step after a player step under The Listener.
+    /// </summary>
+    /// <param name="sprinting">Whether the step was a sprint, which is worth a second step.</param>
+    private void CreditListenerStep(bool sprinting)
+    {
+        foreach (var hunter in _hunters)
+        {
+            if (hunter.StunSeconds > 0)
+            {
+                continue;
+            }
+
+            var interval = SecondsUntilNextStep(hunter);
+            AdvanceEnemy(hunter, interval);
+
+            if (_status != GameStatus.InProgress)
+            {
+                return;
+            }
+
+            if (sprinting)
+            {
+                AdvanceEnemy(hunter, interval);
+
+                if (_status != GameStatus.InProgress)
+                {
+                    return;
+                }
+            }
+        }
+    }
+
     /// <summary>
     /// Returns the hunter standing on <paramref name="cell"/>, or <see langword="null"/> when
     /// the cell is empty.
@@ -2003,5 +3012,11 @@ public sealed class GameState
 
         /// <summary>Gets or sets the index of the next cell on that route.</summary>
         public int NextStep { get; set; }
+
+        /// <summary>
+        /// Gets or sets the cell this hunter last saw the player on, used while a veil is up.
+        /// Null means it is not searching a remembered cell.
+        /// </summary>
+        public Cell? KnownPlayer { get; set; }
     }
 }

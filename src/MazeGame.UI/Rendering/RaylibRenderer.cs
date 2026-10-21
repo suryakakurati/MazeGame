@@ -1183,8 +1183,6 @@ public sealed partial class RaylibRenderer : IRenderer
         var chips = new (string Label, string Value, Color Colour)[]
         {
             ("KEYS", $"{state.KeysCollected}/{state.Config.KeyCount}", GlowPink),
-            ("SEALS", $"{state.BarriersRemaining}", GlowGreen),
-            ("WISPS", $"{state.LuresRemaining}", GlowCyan),
             ("EXIT", state.IsExitUnlocked ? "OPEN" : "LOCKED", state.IsExitUnlocked ? ExitOpenColor : ExitLockedColor),
         };
 
@@ -1196,7 +1194,8 @@ public sealed partial class RaylibRenderer : IRenderer
         }
 
         var chipX = (float)(width - RaylibLayout.OriginX - chipWidth + 6);
-        const float chipY = 14f;
+        const float chipY = 8f;
+        var powerupLeft = width - RaylibLayout.OriginX - PowerupRowWidth;
 
         foreach (var chip in chips)
         {
@@ -1206,18 +1205,18 @@ public sealed partial class RaylibRenderer : IRenderer
 
         var left = (float)RaylibLayout.OriginX;
         var textX = left;
-        var room = chipX - left - 28;
+        var room = Math.Min(chipX, powerupLeft) - left - 28;
 
         if (chrome is not null)
         {
             var style = chrome.Style;
 
-            FloorEmblem.Draw(style.ThemeId, (int)left, 15, 3, accent);
+            FloorEmblem.Draw(style.ThemeId, (int)left, 8, 3, accent);
             textX = left + 30;
-            room = chipX - textX - 18;
+            room = Math.Min(chipX, powerupLeft) - textX - 18;
 
-            Text($"FLOOR {chrome.Number:00}", textX, 6, 2, accent);
-            Text(FitText(chrome.Name.ToUpperInvariant(), 2, room), textX, 23, 2, HudText);
+            Text($"FLOOR {chrome.Number:00}", textX, 2, 2, accent);
+            Text(FitText(chrome.Name.ToUpperInvariant(), 2, room), textX, 19, 2, HudText);
 
             var line = danger ? "IT IS CLOSE" : chrome.Gimmick?.ToUpperInvariant();
 
@@ -1227,9 +1226,18 @@ public sealed partial class RaylibRenderer : IRenderer
                     ? Rgba(DangerText.R, DangerText.G, DangerText.B, (byte)(120 + (pulse * 120)))
                     : HintText;
 
-                Text(FitText(line, 1, room), textX, 41, 1, colour);
+                Text(FitText(line, 1, room), textX, 36, 1, colour);
+            }
+
+            var conditions = DescentConditionCatalog.Line(chrome.Conditions);
+
+            if (conditions.Length > 0)
+            {
+                Text(FitText(conditions, 1, room), textX, 45, 1, accent);
             }
         }
+
+        DrawPowerups(state, width - RaylibLayout.OriginX, RaylibLayout.HudHeight - 27f, accent);
         DrawStamina(state, chrome is null);
 
         if (danger)
@@ -1240,6 +1248,67 @@ public sealed partial class RaylibRenderer : IRenderer
                 width - (2 * RaylibLayout.OriginX),
                 2,
                 Rgba(DangerText.R, DangerText.G, DangerText.B, (byte)(50 + (pulse * 100))));
+        }
+    }
+
+    /// <summary>Width of one powerup charge slot.</summary>
+    private const float PowerupSlotWidth = 58f;
+
+    /// <summary>Gap between two powerup charge slots.</summary>
+    private const float PowerupGap = 5f;
+
+    /// <summary>Width of the whole row of five slots.</summary>
+    private const float PowerupRowWidth = (5 * PowerupSlotWidth) + (4 * PowerupGap);
+
+    /// <summary>
+    /// Draws one slot per powerup: its key, its remaining charges and whether it is active.
+    /// </summary>
+    /// <param name="state">The floor, for its remaining charges and active states.</param>
+    /// <param name="rightEdge">The x the row ends at, so it stays against the right margin.</param>
+    /// <param name="top">The y of the row.</param>
+    /// <param name="accent">The floor's accent, used for a slot that still has charges.</param>
+    /// <remarks>
+    /// The row sits under the key and exit chips in the HUD's second line. A zero count is dim
+    /// rather than hidden, so an empty tool reads as spent instead of missing, and a slot that is
+    /// doing something (a live veil, a drag, a burning lantern) glows in the highlight colour.
+    /// The key letters are the same five the footer prints, so the row is a reminder rather than
+    /// a second control scheme.
+    /// </remarks>
+    private void DrawPowerups(GameState state, float rightEdge, float top, Color accent)
+    {
+        var charges = state.PowerupsRemaining;
+        var slots = new (string Key, int Count, bool Active)[]
+        {
+            ("SPC", charges.Blink, false),
+            ("V", charges.Veil, state.IsVeiled),
+            ("T", charges.Drag, state.IsDragActive),
+            ("L", charges.Lantern, state.IsLanternActive),
+            ("F", charges.Shove, false),
+        };
+
+        var x = rightEdge - PowerupRowWidth;
+
+        foreach (var slot in slots)
+        {
+            var empty = slot.Count == 0;
+            var colour = empty
+                ? Rgba(HintText.R, HintText.G, HintText.B, 105)
+                : slot.Active ? GlowCyan : accent;
+            var rectangle = new Rectangle(x, top, PowerupSlotWidth, 22);
+
+            Raylib.DrawRectangleRounded(rectangle, 0.55f, 6, Rgba(3, 10, 12, 210));
+            Raylib.DrawRectangleRoundedLines(
+                rectangle,
+                0.55f,
+                6,
+                Rgba(colour.R, colour.G, colour.B, (byte)(slot.Active ? 185 : 60)));
+
+            Text(slot.Key, x + 7, top + 8, 1, colour);
+
+            var value = FormattableString.Invariant($"{slot.Count}");
+            Text(value, x + PowerupSlotWidth - 9 - TextWidth(value, 1), top + 8, 1, colour);
+
+            x += PowerupSlotWidth + PowerupGap;
         }
     }
 
@@ -1321,7 +1390,7 @@ public sealed partial class RaylibRenderer : IRenderer
         {
             PlacementMode.Barrier => "WASD: AIM    SPACE / ENTER: SEAL    ESC: CANCEL",
             PlacementMode.Lure => "WASD: AIM    SPACE / ENTER: LIGHT    ESC: CANCEL",
-            _ => "WASD: MOVE   SHIFT: RUN   B: BARRIER   R: WISP   ESC: QUIT",
+            _ => "WASD: MOVE   SHIFT: RUN   SPACE: BLINK   V: VEIL   T: SLOW   L: LIGHT   F: SHOVE   ESC: QUIT",
         };
         var color = state.AimMode switch
         {
