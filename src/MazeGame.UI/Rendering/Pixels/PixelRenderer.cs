@@ -45,7 +45,40 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     /// <summary>How many particles each floor's weather draws.</summary>
     private const int AmbientCount = 30;
 
+    /// <summary>
+    /// How many cells behind the player stay drawn after the lantern has moved on.
+    /// </summary>
+    /// <remarks>
+    /// Memory used to be permanent for the whole floor, which quietly turned the fog into a map:
+    /// by the middle of a run the screen was a drawing of everywhere the player had been, and the
+    /// dark stopped being dark. Three cells is the room the player just left — enough to orient
+    /// by, not enough to navigate a floor blind.
+    /// </remarks>
+    private const int MemoryRadius = 3;
+
     private static readonly Color CanvasColour = new(3, 9, 11, 255);
+
+    /// <summary>
+    /// The safe room's floor: a bright ivory at hue 40 and lightness 0.88. No floor palette uses a
+    /// walkable surface anywhere near this light; the closest walkable tile in any of the twenty
+    /// floors is over five hundred weighted units away.
+    /// </summary>
+    private static readonly Color RoomFloor = new(244, 232, 202, 255);
+
+    /// <summary>The seams between the room's flagstones: deep umber, to carry the ivory.</summary>
+    private static readonly Color RoomSeam = new(126, 104, 88, 255);
+
+    /// <summary>The room's frame and brazier: a warm gold used by no floor's accent.</summary>
+    private static readonly Color RoomFrame = new(242, 206, 136, 255);
+
+    /// <summary>The room's shadow, used to set the pale floor off from the cave.</summary>
+    private static readonly Color RoomShade = new(58, 46, 44, 255);
+
+    /// <summary>The Echo's mark: cold moonlight, deliberately nothing like a bloom's gold.</summary>
+    private static readonly Color EchoPale = new(198, 206, 255, 255);
+
+    /// <summary>The Echo's mark once it has been heard.</summary>
+    private static readonly Color EchoDim = new(104, 112, 136, 255);
 
     /// <summary>
     /// How a seen-but-not-lit cell is tinted.
@@ -222,6 +255,7 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         _view.Begin(CanvasColour);
         DrawCells(state, atlas);
         DrawProps(state, atlas);
+        DrawSafeRoom(state);
         DrawEntities(state, atlas);
         DrawLight(state);
         DrawAmbience();
@@ -362,7 +396,7 @@ public sealed class PixelRenderer : IRenderer, IDisposable
                 var cell = state.Maze.GetCell(row, column);
                 var visible = state.IsVisible(cell);
 
-                if (!visible && !_explored.Contains(cell))
+                if (!visible && !RememberedCell(state, cell))
                 {
                     continue;
                 }
@@ -495,6 +529,109 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         }
     }
 
+    /// <summary>
+    /// Draws the safe room as a place rather than as nine cells that happen to be open: pale
+    /// flagstones with seams, a gold frame around the 3x3 block and a brazier in the middle.
+    /// </summary>
+    /// <param name="state">The floor being drawn.</param>
+    /// <remarks>
+    /// <para>
+    /// The palette is the one scheme no floor uses: a bright ivory (hue 40, lightness 0.88) against
+    /// deep umber seams, framed in gold. Every floor's walkable tile is over five hundred weighted
+    /// units away, and the nearest palette slot of any kind — the Ossuary's bone near-white — is
+    /// about seventy away, so the room reads at a glance even through the fog tint.
+    /// </para>
+    /// <para>
+    /// It is deliberately drawn over the cave tile without replacing the wall faces: a room with
+    /// its own walls missing would look like a hole in the maze. Only the interior is painted, and
+    /// the frame is four corner brackets on the block's outer edge.
+    /// </para>
+    /// </remarks>
+    private void DrawSafeRoom(GameState state)
+    {
+        if (state.SafeRoom is not { } room)
+        {
+            return;
+        }
+
+        const int Cell = PixelLayout.CellSize;
+        var pulse = 0.6 + (0.4 * Math.Sin(Raylib.GetTime() * 1.7));
+        var floor = new Color(RoomFloor.R, RoomFloor.G, RoomFloor.B, (byte)(state.IsInSafeRoom ? 238 : 208));
+
+        foreach (var cell in room.Cells)
+        {
+            if (!Known(state, cell) || !OnScreen(cell))
+            {
+                continue;
+            }
+
+            var x = CanvasX(cell.Column);
+            var y = CanvasY(cell.Row);
+
+            // Inset by a pixel so the room's own walls still draw along its edge.
+            Raylib.DrawRectangle(x + 1, y + 1, Cell - 2, Cell - 2, floor);
+            Raylib.DrawRectangle(x + 1, y + (Cell / 2), Cell - 2, 1, RoomSeam);
+            Raylib.DrawRectangle(x + (Cell / 2), y + 1, 1, Cell - 2, RoomSeam);
+            Raylib.DrawRectangle(x + 1, y + Cell - 2, Cell - 2, 1, RoomShade);
+            Raylib.DrawRectangle(x + Cell - 2, y + 1, 1, Cell - 2, RoomShade);
+        }
+
+        // Four corner brackets around the block: the frame a carpentered room would have, without
+        // a line drawn across the doorway.
+        var corner = room.TopLeft;
+
+        if (Known(state, corner) && OnScreen(corner))
+        {
+            var left = CanvasX(corner.Column);
+            var top = CanvasY(corner.Row);
+            var size = SecretRoom.Size * Cell;
+            var gold = new Color(RoomFrame.R, RoomFrame.G, RoomFrame.B, (byte)(150 + (100 * pulse)));
+            const int Arm = 6;
+            const int Thick = 2;
+
+            DrawBracket(left, top, Arm, Thick, 1, 1, gold);
+            DrawBracket(left + size, top, Arm, Thick, -1, 1, gold);
+            DrawBracket(left, top + size, Arm, Thick, 1, -1, gold);
+            DrawBracket(left + size, top + size, Arm, Thick, -1, -1, gold);
+        }
+
+        // A brazier on the counter cell, so the room has a light of its own even before the player
+        // walks in. The flame breathes on the same clock as the frame.
+        var counter = room.Center;
+
+        if (Known(state, counter) && OnScreen(counter))
+        {
+            var centreX = CanvasX(counter.Column) + (Cell / 2);
+            var centreY = CanvasY(counter.Row) + (Cell / 2);
+            var flame = new Color(RoomFrame.R, RoomFrame.G, RoomFrame.B, (byte)(160 + (95 * pulse)));
+
+            Raylib.DrawRectangle(centreX - 4, centreY + 2, 8, 2, RoomShade);
+            Raylib.DrawRectangle(centreX - 3, centreY + 3, 6, 1, RoomSeam);
+            Raylib.DrawRectangle(centreX - 1, centreY - 3, 3, 5, flame);
+            Raylib.DrawRectangle(centreX - 3, centreY - 1, 1, 3, flame);
+            Raylib.DrawRectangle(centreX + 3, centreY - 1, 1, 3, flame);
+        }
+    }
+
+    /// <summary>Draws one L-shaped corner bracket of the room's frame.</summary>
+    /// <param name="x">The corner's x.</param>
+    /// <param name="y">The corner's y.</param>
+    /// <param name="arm">How long each arm is.</param>
+    /// <param name="thickness">How thick each arm is.</param>
+    /// <param name="horizontal">-1 to grow left, 1 to grow right.</param>
+    /// <param name="vertical">-1 to grow up, 1 to grow down.</param>
+    /// <param name="colour">The bracket's colour.</param>
+    private static void DrawBracket(int x, int y, int arm, int thickness, int horizontal, int vertical, Color colour)
+    {
+        var left = horizontal > 0 ? x : x - arm;
+        var top = vertical > 0 ? y : y - thickness;
+        var side = horizontal > 0 ? x : x - thickness;
+        var down = vertical > 0 ? y : y - arm;
+
+        Raylib.DrawRectangle(left, top, arm, thickness, colour);
+        Raylib.DrawRectangle(side, down, thickness, arm, colour);
+    }
+
     /// <summary>Returns whether a cell holds something that must not be covered by scenery.</summary>
     private static bool IsBusy(GameState state, Cell cell) =>
         cell == state.Player ||
@@ -502,7 +639,8 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         cell == state.Exit ||
         cell == state.Lure ||
         state.Keys.Contains(cell) ||
-        state.Barriers.Contains(cell);
+        state.Barriers.Contains(cell) ||
+        state.EchoCell == cell;
 
     /// <summary>Returns a stable, positive hash of a cell, for variant and prop choices.</summary>
     private static int Hash(int row, int column) =>
@@ -538,6 +676,41 @@ public sealed class PixelRenderer : IRenderer, IDisposable
             }
 
             atlas.Draw($"key-{(frame + (key.Column + key.Row)) % 3}", CanvasX(key.Column), CanvasY(key.Row));
+        }
+
+        // The Echo: a standing memorial stone with a slit of cold light, drawn from primitives
+        // rather than from a bloom tile. It used to borrow the key art, which made the one
+        // story beat on the floor look like a pickup; a grave marker cannot be mistaken for one.
+        // It keeps its place after it has been heard, greyed out.
+        if (state.EchoCell is { } echo && Known(state, echo) && OnScreen(echo))
+        {
+            var cellX = CanvasX(echo.Column);
+            var cellY = CanvasY(echo.Row);
+            var pale = state.IsEchoRead ? EchoDim : EchoPale;
+            var alpha = state.IsEchoRead
+                ? (byte)140
+                : (byte)(110 + (130 * (0.5 + (0.5 * Math.Sin(time * 2.2)))));
+            var glow = new Color(pale.R, pale.G, pale.B, alpha);
+            const int Cell = PixelLayout.CellSize;
+
+            // The slab leans a little: a 6-wide body with the top row offset by one pixel.
+            Raylib.DrawRectangle(cellX + 5, cellY + 4, 6, 9, RoomShade);
+            Raylib.DrawRectangle(cellX + 6, cellY + 3, 4, 1, RoomShade);
+
+            // The slit of light, and the crossbar that makes it a marker rather than a face.
+            Raylib.DrawRectangle(cellX + 7, cellY + 5, 2, 7, glow);
+            Raylib.DrawRectangle(cellX + 4, cellY + 7, 8, 2, glow);
+
+            if (!state.IsEchoRead)
+            {
+                const int Dot = 2;
+                var far = Cell - Dot - 2;
+
+                Raylib.DrawRectangle(cellX + 2, cellY + 2, Dot, Dot, glow);
+                Raylib.DrawRectangle(cellX + far, cellY + 2, Dot, Dot, glow);
+                Raylib.DrawRectangle(cellX + 2, cellY + far, Dot, Dot, glow);
+                Raylib.DrawRectangle(cellX + far, cellY + far, Dot, Dot, glow);
+            }
         }
 
         foreach (var barrier in state.Barriers)
@@ -624,7 +797,26 @@ public sealed class PixelRenderer : IRenderer, IDisposable
 
     /// <summary>Returns whether a cell has been seen, so an entity there may be drawn.</summary>
     private bool Known(GameState state, Cell cell) =>
-        state.IsVisible(cell) || _explored.Contains(cell);
+        state.IsVisible(cell) || RememberedCell(state, cell);
+
+    /// <summary>
+    /// Returns whether a seen cell is close enough to the player to still be drawn.
+    /// </summary>
+    /// <param name="state">The floor being drawn.</param>
+    /// <param name="cell">The cell to test.</param>
+    /// <returns>
+    /// <see langword="true"/> when the player has seen the cell and it lies within
+    /// <see cref="MemoryRadius"/> of them.
+    /// </returns>
+    private bool RememberedCell(GameState state, Cell cell) =>
+        _explored.Contains(cell) && WithinMemory(state, cell);
+
+    /// <summary>Returns whether <paramref name="cell"/> lies within the torch's memory.</summary>
+    /// <param name="state">The floor being drawn.</param>
+    /// <param name="cell">The cell to test.</param>
+    private static bool WithinMemory(GameState state, Cell cell) =>
+        Math.Abs(cell.Row - state.Player.Row) <= MemoryRadius &&
+        Math.Abs(cell.Column - state.Player.Column) <= MemoryRadius;
 
     /// <summary>Returns whether any hunter is standing on <paramref name="cell"/>.</summary>
     /// <param name="state">The floor being drawn.</param>
@@ -778,7 +970,7 @@ public sealed class PixelRenderer : IRenderer, IDisposable
                     var falloff = 1.0 - (distance / (radius + 1.0));
                     level = 0.70 + (Math.Clamp(falloff, 0.0, 1.0) * 0.30);
                 }
-                else if (_explored.Contains(cell))
+                else if (_explored.Contains(cell) && WithinMemory(state, cell))
                 {
                     level = 0.55;
                 }

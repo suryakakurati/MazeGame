@@ -3,20 +3,20 @@
 Single source of truth for the state of the project. Update this file at the end of
 every work session (see the handoff protocol in `HANDOFF.md`).
 
-Last updated: 2026-10-21 (third playtest: the five-verb powerup kit, and descent conditions chosen
-at gates on floors 8 and 14)
+Last updated: 2026-10-21 (fifth pass: blooms, the Echo and the herbarium)
 
 ## Current Status
 
-The solution builds with zero warnings, `dotnet test` is green (748 tests), and the game runs
+The solution builds with zero warnings, `dotnet test` is green (834 tests), and the game runs
 **in a Raylib window** as a **twenty-floor campaign with a card draft between floors, five
 powerups and timed steps**: the title leads to a floor intro card, then a seeded maze (15x15 at
 the top, 25x25 at the bottom) drawn as a bioluminescent cave — fog of war, braided dead ends,
 keys, an exit, and a killer (or three) that hunts the player with Dijkstra. **Every floor refills
 five one-key verbs** — Blink, Veil, Drag, Lantern and Shove — and **floors 8 and 14 are gates**
-where the run takes one of two **descent conditions** for the rest of the descent. **The player has three hearts**: a catch costs one, throws the
+where the run takes one of two **descent conditions** for the rest of the descent. **The player starts with three hearts**: a catch costs one, throws the
 killer to a distant cell and stuns it, and keeps every key and barrier; hearts carry from floor to
-floor, so the run is lost only when the last heart is. Walking is now a **cadence** — a constant 0.26 s per
+floor and have no ceiling, so an Echo, a room or a card can push past three and the run is lost
+only when the last heart is. Walking is now a **cadence** — a constant 0.26 s per
 cell, with cards and sprint as the only speed-ups — while hunters start at 1.20 s and ramp to 0.22 s,
 so the player starts well ahead but has to draft speed to stay ahead. One buffered input and **sprint on Shift** (a
 1.2 s stamina bar). The explorer **snaps to its tile** (one press, one tile, so the grid is
@@ -668,7 +668,96 @@ because holding did not walk, and every floor was the same rectangle.
   player, keys, exit and hunters on floor cells; `MazeShapeTests` and `ShapedFloorTests` walk the
   real catalogue and prove every key and exit stays reachable.
 
-## Current Task
+## Current pass: the garden speaks — blooms, the Echo and the herbarium
+
+**The keys are flowers, and the game now says so.** The HUD chip reads `BLOOMS`, the console says
+`blooms`, the title promises "pick the blooms", and every card and condition sentence that used to
+say key says bloom. The code still says `Keys`/`KeyCount`/`KeyPicked` where it means the mechanic:
+that split is deliberate, is recorded in `DECISIONS.md`, and a test sweeps the player-facing strings
+so the rename cannot be half-done again.
+
+**The story is twenty authored pages, one per floor.** `StoryCatalog` holds a title and one to three
+lines for every shipped floor, in run order, plus a two-line Echo script and a one-line hint for
+each. The cleared card turns the page under the floor's name and adds one extra line when the run is
+on its last heart or carrying a descent condition. There is no grammar and no shuffling: the floors
+are fixed, so the book is fixed.
+
+**The garden is the run's score.** A strip of marks under the page grows by one for every bloom
+picked and one for every page turned, and the run summary closes on it. It resets with the run;
+there is no unlock behind it and nothing is saved.
+
+**Every floor has one Echo.** A pale standing stone in a dead end, at least two steps off the
+shortest route between the start and the arch, with four dots of its own cold light pulsing at its
+corners — visible a ring further out than the torch, so the detour can be seen before it is taken.
+Walking onto it freezes the whole floor (hunt included), opens a card with the gardener's lines —
+the last one teaching the floor's rule — and `ENTER` lets go, restoring one heart. It is spent once
+and stays behind as a grey landmark.
+
+Verified for this pass:
+
+- `dotnet build MazeGame.sln` → 0 warnings, 0 errors. `dotnet test MazeGame.sln` → **834/834
+  passing, 0 skipped** (19 new: the catalog's shape and limits, the bloom sweep, the garden's
+  arithmetic, the Echo's placement, pause and one-shot rule, and the guaranteed room on the
+  teaching floors).
+- A safe room is now **guaranteed on floors 1–3** and rolled at the floor's number afterwards:
+  measured over 200 walked runs, **4.55 rooms per run** (it was 2.10, and the opening floors — where
+  a new player is learning — almost never had one).
+- A console walkthrough through the real `ConsoleRenderer`: the HUD reads `blooms 0/3`, the Echo
+  card prints `THE ECHO — ROWS` with its two lines, one step away the map draws `e` beside `@`, and
+  the cleared page prints `PAGE 1 — ROWS` with `garden: 4 bloom(s) (picked 3, pages 1)`.
+- Every shipped floor's Echo is off the critical path and outside the arch, the blooms, the hunters
+  and the safe room — asserted for all twenty floors.
+
+**Not verified:** the window. `PixelCards.Echo`, `FloorCleared` and `RunComplete` compile and the
+console path was played, but nothing was seen on a Raylib display, so the page's fit at the minimum
+window size and the corner dots' readability at 1x are still guesses.
+
+## Previous pass: safe rooms, stackable cards and four floor rules
+
+`FUTURE.md` §20–§23 is now implementation. What shipped, in the order it landed green:
+
+- **Cards stack.** `Card.MaxCopies` (1–3) replaces the unused `IsStackable` flag; eight numeric
+  cards carry two or three copies, and `DraftFactory` counts copies per id. A nineteen-draft run
+  now has three offers on every floor, where the single-copy catalogue used to run dry.
+- **Secret rooms.** `SecretRoom`/`SecretRoomCarver` carve a 3x3 chamber with exactly one door.
+  The site is a hybrid: rock where the floor's shape left a 3x3 pocket (floors 2, 7, 8, 12, 15, 20),
+  and a pocket reserved **before** Kruskal on a floor with no rock, so a rectangle gets the same
+  chance. Measured on the real catalog: **2.10 rooms per seeded twenty-floor run**, which is the
+  curve the ask describes. The roll draws from its own salted stream, so a floor without a room
+  has the same maze it always did.
+- **The pause.** Walking into the room stops the world: `Tick` advances the player's own clock,
+  resolves a buffered step and returns before seals, wisps, conditions and hunters. The nine cells
+  are lit while inside and nothing the player must find is ever placed there.
+- **Eight rooms.** The Cartographer (map + the next two floors' room chance), the Long Table (45%
+  double, stake capped at `hearts - 1`), the Stall (one card, one heart), the Confessional (remove
+  a card for a heart), the Toll (one hunter fewer next floor), the Seed Vault (blooms three floors
+  down), the Mirror (swap a card, free) and the Turn (back five floors, or to floor one for a
+  heart, once per run). Every price is built from the run's state, so an unpayable option is never
+  on the card and the last heart can never be spent. `RunModifiers.FromCards` rebuilds the totals
+  for the Confessional and the Mirror.
+- **Four floor rules**, one enum value per floor, each read in one place: The Ossuary's sleeper
+  (14), The Loom's thread gates (18), The Ash Garden's burning lantern (19) and The Deep's long
+  door (20). The pressure gate is deliberately not shipped — see `DECISIONS.md`.
+- **UI.** `Screen.Room` in the window with `PixelCards.Room`, a text card in the console, `E` opens
+  it, and the footer says `SAFE ROOM` while the hunt is paused. A sleeper is not drawn until it
+  wakes.
+
+**Not built:** the six room one-shots (the room is silent for now), card upgrades/keystones, slick
+ glass, the mimic bloom and the pressure gate.
+
+Verified for this pass:
+
+- `dotnet build MazeGame.sln` → 0 warnings, 0 errors. `dotnet test MazeGame.sln` → **802/802
+  passing, 0 skipped** (54 new cases: copies and the draft pool, the carver and the chance curve,
+  the pause, the room economy, reincarnation, and the four rules).
+- A seeded campaign builds all twenty floors; floors 14/18/19/20 report the right rule, floor 14
+  starts one hunter dormant, and floor 18's gates land on opposite corners.
+- A seeded twenty-floor sweep gives **2.10 rooms per run**, against the ~0.6 a rock-only carver
+  would have produced.
+- No new tiles, so `AssetForge -- --check` was not needed; nothing under `Content/Generated`
+  changed.
+
+## Previous task: twenty places
 
 **The twenty floors are now twenty places.** Each one selects a floor motif, a wall motif, a
 signature feature and a weather; the renderer gives it a warm or cold light, a fog, a particle
@@ -706,10 +795,10 @@ camera and the compiled font are done; that pass was content and legibility.
   (Rootbound 2.23, was 1.52), and in a rendered frame floor 2's walled cell tops read 1.49–2.89x
   their own floors against 0.88 for open cells.
 
-What is left of the visual phase: the **draft screen** is still the last screen set in the system
-typeface, and the **HUD** still lives in the window's letterbox rather than inside the canvas.
-The floor cards and the HUD now carry each floor's emblem, palette and weather, so the remaining
-work is chrome (9-slice frames, card art) rather than identity.
+Every screen — title, intro, cleared page, Echo, room, draft, condition pick, run summary and
+caught card — is now set in the compiled pixel face. What is left of the visual phase is chrome:
+the **HUD** still lives in the window's letterbox rather than inside the canvas, and a draft card is
+still type on a rectangle (9-slice frames and card art) rather than identity.
 
 ## Next Steps
 
@@ -760,6 +849,19 @@ more code.
 
 ## Completed
 
+- [x] 2026-10-21 — The garden speaks: blooms, the Echo and the herbarium. The player-facing rename
+      (`BLOOMS` chip, console, title, cards, conditions) with a sweep test; `StoryCatalog`,
+      `StoryPage` and `StoryMood` with twenty authored pages, twenty Echo scripts and twenty hints;
+      the page and the garden strip on the cleared card and the run summary; `GameState` Echo
+      placement off the critical path, its own light, the floor-wide pause and the one-shot rule;
+      `PixelCards.Echo`, `Screen.Echo`, the console card and the `e` glyph; and the safe room
+      guaranteed on floors 1–3 so it is met rather than hoped for. 19 new tests (821).
+- [x] 2026-10-21 — Safe rooms, stackable cards and four floor rules. `Card.MaxCopies` and the
+      copy-aware draft; `Grid.CarveCell`, `SecretRoom`, `SecretRoomCarver` and the pre-generation
+      pocket; the safe-room pause and its nine lit cells; all eight room kinds priced in hearts;
+      `RunModifiers.FromCards`; reincarnation with a salted draft; `FloorRule` with the sleeper,
+      thread gates, burning lantern and long door; `PixelCards.Room`, `Screen.Room`, the console
+      card and the footer hint. 54 new tests (802).
 - [x] 2026-10-21 — The card overhaul. The catalog is twenty-three cards; ten new rule hooks in
       `GameConfig`/`GameState` (free first catch, per-floor revival, catch cost, magnetic keys,
       blink refunds, veil/drag durations, lantern range); `RunModifiers` composition and draft
@@ -1141,7 +1243,7 @@ Run these from the repository root (the folder containing `MazeGame.sln`):
 
 ```bash
 dotnet build                      # must report 0 Warning(s), 0 Error(s)
-dotnet test                       # currently 748/748 passing
+dotnet test                       # currently 834/834 passing
 dotnet run --project tools/AssetForge -- --check   # atlases and themes are healthy
 dotnet run --project src/MazeGame.UI              # Raylib window
 dotnet run --project src/MazeGame.UI -- --console # terminal fallback
@@ -1158,5 +1260,6 @@ If `dotnet` is not on `PATH` (this is the case on the setup machine):
 Controls: on the title, W/S or the arrows select and Enter/Space confirms. In play, WASD or arrow
 keys move, **hold Shift to sprint** (window only; the console has no sprint yet), and the five
 powerups are Space (Blink), V (Veil), T (Drag), L (Lantern) and F (Shove). At a gate, A/D selects a
-condition and Enter takes it. Q or Esc quits; after a run, R or Enter descends again. The same keys
+condition and Enter takes it. **E opens a safe room's card** while standing in one (A/D choose,
+Enter takes, Esc leaves). Q or Esc quits; after a run, R or Enter descends again. The same keys
 work in the window and in the terminal.

@@ -51,7 +51,7 @@ public static class DescentConditionCatalog
         DescentCondition.Pack => "The hunters move together on one clock.",
         DescentCondition.Hunted => "One hunter is always lit and 20% faster.",
         DescentCondition.Mute => "One tool is unavailable each floor, which starts with an extra heart.",
-        DescentCondition.Drift => "The exit moves after every key.",
+        DescentCondition.Drift => "The exit moves after every bloom.",
         _ => throw new ArgumentOutOfRangeException(nameof(condition), condition, "Unknown descent condition."),
     };
 

@@ -69,6 +69,18 @@ public sealed class GameState
 
     /// <summary>How many cells a shove pushes a hunter.</summary>
     private const int ShovePushCells = 2;
+
+    /// <summary>How long a thread gate refuses to take the player again, in seconds.</summary>
+    private const double ThreadGateCooldownSeconds = 2.0;
+
+    /// <summary>How long the arch must be held under the long-door rule.</summary>
+    private const double LongDoorHoldSeconds = 5.0;
+
+    /// <summary>How close the player must come before a sleeper wakes.</summary>
+    private const int SleeperWakeDistance = 3;
+
+    /// <summary>How much standing still costs one step of vision under the burning lantern.</summary>
+    private const double LanternLossIntervalSeconds = 40.0;
     // The four directions, stored once so the visibility search does not allocate a fresh
     // array for every cell it visits.
     private static readonly Direction[] NeighbourDirections =
@@ -76,6 +88,12 @@ public sealed class GameState
 
     /// <summary>How many steps of cave a glowing wisp lights up around itself.</summary>
     private const int LureGlowRadius = 1;
+
+    /// <summary>
+    /// How far the Echo's own light spills around it. Its pool is drawn a ring further out than
+    /// the torch, so the dead end can be seen from the corridor before the detour is committed to.
+    /// </summary>
+    private const int EchoGlowRadius = 2;
 
     /// <summary>
     /// How full the stamina bar must be before sprinting is available again after running dry.
@@ -92,9 +110,21 @@ public sealed class GameState
 
     private readonly GameConfig _config;
     private readonly Grid _maze;
+    private readonly SecretRoom? _safeRoom;
+
+    // Whether the player was inside the safe room on the last look, so entering and leaving are
+    // raised exactly once each rather than every frame spent inside.
+    private bool _wasInSafeRoom;
     private readonly IPathfinder _pathfinder;
     private readonly IRandom _random;
     private readonly HashSet<Cell> _keys;
+
+    // The Echo: the floor's story, on one cell in a dead end. Null when the floor has none, which
+    // is every hand-built test floor unless it asks for one.
+    private readonly Cell? _echo;
+    private readonly IReadOnlyList<string> _echoLines;
+    private bool _echoOpen;
+    private bool _echoRead;
     private readonly HashSet<Cell> _barriers = [];
     private readonly Dictionary<Cell, double> _barrierSeals = [];
     private readonly HashSet<Cell> _visible = [];
@@ -129,6 +159,18 @@ public sealed class GameState
     private int _hearts;
     private readonly int _maxHearts;
     private double _invulnerableSeconds;
+
+    // The Cartographer's map, in seconds left. Zero means the torch is the only light.
+    private double _mapRevealSecondsLeft;
+
+    // Floor-rule state. Every one of these is inert unless the floor's rule reads it, which is
+    // what keeps the rule tests' feel identical on a floor without one.
+    private Cell? _threadGateA;
+    private Cell? _threadGateB;
+    private double _threadGateCooldown;
+    private double _exitHoldSeconds;
+    private int _lanternLoss;
+    private double _lanternLossElapsed;
 
     // Card-granted reprieves. Both are consumed once per floor, so a new floor is a new chance.
     private bool _freeCatchUsed;
@@ -177,12 +219,22 @@ public sealed class GameState
     /// Source of randomness for placement. Pass the same instance that generated the maze
     /// to make the whole game reproducible from one seed.
     /// </param>
+    /// <param name="safeRoom">
+    /// The floor's secret room, or <see langword="null"/> when the roll missed. Optional so a
+    /// hand-built test floor needs no room; when present, its nine cells are reserved — nothing
+    /// that must be found or chased is placed inside it.
+    /// </param>
     /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
     /// <exception cref="ArgumentException">
     /// Thrown when the maze size does not match the config, when the config is invalid, or
     /// when the maze cannot hold the player, killer, exit and keys.
     /// </exception>
-    public GameState(GameConfig config, Grid maze, IPathfinder pathfinder, IRandom random)
+    public GameState(
+        GameConfig config,
+        Grid maze,
+        IPathfinder pathfinder,
+        IRandom random,
+        SecretRoom? safeRoom = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(maze);
@@ -200,6 +252,7 @@ public sealed class GameState
 
         _config = config;
         _maze = maze;
+        _safeRoom = safeRoom;
         _pathfinder = pathfinder;
         _random = random;
         _barriersRemaining = config.BarrierBudget;
@@ -218,12 +271,25 @@ public sealed class GameState
         // each cell exactly once, the player, killer, exit and keys are guaranteed to be on
         // different cells without any retry loop. Solid rock is not a cell anything can stand on:
         // on a shaped floor the maze's rectangle is bigger than the cave inside it.
+        // A safe room is a place to rest, not a place to hide the arch or a bloom in: its nine
+        // cells are kept out of the shuffle, so nothing the player must find can end up inside
+        // and no hunter can start there.
+        var roomCells = new HashSet<(int Row, int Column)>();
+
+        if (safeRoom is not null)
+        {
+            foreach (var cell in safeRoom.Cells)
+            {
+                roomCells.Add((cell.Row, cell.Column));
+            }
+        }
+
         var cells = new List<Cell>(maze.OpenCellCount);
         for (var row = 0; row < maze.Rows; row++)
         {
             for (var column = 0; column < maze.Columns; column++)
             {
-                if (!maze.IsSolid(row, column))
+                if (!maze.IsSolid(row, column) && !roomCells.Contains((row, column)))
                 {
                     cells.Add(maze.GetCell(row, column));
                 }
@@ -244,7 +310,7 @@ public sealed class GameState
 
         _player = cells[0];
 
-        var hunterCells = ChooseHunterStarts(maze, _player, pathfinder, config.HunterCount);
+        var hunterCells = ChooseHunterStarts(maze, _player, pathfinder, config.HunterCount, roomCells);
         _enemyViews = new HunterView[config.HunterCount];
 
         foreach (var cell in hunterCells)
@@ -265,6 +331,36 @@ public sealed class GameState
         // fits in this list. The slicing below therefore cannot run out.
         _exit = available[0];
         _keys = new HashSet<Cell>(available.GetRange(1, config.KeyCount));
+
+        // The floor's rule, if it has one, is set up from the cells nothing else took.
+        if (config.Rule == FloorRule.ThreadGates)
+        {
+            PlaceThreadGates(cells, hunterCells, roomCells);
+        }
+        else if (config.Rule == FloorRule.Sleeper && _hunters.Count > 0)
+        {
+            _hunters[^1].Dormant = true;
+        }
+
+        // The Echo is placed last, from what the exit, the blooms and the hunters did not take,
+        // and only if it can be put off the shortest route: an interaction on the critical path is
+        // a cutscene the player has to sit through.
+        if (config.EchoEnabled)
+        {
+            _echo = ChooseEchoCell(
+                maze,
+                available,
+                config.KeyCount,
+                _player,
+                _exit,
+                _threadGateA,
+                _threadGateB);
+            _echoLines = StoryCatalog.Echo(config.FloorNumber);
+        }
+        else
+        {
+            _echoLines = Array.Empty<string>();
+        }
 
         // Nothing is mid-step at the start, so every figure is drawn exactly on its cell.
         _playerFrom = _player;
@@ -295,7 +391,8 @@ public sealed class GameState
         Grid maze,
         Cell player,
         IPathfinder pathfinder,
-        int count)
+        int count,
+        HashSet<(int Row, int Column)>? excluded = null)
     {
         var starts = new List<Cell>(count);
         var distances = DistancesFrom(maze, player, maze.CellCount);
@@ -313,7 +410,8 @@ public sealed class GameState
                     var cell = maze.GetCell(row, column);
 
                     if (cell == player || starts.Contains(cell) ||
-                        !distances.TryGetValue(cell, out var distance))
+                        !distances.TryGetValue(cell, out var distance) ||
+                        (excluded is not null && excluded.Contains((cell.Row, cell.Column))))
                     {
                         continue;
                     }
@@ -344,7 +442,8 @@ public sealed class GameState
             {
                 foreach (var (cell, _) in distances)
                 {
-                    if (cell == player || starts.Contains(cell))
+                    if (cell == player || starts.Contains(cell) ||
+                        (excluded is not null && excluded.Contains((cell.Row, cell.Column))))
                     {
                         continue;
                     }
@@ -362,7 +461,7 @@ public sealed class GameState
             // stays as the last resort for a maze with exactly as many cells as figures.
             if (best is null)
             {
-                best = FindUnusedCell(maze, player, starts);
+                best = FindUnusedCell(maze, player, starts, excluded);
             }
 
             starts.Add(best ?? maze.GetCell(
@@ -379,14 +478,20 @@ public sealed class GameState
     /// <param name="maze">The floor to search.</param>
     /// <param name="player">The cell to skip.</param>
     /// <param name="starts">The cells the earlier hunters took.</param>
+    /// <param name="excluded">Cells nothing may be placed on, such as a safe room's.</param>
     /// <returns>An unused cell, or null when every cell is taken.</returns>
-    private static Cell? FindUnusedCell(Grid maze, Cell player, List<Cell> starts)
+    private static Cell? FindUnusedCell(
+        Grid maze,
+        Cell player,
+        List<Cell> starts,
+        HashSet<(int Row, int Column)>? excluded)
     {
         for (var row = 0; row < maze.Rows; row++)
         {
             for (var column = 0; column < maze.Columns; column++)
             {
-                if (maze.IsSolid(row, column))
+                if (maze.IsSolid(row, column) ||
+                    (excluded is not null && excluded.Contains((row, column))))
                 {
                     continue;
                 }
@@ -404,6 +509,272 @@ public sealed class GameState
     }
 
     /// <summary>
+    /// Chooses the two thread gates: the furthest-apart pair of cells that is not the player, a
+    /// hunter, the arch, a bloom or a safe room's floor.
+    /// </summary>
+    /// <param name="cells">Every placeable cell, already shuffled.</param>
+    /// <param name="hunterCells">Where the hunters started.</param>
+    /// <param name="roomCells">The safe room's cells, which a gate may not use.</param>
+    /// <remarks>
+    /// A double sweep finds near-antipodes in two breadth-first walks rather than one per pair, and
+    /// keeps the pair deterministic from the floor's own random stream. Distance is measured
+    /// through the maze, so a gate really is a shortcut rather than two cells that only look far
+    /// apart.
+    /// </remarks>
+    private void PlaceThreadGates(
+        List<Cell> cells,
+        List<Cell> hunterCells,
+        HashSet<(int Row, int Column)> roomCells)
+    {
+        var used = new HashSet<(int Row, int Column)>
+        {
+            (_player.Row, _player.Column),
+            (_exit.Row, _exit.Column),
+        };
+
+        foreach (var key in _keys)
+        {
+            used.Add((key.Row, key.Column));
+        }
+
+        foreach (var hunterCell in hunterCells)
+        {
+            used.Add((hunterCell.Row, hunterCell.Column));
+        }
+
+        // The room's door is ordinary floor, but a gate on the only way out of a safe room would
+        // teleport the player the moment they stepped back into the maze.
+        if (_safeRoom is { } room)
+        {
+            used.Add((room.Door.Row, room.Door.Column));
+        }
+
+        var candidates = new List<Cell>(cells.Count);
+
+        foreach (var cell in cells)
+        {
+            if (used.Contains((cell.Row, cell.Column)) || roomCells.Contains((cell.Row, cell.Column)))
+            {
+                continue;
+            }
+
+            candidates.Add(cell);
+        }
+
+        if (candidates.Count < 2)
+        {
+            return;
+        }
+
+        var start = candidates[_random.NextInt(candidates.Count)];
+        var first = FurthestIn(candidates, start);
+        var second = FurthestIn(candidates, first);
+
+        if (SameCell(first, second))
+        {
+            return;
+        }
+
+        _threadGateA = first;
+        _threadGateB = second;
+    }
+
+    /// <summary>Returns the candidate furthest from <paramref name="origin"/> through the maze.</summary>
+    private Cell FurthestIn(List<Cell> candidates, Cell origin)
+    {
+        var distances = DistancesFrom(_maze, origin, _maze.CellCount);
+        var best = origin;
+        var bestDistance = -1;
+
+        foreach (var cell in candidates)
+        {
+            if (!distances.TryGetValue(cell, out var distance) || distance <= bestDistance)
+            {
+                continue;
+            }
+
+            best = cell;
+            bestDistance = distance;
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// Moves the player to the other thread gate when they step onto one, if the cooldown has run
+    /// out.
+    /// </summary>
+    /// <remarks>
+    /// The gate is one-way in the moment, not one-way in the floor: stepping onto either end takes
+    /// you to the other, and the two-second cooldown is what stops holding a direction from
+    /// ping-ponging between them.
+    /// </remarks>
+    private void TryUseThreadGate()
+    {
+        if (_config.Rule != FloorRule.ThreadGates || _threadGateCooldown > 0)
+        {
+            return;
+        }
+
+        if (_threadGateA is not { } first || _threadGateB is not { } second)
+        {
+            return;
+        }
+
+        Cell target;
+
+        if (SameCell(_player, first))
+        {
+            target = second;
+        }
+        else if (SameCell(_player, second))
+        {
+            target = first;
+        }
+        else
+        {
+            return;
+        }
+
+        _playerFrom = _player;
+        _player = target;
+        ResetExitHoldIfMoved();
+        _threadGateCooldown = ThreadGateCooldownSeconds;
+        InvalidateEnemyRoute();
+        RecomputeVisibility();
+        SyncSafeRoom();
+        Raise(GameEvent.Teleported);
+
+        CollectKeyAt(_player);
+
+        if (_config.MagneticKeys)
+        {
+            CollectAdjacentKeys();
+        }
+
+        TryOpenEcho();
+    }
+
+    /// <summary>Wakes any sleeper the player has just come within reach of.</summary>
+    private void WakeSleepers()
+    {
+        if (_config.Rule != FloorRule.Sleeper)
+        {
+            return;
+        }
+
+        var near = DistancesFrom(_maze, _player, SleeperWakeDistance);
+        var woke = false;
+
+        foreach (var hunter in _hunters)
+        {
+            if (!hunter.Dormant || !near.ContainsKey(hunter.Cell))
+            {
+                continue;
+            }
+
+            hunter.Dormant = false;
+            woke = true;
+        }
+
+        if (woke)
+        {
+            InvalidateEnemyRoute();
+        }
+    }
+
+    /// <summary>Wakes every sleeper on the floor, on a bloom pickup or a catch.</summary>
+    private void WakeAllSleepers()
+    {
+        if (_config.Rule != FloorRule.Sleeper)
+        {
+            return;
+        }
+
+        var woke = false;
+
+        foreach (var hunter in _hunters)
+        {
+            if (!hunter.Dormant)
+            {
+                continue;
+            }
+
+            hunter.Dormant = false;
+            woke = true;
+        }
+
+        if (woke)
+        {
+            InvalidateEnemyRoute();
+        }
+    }
+
+    /// <summary>Winds the long door's hold while the player stands on an unlocked arch.</summary>
+    private void AdvanceLongDoor(double deltaSeconds)
+    {
+        if (!SameCell(_player, _exit) || !IsExitUnlocked)
+        {
+            _exitHoldSeconds = 0;
+            return;
+        }
+
+        _exitHoldSeconds += deltaSeconds;
+
+        if (_exitHoldSeconds < LongDoorHoldSeconds)
+        {
+            return;
+        }
+
+        _exitHoldSeconds = LongDoorHoldSeconds;
+        _status = GameStatus.Won;
+        Raise(GameEvent.FloorCleared);
+    }
+
+    /// <summary>Takes a step of vision away every forty seconds, down to a floor of one.</summary>
+    private void AdvanceLanternLoss(double deltaSeconds)
+    {
+        var most = Math.Max(0, _config.VisionRadius - 1);
+
+        if (_lanternLoss >= most)
+        {
+            return;
+        }
+
+        _lanternLossElapsed += deltaSeconds;
+        var changed = false;
+
+        while (_lanternLossElapsed >= LanternLossIntervalSeconds && _lanternLoss < most)
+        {
+            _lanternLossElapsed -= LanternLossIntervalSeconds;
+            _lanternLoss++;
+            changed = true;
+        }
+
+        if (changed)
+        {
+            RecomputeVisibility();
+        }
+    }
+
+    /// <summary>Breaks the long door's hold when the player is no longer standing on the arch.</summary>
+    /// <remarks>
+    /// Wound by the move itself rather than by the next frame: a hold that survived the step away
+    /// would let a player accumulate it in someone else's corridor.
+    /// </remarks>
+    private void ResetExitHoldIfMoved()
+    {
+        if (!SameCell(_player, _exit))
+        {
+            _exitHoldSeconds = 0;
+        }
+    }
+
+    /// <summary>Compares two cells by position, so a wall that changed cannot make one unequal.</summary>
+    private static bool SameCell(Cell first, Cell second) =>
+        first.Row == second.Row && first.Column == second.Column;
+
+    /// <summary>
     /// Gets the settings this game was built with.
     /// </summary>
     public GameConfig Config => _config;
@@ -412,6 +783,84 @@ public sealed class GameState
     /// Gets the maze being played. Read it for walls; do not expect it to change.
     /// </summary>
     public Grid Maze => _maze;
+
+    /// <summary>
+    /// Gets this floor's secret room, or <see langword="null"/> when the floor rolled none.
+    /// </summary>
+    public SecretRoom? SafeRoom => _safeRoom;
+
+    /// <summary>
+    /// Gets the nine cells of the safe room, or nothing when the floor has none.
+    /// </summary>
+    public IReadOnlyList<Cell> SafeRoomCells => _safeRoom?.Cells ?? Array.Empty<Cell>();
+
+    /// <summary>
+    /// Gets a value indicating whether the player is standing inside the safe room.
+    /// </summary>
+    /// <remarks>
+    /// While this is true the world is paused: hunters, seals, wisps, traps and descent conditions
+    /// all hold still, and only the player's own step clock keeps running so they can walk around.
+    /// The door cell outside the room is ordinary floor and does not pause anything.
+    /// </remarks>
+    public bool IsInSafeRoom => _safeRoom is not null && _safeRoom.Contains(_player);
+
+    /// <summary>
+    /// Gets the cell the floor's Echo stands on, or <see langword="null"/> when the floor has
+    /// none.
+    /// </summary>
+    /// <remarks>
+    /// The Echo stays on its cell after it has been heard: it is a fossil in the roots, and the
+    /// walk back past it is part of the floor. <see cref="IsEchoRead"/> says whether it still has
+    /// anything to say.
+    /// </remarks>
+    public Cell? EchoCell => _echo;
+
+    /// <summary>Gets a value indicating whether the Echo has already been heard.</summary>
+    public bool IsEchoRead => _echoRead;
+
+    /// <summary>Gets a value indicating whether the Echo's card is open and the hunt is paused.</summary>
+    public bool IsEchoOpen => _echoOpen;
+
+    /// <summary>
+    /// Gets the lines the Echo speaks on this floor: two of the gardener's voice and the line that
+    /// teaches the floor's rule. Empty on a floor with no Echo.
+    /// </summary>
+    public IReadOnlyList<string> EchoLines => _echoLines;
+
+    /// <summary>
+    /// Closes the Echo's card and gives the floor back to the hunt.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when a card was open; <see langword="false"/> when nothing was being
+    /// read.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// The Echo is spent here, not when it was opened: a player who quits mid-page and comes back
+    /// loses nothing, because there is nothing to come back to. Nothing else on the floor can be
+    /// heard twice.
+    /// </para>
+    /// <para>
+    /// Hearing it restores one heart, which is what makes the detour worth taking: the gardener's
+    /// voice is warm, and the run is otherwise a slow subtraction. The heart is granted on this
+    /// press rather than on the step that opened the card, so the card can say what it will do
+    /// before it does it and a player who walks away gains nothing.
+    /// </para>
+    /// </remarks>
+    public bool CloseEcho()
+    {
+        if (!_echoOpen)
+        {
+            return false;
+        }
+
+        _echoOpen = false;
+        _echoRead = true;
+        _hearts++;
+        RecomputeVisibility();
+        Raise(GameEvent.EchoClosed);
+        return true;
+    }
 
     /// <summary>
     /// Gets the cell the player currently occupies.
@@ -448,7 +897,8 @@ public sealed class GameState
                     hunter.Cell,
                     hunter.From,
                     StepFraction(hunter.StepLeft, hunter.StepTotal),
-                    hunter.StunSeconds > 0);
+                    hunter.StunSeconds > 0,
+                    hunter.Dormant);
             }
 
             return _enemyViews;
@@ -457,6 +907,27 @@ public sealed class GameState
 
     /// <summary>Gets how many hunters are on the floor.</summary>
     public int HunterCount => _hunters.Count;
+
+    /// <summary>Gets the floor's exclusive rule, or <see langword="null"/> for none.</summary>
+    public FloorRule? Rule => _config.Rule;
+
+    /// <summary>Gets the first thread gate's cell, or <see langword="null"/> when the floor has none.</summary>
+    public Cell? ThreadGateA => _threadGateA;
+
+    /// <summary>Gets the second thread gate's cell, or <see langword="null"/> when the floor has none.</summary>
+    public Cell? ThreadGateB => _threadGateB;
+
+    /// <summary>
+    /// Gets how much of the arch's hold is left to run, from 0 to 1; zero when the long-door rule is
+    /// not in force or the player is not standing on the arch.
+    /// </summary>
+    public double ExitHoldFraction =>
+        _config.Rule != FloorRule.LongDoor
+            ? 0.0
+            : Math.Clamp(_exitHoldSeconds / LongDoorHoldSeconds, 0, 1);
+
+    /// <summary>Gets how many steps of vision the burning lantern has taken, zero when the rule is off.</summary>
+    public int LanternLoss => _lanternLoss;
 
     /// <summary>
     /// Gets the cell that wins the game once every key is collected.
@@ -596,15 +1067,83 @@ public sealed class GameState
     /// </summary>
     /// <remarks>
     /// A catch spends one heart and resets the chase; reaching zero ends the run. Hearts are
-    /// never regenerated by the floor itself, only by cards and by finishing a floor with
-    /// hearts to spare.
+    /// never regenerated by the floor itself, only by cards, rooms and an Echo; there is no
+    /// ceiling, so a run can hold more than the floor's design expected.
     /// </remarks>
     public int Hearts => _hearts;
 
     /// <summary>
-    /// Gets the most hearts this floor allows, which cards may raise later.
+    /// Gets how many heart slots this floor's HUD draws. Not a rule: hearts may exceed it, and a
+    /// heal is never clipped by it (<see cref="Hearts"/> is the count that matters).
     /// </summary>
     public int MaxHearts => _maxHearts;
+
+    /// <summary>
+    /// Gets a value indicating whether the whole floor's map is revealed right now.
+    /// </summary>
+    /// <remarks>
+    /// The Cartographer's gift: every floor cell is visible while this holds, so a renderer can
+    /// draw the map the player just bought without the torch.
+    /// </remarks>
+    public bool IsMapRevealed => _mapRevealSecondsLeft > 0;
+
+    /// <summary>
+    /// Reveals the whole floor's map for <paramref name="seconds"/>.
+    /// </summary>
+    /// <param name="seconds">How long the map stays lit. Must be finite and non-negative.</param>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="seconds"/> is negative, NaN or infinite.
+    /// </exception>
+    public void RevealMapFor(double seconds)
+    {
+        if (!(seconds >= 0) || double.IsInfinity(seconds))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(seconds),
+                seconds,
+                "A reveal must last a finite, non-negative number of seconds.");
+        }
+
+        _mapRevealSecondsLeft = Math.Max(_mapRevealSecondsLeft, seconds);
+        RecomputeVisibility();
+    }
+
+    /// <summary>
+    /// Spends one heart on the run's behalf, refusing to take the last one.
+    /// </summary>
+    /// <returns><see langword="true"/> when a heart was spent.</returns>
+    /// <remarks>
+    /// Internal because only <see cref="Campaign"/> prices anything in hearts: a safe room may never
+    /// be the thing that kills the player, so the last heart is not a currency.
+    /// </remarks>
+    internal bool TrySpendHeart()
+    {
+        if (_hearts <= 1)
+        {
+            return false;
+        }
+
+        _hearts--;
+        return true;
+    }
+
+    /// <summary>
+    /// Adds <paramref name="count"/> hearts. There is no ceiling: a run keeps every heart it
+    /// earns, so a long descent can be carrying ten by the Vault.
+    /// </summary>
+    /// <param name="count">How many hearts to add. Zero and negatives change nothing.</param>
+    /// <returns>Always zero, because nothing is ever refused. Kept so callers that recorded the
+    /// refused total keep compiling and keep reading correctly.</returns>
+    internal int AddHearts(int count)
+    {
+        if (count <= 0)
+        {
+            return 0;
+        }
+
+        _hearts += count;
+        return 0;
+    }
 
     /// <summary>
     /// Takes every event raised since the last drain, oldest first, and empties the queue.
@@ -787,7 +1326,7 @@ public sealed class GameState
     {
         get
         {
-            var radius = _config.VisionRadius;
+            var radius = _config.VisionRadius - _lanternLoss;
 
             if (_lure is not null)
             {
@@ -927,8 +1466,9 @@ public sealed class GameState
     public bool TryMove(Direction direction)
     {
         // While aiming, the directional keys move the cursor, not the player, and the game
-        // clock is frozen, so a move here would be ambiguous.
-        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None)
+        // clock is frozen, so a move here would be ambiguous. While the Echo is speaking the same
+        // is true: the player is reading, not walking.
+        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None || _echoOpen)
         {
             return false;
         }
@@ -985,6 +1525,7 @@ public sealed class GameState
 
         _playerFrom = _player;
         _player = destination;
+        ResetExitHoldIfMoved();
 
         // The step is accepted now, so the next one waits. A zero step time leaves the cooldown at
         // zero, which is exactly the instant movement the rule tests were written against.
@@ -997,6 +1538,7 @@ public sealed class GameState
 
         // What the player can see is anchored to their cell, so it moves with them.
         RecomputeVisibility();
+        SyncSafeRoom();
 
         // Collecting is idempotent: stepping on an already collected key cell changes nothing,
         // which is also why the pickup event is raised from the removal rather than the cell.
@@ -1009,22 +1551,51 @@ public sealed class GameState
             CollectAdjacentKeys();
         }
 
+        TryOpenEcho();
+
+        // The sleeper wakes on proximity, so the check belongs to the step, not to the hunt.
+        WakeSleepers();
+
         // Walking onto the lantern picks it back up; it is the only way to end the effect early.
         if (_lantern is { } lantern && _player == lantern)
         {
             ClearLantern();
         }
 
-        if (caughtBy is not null)
+        var caught = caughtBy is not null;
+
+        if (caught)
         {
-            TakeHit(caughtBy);
-            return true;
+            TakeHit(caughtBy!);
+
+            if (_status != GameStatus.InProgress)
+            {
+                return true;
+            }
         }
+
+        // A thread gate is a shortcut, so it fires after the catch: stepping onto a hunter is still
+        // a catch, never a free ride away from one.
+        TryUseThreadGate();
 
         if (_player == _exit && IsExitUnlocked)
         {
+            // The long door is not a touch: the hold is wound by AdvanceTimers while the player
+            // stands on the arch, so this returns without winning.
+            if (_config.Rule == FloorRule.LongDoor)
+            {
+                return true;
+            }
+
             _status = GameStatus.Won;
             Raise(GameEvent.FloorCleared);
+            return true;
+        }
+
+        // A catch already cost a heart and reset the chase. The Listener must not also read this
+        // as an ordinary step and give every hunter a free one for it.
+        if (caught)
+        {
             return true;
         }
 
@@ -1272,10 +1843,12 @@ public sealed class GameState
         BreakVeil();
         _playerFrom = _player;
         _player = destination;
+        ResetExitHoldIfMoved();
         _playerStepLeft = NextPlayerStepSeconds();
         _playerStepTotal = _playerStepLeft;
         InvalidateEnemyRoute();
         RecomputeVisibility();
+        SyncSafeRoom();
         Raise(GameEvent.Blink);
 
         CollectKeyAt(_player);
@@ -1284,6 +1857,11 @@ public sealed class GameState
         {
             CollectAdjacentKeys();
         }
+
+        TryOpenEcho();
+
+        // The sleeper wakes on proximity, so the check belongs to the step, not to the hunt.
+        WakeSleepers();
 
         if (_lantern is { } lantern && _player == lantern)
         {
@@ -1296,7 +1874,9 @@ public sealed class GameState
             return true;
         }
 
-        if (_player == _exit && IsExitUnlocked)
+        TryUseThreadGate();
+
+        if (_player == _exit && IsExitUnlocked && _config.Rule != FloorRule.LongDoor)
         {
             _status = GameStatus.Won;
             Raise(GameEvent.FloorCleared);
@@ -1530,6 +2110,139 @@ public sealed class GameState
         Raise(GameEvent.Veiled);
     }
 
+    /// <summary>
+    /// Opens the Echo if the player has just stepped onto it and it has not been heard yet.
+    /// </summary>
+    /// <remarks>
+    /// The Echo is walked onto, not aimed at: the powerup kit taught that anything requiring the
+    /// player to place an object and hope goes unused, and an interaction behind a keypress is one
+    /// half the players never find. Opening it freezes the whole floor, hunters included, because
+    /// a paragraph read over a closing hunter is a death the player did not choose.
+    /// </remarks>
+    private void TryOpenEcho()
+    {
+        if (_echoRead || _echo is not { } echo || !SameCell(_player, echo))
+        {
+            return;
+        }
+
+        _echoOpen = true;
+
+        // The card freezes the whole floor, including the step clock. The player is standing on
+        // the cell rather than mid-stride hidden behind a card, so the step is finished here
+        // instead of being left half-wound to surprise them when they let go.
+        _playerStepLeft = 0;
+        _bufferedDirection = null;
+
+        RecomputeVisibility();
+        Raise(GameEvent.EchoFound);
+    }
+
+    /// <summary>
+    /// Chooses the cell the Echo stands on: the furthest dead end that is not on the shortest route
+    /// between the player and the arch.
+    /// </summary>
+    /// <param name="maze">The floor's maze.</param>
+    /// <param name="available">
+    /// Every walkable cell that is not the player's, a hunter's, the arch's or a bloom's.
+    /// </param>
+    /// <param name="keyCount">How many of the front of <paramref name="available"/> are blooms.</param>
+    /// <param name="player">Where the player starts.</param>
+    /// <param name="exit">Where the arch is.</param>
+    /// <param name="gateA">The first thread gate's cell, or null on a floor without gates.</param>
+    /// <param name="gateB">The second thread gate's cell, or null on a floor without gates.</param>
+    /// <returns>The Echo's cell, or <see langword="null"/> when the floor has no room for one.</returns>
+    /// <remarks>
+    /// <para>
+    /// The rule is "off the critical path": a cell whose detour is at least two steps, so walking
+    /// onto it is always a choice. Dead ends are preferred because that is what makes the light
+    /// worth following, and among those the furthest from the start wins, so the Echo is never a
+    /// decoration next to the opening.
+    /// </para>
+    /// <para>
+    /// Distances are measured through the maze with a breadth-first walk, exactly like the
+    /// hunters' starts, so a blob or an oval floor gets a genuinely remote cell rather than one
+    /// that only looks remote. Ties go to the first cell in the shuffled order, which keeps a
+    /// seeded run reproducible.
+    /// </para>
+    /// </remarks>
+    private static Cell? ChooseEchoCell(
+        Grid maze,
+        List<Cell> available,
+        int keyCount,
+        Cell player,
+        Cell exit,
+        Cell? gateA = null,
+        Cell? gateB = null)
+    {
+        const int DeadEndBonus = 1000;
+
+        var fromPlayer = DistancesFrom(maze, player, int.MaxValue / 2);
+
+        if (!fromPlayer.TryGetValue(exit, out var shortest))
+        {
+            return null;
+        }
+
+        var toExit = DistancesFrom(maze, exit, int.MaxValue / 2);
+        Cell? best = null;
+        var bestScore = -1;
+
+        // The arch is available[0] and the blooms follow it, so the Echo is picked from the rest.
+        for (var index = 1 + keyCount; index < available.Count; index++)
+        {
+            var cell = available[index];
+
+            // A gate and an Echo on one cell would fight over what stepping onto it means: the
+            // reader would be carried across the floor mid-page. The Echo is placed last, so it
+            // is the one that gives way.
+            if ((gateA is { } first && SameCell(cell, first)) ||
+                (gateB is { } second && SameCell(cell, second)))
+            {
+                continue;
+            }
+
+            if (!fromPlayer.TryGetValue(cell, out var fromStart) ||
+                !toExit.TryGetValue(cell, out var toArch))
+            {
+                continue;
+            }
+
+            var detour = fromStart + toArch - shortest;
+
+            if (detour < 2)
+            {
+                continue;
+            }
+
+            var score = (detour * 4) + (CountOpenings(maze, cell) == 1 ? DeadEndBonus : 0) + fromStart;
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = cell;
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>Counts the passages leaving <paramref name="cell"/>.</summary>
+    private static int CountOpenings(Grid maze, Cell cell)
+    {
+        var openings = 0;
+
+        foreach (var direction in NeighbourDirections)
+        {
+            if (!maze.HasWall(cell.Row, cell.Column, direction))
+            {
+                openings++;
+            }
+        }
+
+        return openings;
+    }
+
     /// <summary>Collects the key on <paramref name="cell"/>, if there is one.</summary>
     /// <param name="cell">The cell just entered.</param>
     /// <remarks>
@@ -1544,6 +2257,17 @@ public sealed class GameState
         }
 
         Raise(GameEvent.KeyPicked);
+
+        // The burning lantern: the objective is also the light, so every bloom restores the torch.
+        if (_config.Rule == FloorRule.BurningLantern)
+        {
+            _lanternLoss = 0;
+            _lanternLossElapsed = 0;
+            RecomputeVisibility();
+        }
+
+        // A bloom taken is loud: the whole floor's sleeper hears it.
+        WakeAllSleepers();
 
         if (_config.BlinkRefundOnKey)
         {
@@ -1637,14 +2361,23 @@ public sealed class GameState
                 "Elapsed time must be a finite, non-negative number of seconds.");
         }
 
-        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None)
+        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None || _echoOpen)
         {
             return;
         }
 
-        // Seals and the wisp age in wall-clock time, so a frame long enough to be clamped below
-        // still counts fully against them.
-        AdvanceTimers(deltaSeconds);
+        if (IsInSafeRoom)
+        {
+            // The room pauses the world, not the player. Only their own clock runs, so walking
+            // around inside works and a buffered press still resolves.
+            AdvancePlayerClock(deltaSeconds);
+        }
+        else
+        {
+            // Seals and the wisp age in wall-clock time, so a frame long enough to be clamped below
+            // still counts fully against them.
+            AdvanceTimers(deltaSeconds);
+        }
 
         // A press that arrived during the last step is spent here, before the killer acts. It can
         // never chain: the buffered step starts its own cooldown, so one input is one step.
@@ -1653,6 +2386,13 @@ public sealed class GameState
         // That step may have won the floor or lost the last heart; either way the killer has no
         // business taking another step in the same frame.
         if (_status != GameStatus.InProgress)
+        {
+            return;
+        }
+
+        // The safe room's whole promise: nothing outside it moves while the player is inside. The
+        // check is repeated because the step above may just have carried them in.
+        if (IsInSafeRoom)
         {
             return;
         }
@@ -1677,7 +2417,7 @@ public sealed class GameState
 
                 foreach (var hunter in _hunters)
                 {
-                    if (hunter.StunSeconds > 0)
+                    if (hunter.Dormant || hunter.StunSeconds > 0)
                     {
                         hunter.Elapsed = 0;
                         continue;
@@ -1708,7 +2448,7 @@ public sealed class GameState
         // player stops running.
         foreach (var hunter in _hunters)
         {
-            if (hunter.StunSeconds > 0)
+            if (hunter.Dormant || hunter.StunSeconds > 0)
             {
                 hunter.Elapsed = 0;
                 continue;
@@ -1838,8 +2578,80 @@ public sealed class GameState
     /// invalidate the cached route. Only the seal leaves: the barrier itself stays on the map
     /// as a husk that is passable at <see cref="GameConfig.ObstacleCost"/>.
     /// </remarks>
+    /// <summary>
+    /// Ages the player's own clocks by <paramref name="deltaSeconds"/> and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// This is what still ticks inside a safe room, where the world is frozen but the player is
+    /// not: the step cooldown has to run or they could not walk around, and the sprint bar may
+    /// refill because standing still is exactly what recovery is.
+    /// </remarks>
+    private void AdvancePlayerClock(double deltaSeconds)
+    {
+        if (_turnPenaltyLeft > 0)
+        {
+            _turnPenaltyLeft = Math.Max(0, _turnPenaltyLeft - deltaSeconds);
+        }
+
+        if (_playerStepLeft > 0)
+        {
+            _playerStepLeft = Math.Max(0, _playerStepLeft - deltaSeconds);
+        }
+
+        UpdateSprint(deltaSeconds, stepping: false);
+    }
+
+    /// <summary>
+    /// Raises the entry and exit events exactly once when the player's cell changes sides of the
+    /// safe room's doorway.
+    /// </summary>
+    private void SyncSafeRoom()
+    {
+        var inside = IsInSafeRoom;
+
+        if (inside == _wasInSafeRoom)
+        {
+            return;
+        }
+
+        _wasInSafeRoom = inside;
+        Raise(inside ? GameEvent.SecretRoomEntered : GameEvent.SecretRoomLeft);
+    }
+
     private void AdvanceTimers(double deltaSeconds)
     {
+        if (_mapRevealSecondsLeft > 0)
+        {
+            _mapRevealSecondsLeft = Math.Max(0, _mapRevealSecondsLeft - deltaSeconds);
+
+            if (_mapRevealSecondsLeft <= 0)
+            {
+                RecomputeVisibility();
+            }
+        }
+
+        if (_threadGateCooldown > 0)
+        {
+            _threadGateCooldown = Math.Max(0, _threadGateCooldown - deltaSeconds);
+        }
+
+        // The long door is a rule of standing still, so it is wound by the world clock. Winning
+        // here ends the floor just as stepping onto the arch does on every other floor.
+        if (_config.Rule == FloorRule.LongDoor)
+        {
+            AdvanceLongDoor(deltaSeconds);
+
+            if (_status != GameStatus.InProgress)
+            {
+                return;
+            }
+        }
+
+        if (_config.Rule == FloorRule.BurningLantern)
+        {
+            AdvanceLanternLoss(deltaSeconds);
+        }
+
         if (_barrierSeals.Count > 0)
         {
             // Snapshot the keys before touching the dictionary: the values are updated in the
@@ -2177,6 +2989,11 @@ public sealed class GameState
             return;
         }
 
+        // A catch wakes every sleeper on the floor, and it breaks the arch's hold: the long door
+        // has to be a continuous stand, not five seconds accumulated across mistakes.
+        WakeAllSleepers();
+        _exitHoldSeconds = 0;
+
         // Featherfall spends a whole miss: no heart, but the hunter is still thrown back and the
         // grace window still starts, so the catch is survived rather than ignored.
         if (_config.FirstCatchFree && !_freeCatchUsed)
@@ -2248,9 +3065,36 @@ public sealed class GameState
     {
         var reachable = DistancesFrom(_maze, _player, _maze.CellCount);
 
-        return FindFurthest(reachable, avoidObjectives: true, culprit)
-            ?? FindFurthest(reachable, avoidObjectives: false, culprit)
-            ?? _player;
+        var landing = FindFurthest(reachable, avoidObjectives: true, culprit)
+            ?? FindFurthest(reachable, avoidObjectives: false, culprit);
+
+        if (landing is not null)
+        {
+            return landing.Value;
+        }
+
+        // A disconnected hand-built floor can leave every reachable cell occupied. Any ordinary
+        // floor cell is better than the player's own: a hunter parked there has a one-cell route
+        // and would never strike again, silently ending the chase for the rest of the floor.
+        for (var row = 0; row < _maze.Rows; row++)
+        {
+            for (var column = 0; column < _maze.Columns; column++)
+            {
+                if (_maze.IsSolid(row, column))
+                {
+                    continue;
+                }
+
+                var cell = _maze.GetCell(row, column);
+
+                if (cell != _player && !IsLandmarkCell(cell) && HunterAt(cell) is null)
+                {
+                    return cell;
+                }
+            }
+        }
+
+        return culprit.Cell;
     }
 
     /// <summary>
@@ -2271,6 +3115,7 @@ public sealed class GameState
         foreach (var (cell, distance) in distances)
         {
             if (cell == _player ||
+                IsLandmarkCell(cell) ||
                 (avoidObjectives && IsObjectiveCell(cell)) ||
                 (HunterAt(cell) is { } occupant && occupant != culprit))
             {
@@ -2302,7 +3147,8 @@ public sealed class GameState
     /// deliberately placed, and so a poor place to drop the killer.
     /// </summary>
     private bool IsObjectiveCell(Cell cell) =>
-        _keys.Contains(cell) || cell == _exit || cell == _lure || _barriers.Contains(cell);
+        _keys.Contains(cell) || cell == _exit || cell == _lure || _barriers.Contains(cell) ||
+        IsLandmarkCell(cell);
 
     /// <summary>Row-major ordering, used only to break respawn ties reproducibly.</summary>
     private static bool Precedes(Cell left, Cell right) =>
@@ -2415,6 +3261,32 @@ public sealed class GameState
         _visible.Clear();
         _enemyGlow.Clear();
 
+        // A bought map lights every cell of the floor, walls and all: the point of paying for it is
+        // to see the route the torch would have hidden.
+        if (IsMapRevealed)
+        {
+            for (var row = 0; row < _maze.Rows; row++)
+            {
+                for (var column = 0; column < _maze.Columns; column++)
+                {
+                    if (!_maze.IsSolid(row, column))
+                    {
+                        _visible.Add(_maze.GetCell(row, column));
+                    }
+                }
+            }
+        }
+
+        // Inside the room every one of its nine cells is lit: resting there must read as a safe
+        // island, not as a dark box with a card in it.
+        if (IsInSafeRoom && _safeRoom is not null)
+        {
+            foreach (var cell in _safeRoom.Cells)
+            {
+                _visible.Add(cell);
+            }
+        }
+
         // A burning wisp, an Eclipse or a veil can shrink the torch, so read the radius in force
         // rather than the floor's own number. The light comes from the lantern when it is thrown.
         var visionRadius = EffectiveVisionRadius;
@@ -2452,12 +3324,32 @@ public sealed class GameState
             }
         }
 
+        // The Echo makes its own light, one ring wider than the torch, once the player is close
+        // enough to be drawn to it. It is not a map reveal: the pool only shows in the corridor
+        // the player is already walking.
+        if (_echo is { } echo && !_echoRead &&
+            DistancesFrom(_maze, _player, visionRadius + EchoGlowRadius).ContainsKey(echo))
+        {
+            foreach (var cell in DistancesFrom(_maze, echo, EchoGlowRadius).Keys)
+            {
+                _visible.Add(cell);
+            }
+        }
+
         // A hunter further away than its aura is invisible, and so is the light it carries. Each
         // hunter is asked separately, so one that has just been thrown into the dark does not dim
         // the one standing three cells behind you.
         for (var index = 0; index < _hunters.Count; index++)
         {
             var hunter = _hunters[index];
+
+            // A sleeper carries no light until it wakes: that is the whole tell that one of them is
+            // dormant, and it is what makes a stalking floor readable before it is dangerous.
+            if (hunter.Dormant)
+            {
+                continue;
+            }
+
             var alwaysVisible = HasCondition(DescentCondition.Hunted) && index == 0;
 
             if (!alwaysVisible &&
@@ -2687,6 +3579,7 @@ public sealed class GameState
                     _keys.Contains(cell) ||
                     cell == _exit ||
                     HunterAt(cell) is not null ||
+                    IsLandmarkCell(cell) ||
                     (_lantern is { } lantern && cell == lantern))
                 {
                     continue;
@@ -2709,8 +3602,24 @@ public sealed class GameState
     }
 
     /// <summary>
+    /// Returns whether <paramref name="cell"/> holds something a floor rule must not delete or
+    /// cut off: an unread Echo, the safe room (or its door) and a thread gate.
+    /// </summary>
+    /// <remarks>
+    /// Regrowth and Fracture are allowed to reshape empty corridors, but the Echo is the floor's
+    /// story and one of its heals, the room is a whole interaction, and a gate is the floor's rule.
+    /// Losing any of them to a timer is a bug the player cannot see the cause of. An Echo that has
+    /// already been heard is a memorial, not a pickup, so it is no longer protected.
+    /// </remarks>
+    private bool IsLandmarkCell(Cell cell) =>
+        (_echo is { } echo && !_echoRead && cell == echo) ||
+        (_safeRoom is { } room && (room.Contains(cell) || cell == room.Door)) ||
+        (_threadGateA is { } first && cell == first) ||
+        (_threadGateB is { } second && cell == second);
+
+    /// <summary>
     /// Opens one wall and closes another, skipping any close that would disconnect the exit, a
-    /// key or a hunter from the player.
+    /// key, a hunter, an unread Echo, the safe room's door or a thread gate from the player.
     /// </summary>
     /// <remarks>
     /// The opening is always safe: removing a wall can only add routes. The close is tried on
@@ -2868,6 +3777,26 @@ public sealed class GameState
             }
         }
 
+        // A close may cut off an empty branch, but not one that holds the floor's story, its one
+        // safe room or its gate. Those are the landmarks a player walks back for.
+        if (_echo is { } echo && !_echoRead && !reachable.ContainsKey(echo))
+        {
+            return false;
+        }
+
+        // The door itself can survive while the room behind it is cut off, so the check is on a
+        // room cell: all nine are open to each other, and the centre is the clearest witness.
+        if (_safeRoom is { } room && !reachable.ContainsKey(room.Center))
+        {
+            return false;
+        }
+
+        if ((_threadGateA is { } gateA && !reachable.ContainsKey(gateA)) ||
+            (_threadGateB is { } gateB && !reachable.ContainsKey(gateB)))
+        {
+            return false;
+        }
+
         return true;
     }
 
@@ -2888,6 +3817,9 @@ public sealed class GameState
                 _keys.Contains(cell) ||
                 cell == _exit ||
                 HunterAt(cell) is not null ||
+                IsLandmarkCell(cell) ||
+                _barriers.Contains(cell) ||
+                cell == _lure ||
                 (_lantern is { } lantern && cell == lantern))
             {
                 continue;
@@ -3006,6 +3938,12 @@ public sealed class GameState
 
         /// <summary>Gets or sets the seconds of stun left, during which it neither moves nor banks.</summary>
         public double StunSeconds { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether this hunter is asleep: it neither moves, banks a
+        /// step nor carries light until something wakes it.
+        /// </summary>
+        public bool Dormant { get; set; }
 
         /// <summary>Gets or sets the cached route to its chosen target.</summary>
         public IReadOnlyList<Cell>? Route { get; set; }

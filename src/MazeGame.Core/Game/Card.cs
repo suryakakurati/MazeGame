@@ -18,6 +18,16 @@ namespace MazeGame.Core.Game;
 /// </remarks>
 public sealed record Card
 {
+    /// <summary>Gets the fewest copies a card may allow: one, which is to say none.</summary>
+    public const int MinCopies = 1;
+
+    /// <summary>Gets the most copies a card may allow.</summary>
+    /// <remarks>
+    /// Three is the cap because past it a single card's numbers stop being a trade and become a
+    /// second game: three Light Feet is a build, five is a different floor speed entirely.
+    /// </remarks>
+    public const int MaxCopiesAllowed = 3;
+
     /// <summary>Gets the stable id used by saves, the catalog and incompatibility marks.</summary>
     public required string Id { get; init; }
 
@@ -37,10 +47,18 @@ public sealed record Card
     public required CardEffect Effect { get; init; }
 
     /// <summary>
-    /// Gets a value indicating whether the player may hold more than one copy. Nothing in the
-    /// shipped catalog stacks; the flag exists so the draft rule has a data-driven exception.
+    /// Gets how many copies of this card one run may hold, from one to three.
     /// </summary>
-    public bool IsStackable { get; init; }
+    /// <remarks>
+    /// One means a card is offered at most once. Two or three make a repeat pick a
+    /// specialisation rather than a mistake, and they are the reason the draft still has three
+    /// eligible cards on the last floor of a run: a twenty-three card catalog with single copies
+    /// runs dry long before the nineteenth draft.
+    /// </remarks>
+    public int MaxCopies { get; init; } = 1;
+
+    /// <summary>Gets a value indicating whether the player may hold more than one copy.</summary>
+    public bool IsStackable => MaxCopies > 1;
 
     /// <summary>
     /// Gets the id of a card this one cannot be held with, or <see langword="null"/>.
@@ -91,6 +109,13 @@ public sealed record Card
         if (Effect is null)
         {
             throw new ArgumentException("A card needs an effect.", nameof(Effect));
+        }
+
+        if (MaxCopies is < MinCopies or > MaxCopiesAllowed)
+        {
+            throw new ArgumentException(
+                $"A card may stack between {MinCopies} and {MaxCopiesAllowed} copies.",
+                nameof(MaxCopies));
         }
 
         if (string.Equals(IncompatibleWith, Id, StringComparison.Ordinal))

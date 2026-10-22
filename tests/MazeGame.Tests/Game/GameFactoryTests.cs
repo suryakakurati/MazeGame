@@ -216,12 +216,16 @@ public sealed class GameFactoryTests
     }
 
     [Fact]
-    public void CreateFloor_WithMoreHeartsThanTheFloorAllows_Throws()
+    public void CreateFloor_WithMoreHeartsThanTheFloorWasDesignedFor_KeepsThem()
     {
+        // A run has no heart ceiling: a healed run carries every heart it earned, so the floor's
+        // own design number is a slot count rather than a limit.
         var floor = FloorCatalog.ByNumber(1);
 
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => Factory().CreateFloor(floor, startingHearts: floor.MaxHearts + 1, RunModifiers.None));
+        var state = Factory().CreateFloor(floor, startingHearts: floor.MaxHearts + 2, RunModifiers.None);
+
+        Assert.Equal(floor.MaxHearts + 2, state.Hearts);
+        Assert.Equal(floor.MaxHearts + 2, state.MaxHearts);
     }
 
     [Fact]

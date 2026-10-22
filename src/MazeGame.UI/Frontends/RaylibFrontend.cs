@@ -166,14 +166,34 @@ internal static class RaylibFrontend
                     campaign!.Floor.SetSprinting(
                         Held(KeyboardKey.LeftShift) || Held(KeyboardKey.RightShift));
 
-                    if (TryReadCommand(campaign.Floor, walk, Raylib.GetTime(), out var command) &&
-                        !GameCommands.Apply(campaign.Floor, command))
+                    if (TryReadCommand(campaign.Floor, walk, Raylib.GetTime(), out var command))
                     {
-                        return campaign;
+                        if (command == GameCommand.Interact)
+                        {
+                            // The room is the run's, not the floor's: the card is opened here and
+                            // the floor keeps ticking (which the safe room pauses anyway).
+                            if (campaign.CanOpenRoom)
+                            {
+                                campaign.OpenRoom();
+                                screen = Screen.Room;
+                                selected = 0;
+                            }
+                        }
+                        else if (!GameCommands.Apply(campaign.Floor, command))
+                        {
+                            return campaign;
+                        }
                     }
 
                     // Measured frame time: the killer's pace must not depend on the frame rate.
                     campaign.Floor.Tick(Raylib.GetFrameTime());
+
+                    // The Echo's card owns the screen while the floor is frozen: the hunt does not
+                    // resume until the player has read the gardener's last line.
+                    if (campaign.Floor.IsEchoOpen)
+                    {
+                        screen = Screen.Echo;
+                    }
 
                     // The floor's events are the only thing the sound layer listens to: it never
                     // diffs two frames to guess that a key was lifted.
@@ -206,6 +226,26 @@ internal static class RaylibFrontend
                     else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
                     {
                         return campaign;
+                    }
+
+                    break;
+
+                case Screen.Echo:
+                    if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) ||
+                        Pressed(KeyboardKey.Space) || Pressed(KeyboardKey.Escape))
+                    {
+                        // Let go: the floor comes back to life exactly as it was left.
+                        campaign!.Floor.CloseEcho();
+                        screen = Screen.Play;
+                    }
+
+                    break;
+
+                case Screen.Room:
+                    if (ReadRoomChoice(campaign!, ref selected, renderer, pixels, audio))
+                    {
+                        screen = Screen.Play;
+                        selected = 0;
                     }
 
                     break;
@@ -278,6 +318,15 @@ internal static class RaylibFrontend
                     break;
             }
 
+            // A screen must never outlive the model it draws. This is a last guard, not the fix
+            // for any one transition: if a card closes without the screen being moved, fall back
+            // to play rather than throwing out of the draw call and killing the window.
+            if (screen == Screen.Room && campaign?.Room is null)
+            {
+                screen = Screen.Play;
+                selected = 0;
+            }
+
             DrawFrame(screen, selected, campaign, renderer, pixels);
         }
 
@@ -342,6 +391,14 @@ internal static class RaylibFrontend
                         campaign.ActiveConditions);
                     break;
 
+                case Screen.Room:
+                    PixelCards.Room(
+                        pixels.Font,
+                        campaign,
+                        selected,
+                        RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId));
+                    break;
+
                 case Screen.ConditionDraft:
                     PixelCards.ConditionPick(
                         pixels.Font,
@@ -355,6 +412,17 @@ internal static class RaylibFrontend
                         pixels.Font,
                         campaign.CurrentFloor,
                         campaign.Hearts,
+                        RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId),
+                        campaign.CurrentPage,
+                        campaign.CurrentMoodLine,
+                        campaign.GardenCount);
+                    break;
+
+                case Screen.Echo:
+                    PixelCards.Echo(
+                        pixels.Font,
+                        campaign.CurrentPage.Title,
+                        campaign.Floor.EchoLines,
                         RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId));
                     break;
 
@@ -372,7 +440,8 @@ internal static class RaylibFrontend
                         campaign.FloorCount,
                         campaign.Hearts,
                         RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId),
-                        campaign.CurrentFloor.ThemeId);
+                        campaign.CurrentFloor.ThemeId,
+                        campaign.GardenCount);
                     break;
 
                 case Screen.RunLost:
@@ -414,6 +483,14 @@ internal static class RaylibFrontend
         if (ReadDirection(state, walk, now) is { } direction)
         {
             command = direction;
+            return true;
+        }
+
+        // E is the room's key. It is read even outside a room so the press does nothing visible
+        // rather than falling through to a powerup.
+        if (Pressed(KeyboardKey.E))
+        {
+            command = GameCommand.Interact;
             return true;
         }
 
@@ -615,6 +692,107 @@ internal static class RaylibFrontend
     }
 
     /// <summary>
+    /// Reads one safe-room command for this frame.
+    /// </summary>
+    /// <param name="campaign">The run, whose open room card is being read.</param>
+    /// <param name="selected">The highlighted option, moved in place.</param>
+    /// <param name="renderer">The vector renderer, reset when a Turn rebuilds the floor.</param>
+    /// <param name="pixels">The pixel renderer, reset with it.</param>
+    /// <param name="audio">The music director, retuned when a Turn changes the floor.</param>
+    /// <returns><see langword="true"/> when the card was closed and play should resume.</returns>
+    /// <remarks>
+    /// A resolved card shows what the choice did and waits for one more press, so the player always
+    /// reads the outcome. A Turn is the one option that changes the floor under the card: the
+    /// renderers are reset and the intro card is skipped, because the run is already in play and
+    /// the room it lands in is the same session.
+    /// </remarks>
+    private static bool ReadRoomChoice(
+        Campaign campaign,
+        ref int selected,
+        RaylibRenderer renderer,
+        PixelRenderer pixels,
+        AudioDirector? audio)
+    {
+        var room = campaign.Room;
+
+        if (room is null)
+        {
+            return true;
+        }
+
+        if (room.IsResolved)
+        {
+            if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) ||
+                Pressed(KeyboardKey.Space) || Pressed(KeyboardKey.E) ||
+                Pressed(KeyboardKey.Escape))
+            {
+                campaign.CloseRoom();
+                return true;
+            }
+
+            return false;
+        }
+
+        var options = room.Options;
+
+        if (Pressed(KeyboardKey.A) || Pressed(KeyboardKey.Left) ||
+            Pressed(KeyboardKey.W) || Pressed(KeyboardKey.Up))
+        {
+            selected = (selected + options.Count - 1) % options.Count;
+        }
+        else if (Pressed(KeyboardKey.D) || Pressed(KeyboardKey.Right) ||
+                 Pressed(KeyboardKey.S) || Pressed(KeyboardKey.Down))
+        {
+            selected = (selected + 1) % options.Count;
+        }
+
+        if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) || Pressed(KeyboardKey.Space))
+        {
+            var floorBefore = campaign.FloorNumber;
+
+            campaign.ResolveRoom(options[Math.Clamp(selected, 0, options.Count - 1)]);
+
+            if (campaign.FloorNumber != floorBefore)
+            {
+                // The Turn rebuilt the run on an earlier floor: draw it from scratch, and hand
+                // the new floor's place to the music and the window title as well. Only the
+                // picture used to change, so a rewind kept the theme it had just left.
+                renderer.Reset();
+                pixels.Reset();
+                pixels.SetFloor(campaign.CurrentFloor, campaign.ActiveConditions);
+                pixels.SetTheme(campaign.CurrentFloor.ThemeId);
+                audio?.PlayFloor(
+                    campaign.CurrentFloor.ThemeId,
+                    campaign.FloorNumber,
+                    campaign.RunSeed);
+                Raylib.SetWindowTitle(
+                    $"{RaylibLayout.Title} — Floor {campaign.FloorNumber}/{campaign.FloorCount}");
+                selected = 0;
+            }
+
+            // Leaving, and the Turn rebuilding the run, both clear the campaign's card. Staying on
+            // the room screen with no card asks the renderer to draw one that does not exist, so
+            // hand the floor back immediately. A normal purchase keeps the resolved card on
+            // screen to show its outcome.
+            if (campaign.Room is null)
+            {
+                selected = 0;
+                return true;
+            }
+
+            return false;
+        }
+
+        if (Pressed(KeyboardKey.Escape) || Pressed(KeyboardKey.E))
+        {
+            campaign.CloseRoom();
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Reads one draft command for this frame: move the highlight, take a card, or skip.
     /// </summary>
     /// <param name="campaign">The run, whose open draft is being chosen from.</param>
@@ -748,6 +926,12 @@ internal static class RaylibFrontend
 
         /// <summary>The choice of a descent condition at a gate.</summary>
         ConditionDraft,
+
+        /// <summary>An open safe-room card, drawn over the paused floor.</summary>
+        Room,
+
+        /// <summary>The Echo's card: the gardener's voice, read over a frozen floor.</summary>
+        Echo,
 
         /// <summary>The run summary after the final floor.</summary>
         RunComplete,

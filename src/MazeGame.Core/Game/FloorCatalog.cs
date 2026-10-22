@@ -235,6 +235,10 @@ public static class FloorCatalog
             PlayerStepSeconds = PlayerCadenceSeconds,
             HunterCount = 2,
             RespawnDistance = 3,
+
+            // One of the two is asleep. It wakes on proximity, on a bloom, or on a catch, so
+            // crossing the floor quietly is a route rather than a button.
+            Rule = FloorRule.Sleeper,
         },
         new()
         {
@@ -292,6 +296,10 @@ public static class FloorCatalog
             PlayerStepSeconds = PlayerCadenceSeconds,
             HunterCount = 3,
             VisionRadius = 5,
+
+            // Two linked pads: the Loom's threads carry you across, with a two-second cooldown so
+            // holding a direction cannot ping-pong between them.
+            Rule = FloorRule.ThreadGates,
         },
         new()
         {
@@ -307,6 +315,10 @@ public static class FloorCatalog
             PlayerStepSeconds = PlayerCadenceSeconds,
             HunterCount = 3,
             InvulnerabilitySeconds = 0.5,
+
+            // The Ash Garden's light burns down: one step of vision every forty seconds, restored
+            // by every bloom. The objective is the light.
+            Rule = FloorRule.BurningLantern,
         },
         new()
         {
@@ -322,6 +334,10 @@ public static class FloorCatalog
             Columns = 25,
             VisionRadius = 4,
             Shape = ShapeKind.Blob,
+
+            // The climax is a hold under pressure rather than a last sprint: the arch takes five
+            // continuous seconds of standing.
+            Rule = FloorRule.LongDoor,
         },
     ];
 

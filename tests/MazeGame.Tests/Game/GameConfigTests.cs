@@ -164,11 +164,26 @@ public sealed class GameConfigTests
     }
 
     [Fact]
-    public void Validate_WithTheHeartCeilingBelowTheStartingHearts_Throws()
+    public void Validate_AllowsARunHoldingMoreHeartsThanTheFloorsSlots()
     {
+        // Hearts are uncapped: MaxHearts is the number of slots the floor's HUD draws, not a rule
+        // that can be violated by a healed run arriving with more.
         var config = new GameConfig { StartingHearts = 4, MaxHearts = 3 };
 
-        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
+        config.Validate();
+    }
+
+    [Fact]
+    public void ForFloor_KeepsEveryCarriedHeart()
+    {
+        // The floor's own slot count is design, not a cap: ForFloor passes the carried hearts
+        // through, and the run's cards widen the slots later in the factory.
+        var floor = new FloorDefinition { Number = 1, Name = "Test", ThemeId = "test" };
+
+        var config = new GameConfig().ForFloor(floor, startingHearts: 6);
+
+        Assert.Equal(6, config.StartingHearts);
+        Assert.Equal(floor.MaxHearts, config.MaxHearts);
     }
 
     [Theory]

@@ -218,6 +218,87 @@ public sealed class GameStateTests
     }
 
     [Fact]
+    public void SteppingOntoTheOpenExitWithAHunterOnIt_StillClearsTheFloor()
+    {
+        // A catch ends the step early. If the step was onto the unlocked arch, ending it there
+        // would leave the player standing on an open exit that never wins — a soft lock with no
+        // feedback except that nothing happens. The arch has to be checked after the hit too.
+        var grid = new Grid(2, 2);
+        grid.RemoveWall(0, 0, Direction.East);
+        grid.RemoveWall(0, 0, Direction.South);
+        grid.RemoveWall(0, 1, Direction.South);
+
+        var state = TestLevels.GameOver(
+            grid,
+            new GameConfig
+            {
+                Rows = 2,
+                Columns = 2,
+                KeyCount = 1,
+                HunterCount = 1,
+                EnemyStepSeconds = 1.0,
+                PlayerStepSeconds = 0.1,
+                StartingHearts = 3,
+                MaxHearts = 3,
+                Seed = null,
+            });
+
+        // Player (0,0), arch (0,1), bloom (1,0), hunter (1,1), with the hunter's only way out
+        // running through the arch.
+        Assert.Equal(state.Maze.GetCell(0, 0), state.Player);
+        Assert.Equal(state.Maze.GetCell(0, 1), state.Exit);
+        Assert.Equal(state.Maze.GetCell(1, 0), Assert.Single(state.Keys));
+
+        Assert.True(state.TryMove(Direction.South));
+        state.Tick(0.1);
+
+        // The hunter steps onto the arch, which is now one cell away from the player.
+        state.Tick(0.9);
+        Assert.Equal(state.Exit, state.Enemy);
+
+        Assert.True(state.TryMove(Direction.North));
+        state.Tick(0.1);
+
+        // Walking into the hunter is still a catch, but the player is left holding the arch.
+        Assert.True(state.TryMove(Direction.East));
+
+        Assert.Equal(GameStatus.Won, state.Status);
+        Assert.Equal(2, state.Hearts);
+    }
+
+    [Fact]
+    public void AKey_IsStillCollectible_AfterAWallAtItsCellMoves()
+    {
+        // A floor can open or close a wall on the key's own cell (Fracture and Regrowth both do).
+        // The key is stored as a Cell, so it has to keep matching the maze's cell at that position
+        // or it would sit on the floor and never be picked up.
+        var state = TestLevels.TwoRouteGame();
+        var key = Assert.Single(state.Keys);
+
+        state.Maze.RemoveWall(key.Row, key.Column, Direction.South);
+
+        Assert.True(state.TryMove(Direction.East));
+        Assert.True(state.TryMove(Direction.East));
+
+        Assert.Equal(key.Row, state.Player.Row);
+        Assert.Equal(key.Column, state.Player.Column);
+        Assert.Equal(1, state.KeysCollected);
+    }
+
+    [Fact]
+    public void ThePlayer_StaysVisible_AfterAWallAtTheirCellMoves()
+    {
+        var state = TestLevels.TwoRouteGame();
+        var player = state.Player;
+
+        state.Maze.AddWall(player.Row, player.Column, Direction.South);
+
+        Assert.True(state.IsVisible(state.Player));
+        Assert.Equal(player.Row, state.Player.Row);
+        Assert.Equal(player.Column, state.Player.Column);
+    }
+
+    [Fact]
     public void TryMove_OverACollectedKey_DoesNotCountItTwice()
     {
         var state = TestLevels.CorridorGame();

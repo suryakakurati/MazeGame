@@ -210,6 +210,31 @@ internal sealed class AudioDirector : IDisposable
                     _engine.Play(SfxId.KeyPicked, 0.75f);
                     break;
 
+                // The Echo is a voice, not a pickup: the card-take bell, dropped a fifth and
+                // quiet, so it sounds like something being read rather than collected.
+                case GameEvent.EchoFound:
+                    _engine.Play(SfxId.CardTake, 0.5f, 0.82f);
+                    Duck(0.9);
+                    break;
+
+                case GameEvent.EchoClosed:
+                    _engine.Play(SfxId.CardHover, 0.4f, 0.9f);
+                    break;
+
+                // A safe room is a door closing on the hunt: one warm, low bell in, and a softer
+                // one on the way back out so the player hears the world start again.
+                case GameEvent.SecretRoomEntered:
+                    _engine.Play(SfxId.KeyPicked, 0.45f, 0.68f);
+                    break;
+
+                case GameEvent.SecretRoomLeft:
+                    _engine.Play(SfxId.NearMiss, 0.32f, 0.8f);
+                    break;
+
+                case GameEvent.Teleported:
+                    _engine.Play(SfxId.NearMiss, 0.7f, 1.18f, 0.2f);
+                    break;
+
                 case GameEvent.HeartLost:
                     _engine.Play(SfxId.Damage);
                     Duck(1.4);

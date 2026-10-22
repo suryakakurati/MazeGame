@@ -56,6 +56,9 @@ public enum GameEvent
     /// <summary>The player stepped through a wall, leaving a breach.</summary>
     Blink,
 
+    /// <summary>A thread gate carried the player across the floor.</summary>
+    Teleported,
+
     /// <summary>A veil completed and the player is now unseen.</summary>
     Veiled,
 
@@ -88,6 +91,18 @@ public enum GameEvent
 
     /// <summary>The lit half of an Eclipse returned.</summary>
     EclipseLifted,
+
+    /// <summary>The player stepped into a safe room, and the world outside it stopped.</summary>
+    SecretRoomEntered,
+
+    /// <summary>The player stepped back out of a safe room, and the hunt resumed.</summary>
+    SecretRoomLeft,
+
+    /// <summary>The player stepped onto the Echo, and the floor stopped for the gardener's voice.</summary>
+    EchoFound,
+
+    /// <summary>The Echo's card was closed and the hunt resumed.</summary>
+    EchoClosed,
 
     /// <summary>The player reached the unlocked exit: this floor is cleared.</summary>
     FloorCleared,

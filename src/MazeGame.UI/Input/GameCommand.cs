@@ -49,6 +49,15 @@ public enum GameCommand
     /// <summary>Shove the hunter in front of the player.</summary>
     Shove,
 
+    /// <summary>
+    /// Open the safe room's card, when the player is standing in one.
+    /// </summary>
+    /// <remarks>
+    /// The floor itself has nothing to do with this command: rooms belong to the campaign, which is
+    /// why <see cref="GameCommands"/> leaves it alone and the frontends hand it to the run.
+    /// </remarks>
+    Interact,
+
     /// <summary>Leave the game.</summary>
     Quit,
 }

@@ -297,6 +297,34 @@ public sealed class Grid
     }
 
     /// <summary>
+    /// Turns a solid cell back into fully walled floor. Called by <see cref="SecretRoomCarver"/>
+    /// after generation, and by nobody else.
+    /// </summary>
+    /// <param name="row">Zero-based row index.</param>
+    /// <param name="column">Zero-based column index.</param>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when the position lies outside the grid.
+    /// </exception>
+    /// <remarks>
+    /// Only rock is carved: a cell that is already floor is left exactly as it is. That is the one
+    /// guarantee the rest of the maze depends on — carving is how a room is cut out of stone, never
+    /// how a passage is deleted — and a fresh cell's four walls are what stop the carve opening an
+    /// edge that <see cref="RemoveWall"/> would then be spent on by accident.
+    /// </remarks>
+    internal void CarveCell(int row, int column)
+    {
+        ValidatePosition(row, column);
+
+        if (!_solid[row, column])
+        {
+            return;
+        }
+
+        _solid[row, column] = false;
+        _cells[row, column] = new Cell(row, column);
+    }
+
+    /// <summary>
     /// Counts the passages in the grid, that is the walls that have been removed between
     /// two neighbours. A perfect maze of N cells has exactly N - 1 passages.
     /// </summary>

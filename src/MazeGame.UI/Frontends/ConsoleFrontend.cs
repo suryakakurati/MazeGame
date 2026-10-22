@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using MazeGame.Core.Game;
@@ -57,7 +58,8 @@ internal static class ConsoleFrontend
             if (campaign.Status == CampaignStatus.Won)
             {
                 Console.WriteLine(
-                    $"You escaped the depths: {campaign.FloorCount} floors, {campaign.Hearts} heart(s) left.");
+                    $"You escaped the depths: {campaign.FloorCount} floors, {campaign.Hearts} heart(s) " +
+                    $"left, {campaign.GardenCount} bloom(s) in the garden.");
             }
             else
             {
@@ -93,7 +95,7 @@ internal static class ConsoleFrontend
 
             PauseForDescent();
 
-            Play(campaign.Floor);
+            Play(campaign);
 
             if (campaign.Floor.Status == GameStatus.InProgress)
             {
@@ -105,8 +107,11 @@ internal static class ConsoleFrontend
                 return false;
             }
 
-            // The floor is cleared: either the run continues or this was the last one.
+            // The floor is cleared: either the run continues or this was the last one. The page
+            // is read here, on the same beat the window puts it on the cleared card.
             var cleared = campaign.FloorNumber;
+
+            PrintPage(campaign);
 
             if (campaign.Draft is not null)
             {
@@ -128,6 +133,134 @@ internal static class ConsoleFrontend
             Console.WriteLine(
                 $"Floor {cleared} cleared — carrying {campaign.Hearts} heart(s) to floor " +
                 $"{campaign.FloorNumber}.");
+        }
+    }
+
+    /// <summary>
+    /// Reads the Echo aloud: the gardener's lines, then a keypress to let the floor go.
+    /// </summary>
+    /// <param name="campaign">The run whose floor holds the Echo.</param>
+    /// <remarks>
+    /// The last line always teaches the floor's rule, which is why the Echo is also the tutorial:
+    /// story and instruction never compete for the player's attention.
+    /// </remarks>
+    private static void ReadEcho(Campaign campaign)
+    {
+        var floor = campaign.Floor;
+
+        Console.WriteLine();
+        Console.WriteLine(new string('=', 64));
+        Console.WriteLine($"  THE ECHO — {campaign.CurrentPage.Title}");
+        Console.WriteLine(new string('-', 64));
+
+        foreach (var line in floor.EchoLines)
+        {
+            foreach (var row in Wrap(line, 58))
+            {
+                Console.WriteLine($"    {row}");
+            }
+
+            Console.WriteLine();
+        }
+
+        Console.WriteLine("  IT WARMS YOU: ONE HEART");
+        Console.WriteLine(new string('=', 64));
+
+        if (!Console.IsInputRedirected)
+        {
+            Console.WriteLine("  press any key to let go...");
+            Console.ReadKey(intercept: true);
+        }
+
+        floor.CloseEcho();
+    }
+
+    /// <summary>
+    /// Prints the page of the gardener's book that the cleared floor turned, in a box that owns the
+    /// screen the way the window's page does, and waits to be read.
+    /// </summary>
+    /// <param name="campaign">The run that just cleared a floor.</param>
+    /// <remarks>
+    /// A terminal cannot grow its type, so the page is made big the only way it can be: a full-width
+    /// frame, air around the prose, and a keypress before the draft replaces it. Before this the
+    /// page and the draft printed back to back, so in an interactive run the story scrolled past
+    /// before it could be read.
+    /// </remarks>
+    private static void PrintPage(Campaign campaign)
+    {
+        var page = campaign.CurrentPage;
+        const int Width = 64;
+        var rule = new string('=', Width);
+        var thin = new string('-', Width);
+
+        Console.WriteLine();
+        Console.WriteLine(rule);
+        Console.WriteLine($"  PAGE {page.FloorNumber} — {page.Title}");
+        Console.WriteLine($"  FLOOR {campaign.FloorNumber} CLEARED");
+        Console.WriteLine(thin);
+        Console.WriteLine();
+
+        foreach (var line in page.Lines)
+        {
+            foreach (var row in Wrap(line, Width - 6))
+            {
+                Console.WriteLine($"    {row}");
+            }
+
+            Console.WriteLine();
+        }
+
+        if (campaign.CurrentMoodLine is { } mood)
+        {
+            foreach (var row in Wrap(mood, Width - 6))
+            {
+                Console.WriteLine($"    {row}");
+            }
+
+            Console.WriteLine();
+        }
+
+        Console.WriteLine(thin);
+        Console.WriteLine(
+            $"  garden: {campaign.GardenCount} bloom(s)    hearts: {campaign.Hearts}");
+        Console.WriteLine(rule);
+
+        if (!Console.IsInputRedirected)
+        {
+            Console.WriteLine("  press any key to turn the page...");
+            Console.ReadKey(intercept: true);
+        }
+    }
+
+    /// <summary>Splits <paramref name="text"/> into lines that fit <paramref name="width"/> columns.</summary>
+    /// <param name="text">The text to wrap.</param>
+    /// <param name="width">The widest a line may be.</param>
+    /// <returns>The lines, in order.</returns>
+    private static IEnumerable<string> Wrap(string text, int width)
+    {
+        var line = string.Empty;
+
+        foreach (var word in text.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var candidate = line.Length == 0 ? word : $"{line} {word}";
+
+            if (candidate.Length <= width)
+            {
+                line = candidate;
+                continue;
+            }
+
+            if (line.Length > 0)
+            {
+                yield return line;
+            }
+
+            line = word;
+        }
+
+        if (line.Length > 0)
+        {
+            yield return line;
         }
     }
 
@@ -195,6 +328,90 @@ internal static class ConsoleFrontend
     }
 
     /// <summary>
+    /// Shows the safe room's card as text and applies the option the player picks.
+    /// </summary>
+    /// <param name="campaign">The run whose room is open.</param>
+    /// <remarks>
+    /// The console has no pointer and no layout, so the card is a numbered list with its price on
+    /// its own line. A piped run cannot choose, so it closes the card and walks on: taking a stake
+    /// on the player's behalf would be spending their hearts for them.
+    /// </remarks>
+    private static void PromptForRoom(Campaign campaign)
+    {
+        if (!campaign.OpenRoom())
+        {
+            return;
+        }
+
+        var room = campaign.Room!;
+
+        PrintRoom(room);
+
+        if (Console.IsInputRedirected)
+        {
+            campaign.CloseRoom();
+            return;
+        }
+
+        while (!room.IsResolved)
+        {
+            var key = Console.ReadKey(intercept: true).Key;
+
+            if (key is ConsoleKey.Q or ConsoleKey.Escape)
+            {
+                campaign.CloseRoom();
+                return;
+            }
+
+            var index = key - ConsoleKey.D1;
+
+            if (index >= 0 && index < room.Options.Count &&
+                campaign.ResolveRoom(room.Options[index]))
+            {
+                // Leaving clears the campaign's card without resolving the detached offer, so
+                // waiting on IsResolved would read keys forever. Both outcomes end the visit.
+                if (room.IsResolved)
+                {
+                    PrintRoom(room);
+                }
+                else
+                {
+                    Console.WriteLine("  you step away.");
+                }
+
+                break;
+            }
+        }
+
+        Console.WriteLine("  press any key to walk on...");
+        Console.ReadKey(intercept: true);
+        campaign.CloseRoom();
+    }
+
+    /// <summary>Prints one room card, or its outcome once it is resolved.</summary>
+    private static void PrintRoom(RoomOffer room)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"SAFE ROOM — {room.Name.ToUpperInvariant()}");
+        Console.WriteLine($"  {room.Prompt}");
+
+        if (room.IsResolved)
+        {
+            Console.WriteLine($"  {room.Outcome}");
+            return;
+        }
+
+        Console.WriteLine($"  price: {room.Price}");
+
+        for (var index = 0; index < room.Options.Count; index++)
+        {
+            var option = room.Options[index];
+            var note = option.Note is { } text ? $" ({text})" : string.Empty;
+            Console.WriteLine($"  [{index + 1}] {option.Label}{note}");
+        }
+    }
+
+    /// <summary>
     /// Waits for a key before a floor starts, unless the input is a pipe.
     /// </summary>
     /// <remarks>
@@ -215,9 +432,10 @@ internal static class ConsoleFrontend
     /// <summary>
     /// Plays one floor until it ends or the player quits, drawing a frame per iteration.
     /// </summary>
-    /// <param name="state">The floor to play. It is left in whatever state the run ended in.</param>
-    private static void Play(GameState state)
+    /// <param name="campaign">The run to play. Its floor is left in whatever state the run ended in.</param>
+    private static void Play(Campaign campaign)
     {
+        var state = campaign.Floor;
         var renderer = new ConsoleRenderer();
         var clock = Stopwatch.StartNew();
 
@@ -230,7 +448,14 @@ internal static class ConsoleFrontend
             {
                 var command = MapKey(Console.ReadKey(intercept: true).Key, state.IsAiming);
 
-                if (command is { } chosen && !GameCommands.Apply(state, chosen))
+                if (command == GameCommand.Interact)
+                {
+                    if (campaign.CanOpenRoom)
+                    {
+                        PromptForRoom(campaign);
+                    }
+                }
+                else if (command is { } chosen && !GameCommands.Apply(state, chosen))
                 {
                     Console.WriteLine("You slip back into the dark.");
                     return;
@@ -241,6 +466,15 @@ internal static class ConsoleFrontend
             // depend on how fast the machine draws.
             state.Tick(clock.Elapsed.TotalSeconds);
             clock.Restart();
+
+            // The Echo freezes the floor, so reading it is the only thing that can happen until
+            // the player lets go. It is checked after the tick as well as after a keypress: a
+            // buffered step can carry the player onto the Echo while no key is being held, and a
+            // piped run must close the card rather than freeze on it.
+            if (state.IsEchoOpen)
+            {
+                ReadEcho(campaign);
+            }
 
             Thread.Sleep(8);
         }
@@ -266,7 +500,7 @@ internal static class ConsoleFrontend
         Console.WriteLine("      B I O L U M I N E S C E N T");
         Console.WriteLine("                       D E P T H S");
         Console.WriteLine();
-        Console.WriteLine("   collect the keys. open the arch. do not be caught.");
+        Console.WriteLine("   pick the blooms. open the arch. do not be caught.");
         Console.WriteLine();
         Console.WriteLine("   press any key to descend...");
         Console.ReadKey(intercept: true);
@@ -313,6 +547,7 @@ internal static class ConsoleFrontend
         ConsoleKey.T => GameCommand.Drag,
         ConsoleKey.L => GameCommand.Lantern,
         ConsoleKey.F => GameCommand.Shove,
+        ConsoleKey.E => GameCommand.Interact,
         ConsoleKey.Enter => aiming ? GameCommand.ConfirmAim : null,
         ConsoleKey.Escape => aiming ? GameCommand.CancelAim : GameCommand.Quit,
         ConsoleKey.Q => GameCommand.Quit,

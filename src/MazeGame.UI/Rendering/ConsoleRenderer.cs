@@ -30,10 +30,18 @@ public sealed class ConsoleRenderer : IRenderer
     private const char SpentBarrierSymbol = '=';
     private const char LureSymbol = '*';
     private const char KeySymbol = 'k';
+    private const char EchoSymbol = 'e';
     private const char ExitSymbol = 'E';
     private const char CursorSymbol = 'X';
+    private const char RoomSymbol = ':';
     private const char EmptySymbol = ' ';
     private const char RememberedSymbol = '.';
+
+    /// <summary>
+    /// How many cells behind the player stay remembered, so the terminal view does not turn the
+    /// fog of war into a map of the whole run.
+    /// </summary>
+    private const int MemoryRadius = 3;
 
     private readonly HashSet<Cell> _explored = [];
 
@@ -64,11 +72,11 @@ public sealed class ConsoleRenderer : IRenderer
 
         var charges = state.PowerupsRemaining;
 
+        // No ceiling: the run keeps every heart it earns, so the strip shows a count and not a
+        // fraction of a cap that no longer exists.
         frame.Append("hearts ")
             .Append(state.Hearts)
-            .Append('/')
-            .Append(state.MaxHearts)
-            .Append("   keys ")
+            .Append("   blooms ")
             .Append(state.KeysCollected)
             .Append('/')
             .Append(state.Config.KeyCount)
@@ -97,7 +105,10 @@ public sealed class ConsoleRenderer : IRenderer
 
         AppendMaze(frame, state);
 
-        frame.AppendLine("WASD / arrows: move    Space: blink   V: veil   T: drag   L: lantern   F: shove   Q: quit");
+        // A safe room is the one place nothing moves, said in the one place the player is looking.
+        frame.AppendLine(state.IsInSafeRoom
+            ? "SAFE ROOM — E: look around    WASD: walk    Q: quit"
+            : "WASD / arrows: move    Space: blink   V: veil   T: drag   L: lantern   F: shove   Q: quit");
 
         return frame.ToString();
     }
@@ -183,20 +194,26 @@ public sealed class ConsoleRenderer : IRenderer
     }
 
     /// <summary>
-    /// Reports whether the player has ever seen <paramref name="cell"/>, which is what decides
-    /// whether its walls and floor are drawn at all. A visible cell is recorded on the way, so
-    /// it stays known after the torch moves on.
+    /// Reports whether the player can currently see or still remember <paramref name="cell"/>, which
+    /// is what decides whether its walls and floor are drawn at all. A visible cell is recorded on
+    /// the way; memory only reaches <see cref="MemoryRadius"/> cells, so the view is a dark cave
+    /// with the room you just left in it rather than a map of everywhere you have been.
     /// </summary>
     private bool IsKnown(GameState state, Cell cell)
     {
         if (!state.IsVisible(cell))
         {
-            return _explored.Contains(cell);
+            return _explored.Contains(cell) && WithinMemory(state, cell);
         }
 
         _explored.Add(cell);
         return true;
     }
+
+    /// <summary>Returns whether <paramref name="cell"/> lies within the torch's memory.</summary>
+    private static bool WithinMemory(GameState state, Cell cell) =>
+        Math.Abs(cell.Row - state.Player.Row) <= MemoryRadius &&
+        Math.Abs(cell.Column - state.Player.Column) <= MemoryRadius;
 
     /// <summary>
     /// Reports whether <paramref name="cell"/> holds a barrier, and which of the two symbols it
@@ -261,6 +278,20 @@ public sealed class ConsoleRenderer : IRenderer
             {
                 return EnemySymbol;
             }
+        }
+
+        // The Echo is a landmark, not a pickup: it stays on its cell after it has been heard.
+        if (state.EchoCell is { } echo && cell == echo)
+        {
+            return EchoSymbol;
+        }
+
+        // The safe room's floor is marked, so the detour reads as a place to go rather than as
+        // nine cells that happen to be open. Nothing findable is ever placed inside it, so this
+        // cannot hide a bloom.
+        if (state.SafeRoom is { } room && room.Contains(cell))
+        {
+            return RoomSymbol;
         }
 
         if (state.Keys.Contains(cell))

@@ -14,9 +14,10 @@ graph/pathfinding libraries are used.
 > game is **playable in a Raylib window** as a **twenty-floor campaign with a card draft and timed
 > steps**. Each floor is a braided maze **drawn from the compiled pixel-art atlases** on a virtual
 > canvas at an integer scale, with fog of war, a per-cell lantern lightmap and a killer that carries
-> its own light: collect the keys, open the arch, and descend.
-> **You have three hearts**: a catch costs one, throws the killer to a distant dead end and stuns
-> it, and **hearts carry between floors**, so only the third catch on the whole run ends it. Walking
+> its own light: pick the blooms, open the arch, and descend.
+> **You start with three hearts**: a catch costs one, throws the killer to a distant dead end and
+> stuns it, and **hearts carry between floors and have no ceiling**, so healing past three is real
+> progress; only running out ends the run. Walking
 > is a cadence (a constant 0.26 s per cell; enemies start at 1.20 s and ramp to 0.22 s, so the
 > player starts ahead and has to draft speed to stay ahead; only cards and sprint make you faster),
 > one press is buffered, **Shift sprints** on a stamina bar. The explorer snaps to its tile (one
@@ -31,9 +32,26 @@ graph/pathfinding libraries are used.
 > a gate to take one of two **descent conditions** that bends the rest of the descent. Each floor
 > has an intro card, a floor-cleared card, **a draft of three cards between floors — take one or
 > skip for a heart** — from a catalog of twenty-three, including four movement cards, four powerup
-> cards and ten second-wave cards that change catches, keys, durations and revivals, and a run
-> summary (748 unit tests; the sprite compiler has produced 2,264 validated pixel-art tiles across
+> cards and ten second-wave cards that change catches, blooms, durations and revivals, and a run
+> summary (834 unit tests; the sprite compiler has produced 2,264 validated pixel-art tiles across
 > twenty themes, and the game draws the floor from them).
+> **Late floors have a rule, not just a dial**: floor 14 keeps one hunter asleep until you come
+> close, 18 carries you between two thread gates, 19's lantern burns down a step every forty
+> seconds (each bloom restores it) and 20's arch needs five continuous seconds of standing.
+> **A floor can hide a safe room** — a 3x3 chamber with one door, drawn in warm cream stone no floor
+> uses so it reads through the fog. The first floor always has one, so the mechanic is taught rather
+> than hoped for; every floor after it rolls a fifty percent chance, and a run averages about ten.
+> Standing inside pauses the hunt while
+> the room sells a hearts-and-cards trade for one visit. Cards may now stack up to three copies, and the
+> Confessional and the Mirror are the only ways to take one back.
+> **It is a story as well as a descent.** The keys were always flowers, so they are called
+> **blooms**: the HUD says `BLOOMS`, and the arch is a knot of roots that wants its light back.
+> Every floor hides one **Echo** — a pale standing stone in a dead end, off the shortest route,
+> with its own faint ring of cold light. Walking onto it freezes the floor, restores a heart and
+> plays three lines of the gardener's voice, the last of which teaches that floor's rule. Each cleared floor turns a page of the
+> **herbarium** (a title and up to three lines), and a strip of blooms under the page grows with the
+> run: one mark for every bloom picked, one for every page turned. The garden is the run's only
+> score, it is shown once, and nothing about it survives the run.
 > **It has a score and effects, and no audio files**: every sound is synthesised from code — 22
 > one-shots and twenty floor pieces, each with its own melody, key, meter and style, mixed as stems
 > so the chase arrives on the next bar. The styles are different kinds of music (drone, lullaby,
@@ -101,6 +119,7 @@ The first restore downloads the Raylib native library for your platform (see
 | T | Drag: slow the hunt to 40% for 3 seconds |
 | L | Lantern: throw your light up to 4 cells ahead |
 | F | Shove: push the hunter in front of you two cells back |
+| E (in a safe room) | Open the room's card; A/D choose, Enter takes, Esc leaves |
 | A / D, arrows (draft) | Move between the cards |
 | Enter, Space or 1–4 (draft) | Take the highlighted card |
 | S (draft) | Skip: take a heart instead |
@@ -139,10 +158,11 @@ stopped clock, a mirror, a bone pile, a beating heart — that is scattered a fe
 The HUD names the floor and its gimmick, and the cards carry its emblem and palette.
 
 You are a small hooded figure carrying a lantern; the hunters are tall, spindly silhouettes with
-pink rim light and two pale eyes (two of them on floor 10, three from floor 16); keys are magenta beacons — a pool of light on the floor, a shaft
+pink rim light and two pale eyes (two of them on floor 10, three from floor 16); blooms are magenta beacons — a pool of light on the floor, a shaft
 rising out of the cell, a pulsing ring and glowing fungus at the core, so they read at the edge of
 the torch; the exit is a stone arch (cyan once open).
-The terminal view uses `@` for you, `K` for the killer, `k` for a key and `E` for the exit.
+The terminal view uses `@` for you, `K` for the killer, `k` for a bloom, `e` for the Echo and `E` for
+the exit.
 
 Walking is timed rather than instant: a step takes about a tenth of a second, a press during that
 window is remembered for the next step, and holding a direction keeps walking at that cadence — the
@@ -152,12 +172,12 @@ Hold Shift to sprint for 40% more speed while the stamina bar lasts (it only dra
 actually moving, so holding Shift on the spot costs nothing); when it runs dry you have to wait for
 a quarter of it to come back. Sprint is for breaking line of sight, not for going fast.
 
-1. Collect all three keys — the exit stays `LOCKED` until the last one is picked up.
+1. Collect all three blooms — the exit stays `LOCKED` until the last one is picked up.
 2. Reach the exit. You start with three hearts, shown beside the control hints at the bottom:
    a catch costs one heart, throws the killer to a far dead end, stuns it for 1.5 seconds and
-   gives you 1.5 seconds of grace, and **keeps your keys and barriers**. Only the third catch
-   ends the run, so a mistake costs time rather than progress. The screen washes red when you
-   lose a heart, and the last heart pulses.
+   gives you 1.5 seconds of grace, and **keeps your keys and barriers**. Hearts have no ceiling:
+   an Echo, a room or a card can push you past three, so only the catch that empties the last
+   heart ends the run. The screen washes red when you lose a heart, and the last heart pulses.
 3. Each floor refills five powerups, one key each, and the HUD shows how many charges are
    left. **Space** blinks through the wall you face and leaves the breach open, so you make a
    shortcut the hunters can use too. **V** veils you after half a second of standing still, for
@@ -172,7 +192,7 @@ a quarter of it to come back. Sprint is for breaking line of sight, not for goin
 
 The maze is hidden by fog of war: you see your own cell and 3 steps down the corridors from
 it, and walls block the light. Cells you have already seen stay dimly drawn so you can
-remember the layout, but the killer, keys and exit are only shown while you can actually see
+remember the layout, but the killer, blooms and the arch are only shown while you can actually see
 them.
 
 The killer carries its own violet light. Once it is within 6 walking steps of you, the cells

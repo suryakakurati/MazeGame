@@ -133,6 +133,18 @@ public sealed record FloorDefinition
     public ShapeKind? Shape { get; init; }
 
     /// <summary>
+    /// Gets the one exclusive rule this floor has, or null for a floor that is only numbers.
+    /// </summary>
+    /// <remarks>
+    /// Assigned to the four floors whose identity is a verb rather than a dial: the Loom's thread
+    /// gates, the Ossuary's sleeper, the Ash Garden's burning lantern and the Deep's long door. The
+    /// floors without one are deliberate — the Blind Mile and the Bramble already have the
+    /// strongest identities in the catalog, and stacking a rule on them would blur what they
+    /// teach.
+    /// </remarks>
+    public FloorRule? Rule { get; init; }
+
+    /// <summary>
     /// Gets how far the killer's cold glow reaches on this floor, or null to inherit. Zero hides
     /// the killer until it is in sight, which is what a stalking floor is made of.
     /// </summary>

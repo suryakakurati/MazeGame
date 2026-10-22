@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace MazeGame.Core.Maze;
 
 /// <summary>
@@ -31,4 +33,21 @@ public readonly record struct MazeOptions(int Rows, int Columns, int? Seed)
     /// error rather than a maze that is quietly the wrong size.
     /// </remarks>
     public MazeShape? Shape { get; init; }
+
+    /// <summary>
+    /// Gets the cells that must stay solid so a secret room can be carved there afterwards.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Applied after <see cref="Shape"/> and before the first wall is considered, so the pocket is
+    /// rock as far as Kruskal is concerned: no corridor is ever routed through it, and the room's
+    /// single door is the only passage it will ever have.
+    /// </para>
+    /// <para>
+    /// This is how a rectangular floor gets a room at all — its shape leaves no rock inside, so the
+    /// pocket is reserved instead of found. <see langword="null"/> (the default) leaves the maze
+    /// exactly as it was before rooms existed.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<Cell>? ReservedCells { get; init; }
 }

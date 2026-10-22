@@ -1650,3 +1650,135 @@ speed card — not a pick every floor — should be enough to stay ahead once th
 outrun an uncarded player, and one Light Feet (0.169 s) beats the last floor's 0.22 s hunter. The
 catalog test now asserts the start advantage, the late hunter advantage, and that one speed card
 outruns the final base hunter. Sprint remains a temporary, stamina-limited exception.
+
+## 2026-10-21 — A room is carved from rock, and a floor without rock reserves its pocket first
+
+**Decision:** `SecretRoomCarver` plans a site *before* generation and carves it *after*. On a floor
+whose shape left a 3x3 pocket of solid rock (measured: floors 2, 7, 8, 12, 15 and 20) the room is
+cut from that rock. On a floor with no rock — every rectangular floor, and two of the ellipses —
+nine cells are closed before Kruskal runs, so the maze is generated *around* the pocket and the
+room is reopened afterwards. Both paths satisfy the same guarantee: the road is the only thing that
+changes, no passage among the original cells is removed, every original cell stays reachable, and
+the room adds exactly one door.
+
+**Reason:** The brief said "carve into rock, so nothing is rerouted". Measurement showed that rule
+produces rooms on six of twenty floors only — about 0.6 per run, with half of all runs seeing none,
+instead of the 2.1 the spec's 1%-to-20% curve promises. Reserving the pocket keeps the no-reroute
+promise (Kruskal never considered those cells, so no corridor was ever there) and gives every floor
+the chance the spec asked for. A seeded run now measures 2.10 rooms per twenty floors.
+
+**Consequences:** A floor that rolls a room has a different maze from the same seed without one —
+but the room's roll draws from its own salted stream, so floors without a room are byte-identical to
+before. `Grid.CarveCell` is internal and refuses to carve floor, which is what stops the carve from
+ever deleting a passage. The tests assert "original passages unchanged, plus thirteen" (twelve
+internal edges and one door) rather than "one new passage".
+
+## 2026-10-21 — A safe room pauses the world, and cannot spend the last heart
+
+**Decision:** `GameState.IsInSafeRoom` is true while the player stands on one of the room's nine
+cells. `Tick` then advances only the player's own clock (step cooldown, sprint refill, turn
+penalty), resolves a buffered step and returns before seals, wisps, conditions and hunters. Every
+room's options are built so that an unpayable one is simply absent: the casino offers a stake up to
+`hearts - 1`, and the shop, confessional and toll are not offered at one heart. Hearts are the only
+currency.
+
+**Reason:** The ask was explicit — hunters do not move inside, and no purchase may take the last
+heart. Building the options from the run's state (rather than validating a purchase after the fact)
+is what makes "a safe room can never be the thing that kills you" a property instead of a check.
+
+**Consequences:** A room is a place you walk into and can walk through without a keypress, and
+looking is free: closing the card leaves the room unspent, so a player can read the odds and come
+back. A resolved room is spent for that floor. Every room is a single interaction — the shop sells
+one card per visit — because a shop that can be returned to twice is a shop that can be drained.
+
+## 2026-10-21 — The pressure gate does not ship yet
+
+**Decision:** `FloorRule` ships four rules — the Loom's thread gates, the Ossuary's sleeper, the Ash
+Garden's burning lantern and the Deep's long door — and deliberately not the Vault's pressure gate.
+
+**Reason:** A portcullis held open only while the player stands on its plate cannot be walked
+through by the player holding it open. As specified it is either a door that never helps or a trap
+that seals the player in. It needs a reward that can be taken from a distance, which is exactly what
+the rooms in §21 are only now able to provide; the pairing is a better design than either half.
+
+**Consequences:** The Vault keeps its rectangle and its key count as its identity for now. The enum
+has no `PressureGate` value, so nothing can ship it accidentally; the deferral is recorded in the
+enum's own documentation.
+
+## 2026-10-21 — The first three floors always hold a safe room
+
+**Decision:** `SecretRoomCarver.ChancePercent` returns 100 for floors 1–3 and the floor's own number
+in percent afterwards, unchanged. Measured over two hundred walked runs, a run now averages **4.55
+rooms** instead of 2.10, and the opening floors always have one.
+
+**Reason:** A playtest never found a safe room at all, and the numbers explain why: one percent per
+floor gives the opening floors a 1–4% chance, so a player meets the mechanic only on the floors
+where they already have the most to learn and the least attention to spare. A mechanic is not in the
+game until it is met. Guaranteeing the teaching arc costs three rooms, keeps the late-run rarity, and
+moves the average to roughly one room every four floors.
+
+**Consequences:** `TheChance_IsTheFloorNumberPercent_AfterTheTeachingFloors` now measures floors 4–20
+only, and a new test asserts every seed rolls a room on floors 1–3. The Cartographer's "room chance
+of the next two" reads the same curve, so its promise stays true. The room's own salted stream is
+untouched: a floor that rolls one still leaves every other floor's maze byte-identical.
+
+## 2026-10-21 — A key in the code is a bloom on the floor
+
+**Decision:** Every string the player reads says bloom: the HUD chip is `BLOOMS`, the console prints
+`blooms`, the title promises "pick the blooms", and the cards and descent conditions say bloom. The
+mechanic keeps its old names — `Keys`, `KeyCount`, `KeysCollected`, `GameEvent.KeyPicked`, the
+`key-0..2` atlas ids — and `RunModifiers.Describe` is the one place that translates between them.
+
+**Reason:** The art was already a flower, and a game about a garden that calls its light "keys" reads
+as a placeholder. The rename is a text change; renaming the mechanic would touch twenty tests, the
+campaign builder and the sprite manifest for nothing the player can see. Splitting the two words is
+the cheap half of the work, and writing the split down is what stops the next reader from "fixing"
+a `key` that is a flower.
+
+**Consequences:** A test sweeps the player-facing strings (`Describe`, every card face, every
+condition description) for "key", so the rename cannot rot back one sentence at a time. The atlas
+ids stay `key-N` until the compiler is next run; the manifest is committed and `--check` ties the two
+together.
+
+## 2026-10-21 — The story is one authored page per floor, and the garden resets with the run
+
+**Decision:** `StoryCatalog` holds exactly one page per shipped floor, in run order: a title and one
+to three lines, plus a two-line Echo script and a one-line hint. `StoryPage` validates the count and
+length; a test asserts the catalog and `FloorCatalog` line up one-to-one. `Campaign.CurrentPage` is
+the page of the floor being played, `CurrentMood` adds one line when the run is on its last heart or
+carrying a descent condition, and `GardenCount` is `BloomsPicked + FloorsCleared` — one mark per
+bloom and one per page, reset with the run.
+
+**Reason:** The floors are fixed and a run is one sitting, so the descent can be a book with fixed
+chapters instead of a grammar that has to be recombined and tested for contradictions. Twenty pages
+is under a thousand words and cannot contradict itself on a replay, because it never changes. A
+garden that resets keeps the promise that there is no meta progression: the run is the artifact.
+
+**Consequences:** Words are content, like `FloorCatalog`: re-tuning a floor cannot move its prose,
+because the two are separate tables kept in step by a test. A page is built once and cached, so
+`Page(n)` is the same object every time. The page is drawn on the existing cleared card rather than
+a new screen; the only new surface is `PixelCards.Echo`.
+
+## 2026-10-21 — The Echo is walked onto, freezes the floor, and comes once per floor
+
+**Decision:** One Echo per shipped floor, placed from the cells the arch, the blooms and the hunters
+did not take, requiring a detour of at least two steps from the shortest start-to-arch route and
+preferring a dead end. Walking onto it sets `IsEchoOpen`; `Tick` returns immediately while that is
+true, so hunters, seals, conditions and the player's own step clock all stop; the step clock is
+zeroed on opening so the player is standing rather than mid-stride behind the card. `CloseEcho`
+spends it, and stepping onto it again does nothing. `GameConfig.EchoEnabled` defaults to false and
+`GameFactory` switches it on, so hand-built test floors keep their plain step-and-tick behaviour.
+
+**Reason:** The powerup kit's lesson was that anything requiring the player to place or aim goes
+unused, and an interaction behind a keypress is one half the players never find, so the interaction
+is the step itself. The detour requirement is what keeps it from being a cutscene on the critical
+path, and the dead-end preference is what makes its light worth following. Freezing everything is
+the only honest way to put text on the screen during a chase: a paragraph read while a hunter closes
+is a death the player did not choose.
+
+**Consequences:** The Echo's cell is drawn with four pulsing corner dots in the floor's accent and
+a pale bloom, and its pool of light is added to `_visible` one ring past the torch, so it can be seen
+from the corridor before the detour is committed to. Because it is a landmark rather than a pickup,
+it stays on its cell after it is read, greyed out. A floor too small to hold one is allowed to have
+none — the property is "never on the critical path", not "always present" — but a test asserts all
+twenty shipped floors have one.

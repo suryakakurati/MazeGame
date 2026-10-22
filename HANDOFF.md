@@ -127,10 +127,11 @@ movement, keys, locked exit, barriers, timed killer AI, visibility/fog, win/lose
 title screen and the end card offers `R / ENTER: DESCEND AGAIN`, which builds a fresh cave and
 game in the same window; the console has the same title and `[R] descend again` prompt.
 
-**Roguelike Phase 1 (hearts) is also in:** the player has three hearts, a catch spends one and
-throws the killer to the furthest reachable cell (dead ends preferred) where it is stunned for
-1.5 s, while the player gets 1.5 s of invulnerability; keys, barriers, the wisp and the layout
-are kept, and only the third catch ends the run. The window shows the hearts in the footer with
+**Roguelike Phase 1 (hearts) is also in:** the player starts with three hearts (hearts have no
+ceiling since the Echo and rooms can heal), a catch spends one and throws the killer to the
+furthest reachable cell (dead ends preferred) where it is stunned for 1.5 s, while the player gets
+1.5 s of invulnerability; keys, barriers, the wisp and the layout are kept, and only the catch that
+empties the last heart ends the run. The window shows the hearts in the footer with
 a red damage flash, and the console header prints `hearts n/n`. `FUTURE.md` holds the nine-phase
 plan for the rest of the roguelike (campaign, cards, movement, generated pixel art, synthesised
 audio, themes); `PROGRESS.md` says which phase is next. The canvas has one hard-won rendering

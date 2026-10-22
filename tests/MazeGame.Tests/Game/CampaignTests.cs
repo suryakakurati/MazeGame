@@ -75,23 +75,31 @@ public sealed class CampaignTests
     [Fact]
     public void ASkipHeal_IsNotClippedByTheFloorsOwnCeiling()
     {
-        // "blood-pact" buys a heart's worth of ceiling; the run must be able to fill it.
-        var campaign = CampaignDrafting("blood-pact");
+        // A run has no heart ceiling: a floor designed around one heart must not throw away a
+        // heal the player earned, and the next floor starts with every heart carried in.
+        var floors = new List<FloorDefinition>
+        {
+            Floor(1),
+            Floor(2) with { MaxHearts = 1 },
+            Floor(3),
+        };
 
-        Assert.True(campaign.TakeCard(campaign.Draft!.Offers.First(offer => offer.Id == "blood-pact")));
+        var campaign = new Campaign(floors, BuildFloor, RunSeed);
+
+        ClearFloor(campaign);
+        ResolveDraftWithACard(campaign);
         Assert.True(campaign.TryAdvanceFloor());
-        Assert.Equal(4, campaign.MaxHearts);
+        Assert.Equal(2, campaign.FloorNumber);
+        Assert.Equal(3, campaign.Hearts);
 
         ClearFloor(campaign);
         Assert.True(campaign.SkipDraft());
 
-        // The floor definition's own ceiling is 3, so a cap taken from it alone would throw this
-        // heal away and the card's extra slot could never be filled.
+        // Skipping banks a heart for the next floor; the narrow design must not clip it.
         Assert.Equal(4, campaign.HeartsOnNextFloor);
         Assert.True(campaign.TryAdvanceFloor());
 
         Assert.Equal(4, campaign.Hearts);
-        Assert.Equal(4, campaign.MaxHearts);
     }
 
     [Fact]
@@ -378,8 +386,8 @@ public sealed class CampaignTests
     }
 
     /// <summary>
-    /// Resolves the open draft with a card that leaves the heart count alone, or skips when the
-    /// seeded draft has no such offer.
+    /// Resolves the open draft with a card that leaves the heart count and the key count alone, or
+    /// skips when the seeded draft has no such offer.
     /// </summary>
     /// <remarks>
     /// Choosing a card that neither heals nor moves the ceiling keeps a test's attention on the
@@ -391,10 +399,13 @@ public sealed class CampaignTests
     {
         var draft = Assert.IsType<Draft>(campaign.Draft);
 
+        // Key changes are avoided too: these tests walk a deliberately tiny 1x6 corridor, and
+        // three key cards would not fit in it. The shipped floors are large enough for them.
         var card = draft.Offers.FirstOrDefault(
             offer => offer.Effect.HealNow == 0 &&
                      offer.Effect.HealOnFloorClear == 0 &&
-                     offer.Effect.MaxHearts == 0);
+                     offer.Effect.MaxHearts == 0 &&
+                     offer.Effect.KeyCount == 0);
 
         if (card is null)
         {

@@ -341,6 +341,36 @@ public sealed record GameConfig
     public ShapeKind Shape { get; init; } = ShapeKind.Rect;
 
     /// <summary>
+    /// Gets the one exclusive rule this floor has, or <see langword="null"/> for none.
+    /// </summary>
+    /// <remarks>
+    /// A floor rule is content, not tuning: no card and no descent condition may grant one, and it
+    /// is read in exactly one place in <see cref="GameState"/>. Null (the default) is every floor
+    /// that came before rules existed, which is what keeps the rule tests' feel identical.
+    /// </remarks>
+    public FloorRule? Rule { get; init; }
+
+    /// <summary>
+    /// Gets the number of the floor this config describes, or zero for a game that is not part of
+    /// a run.
+    /// </summary>
+    /// <remarks>
+    /// Only the story reads it: the page on the cleared card and the lines the Echo speaks are
+    /// looked up by floor number. A hand-built test floor leaves it at zero and gets neither.
+    /// </remarks>
+    public int FloorNumber { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the floor carries an Echo: a pale standing stone in a dead
+    /// end that pauses the hunt, tells the floor's story and restores a heart.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ForFloor"/> switches it on for every shipped floor; the default is off, so the
+    /// rule tests' hand-built corridors keep their plain "step and tick" behaviour.
+    /// </remarks>
+    public bool EchoEnabled { get; init; }
+
+    /// <summary>
     /// Gets the radius, in cells, lit by the killer itself. Defaults to 2. Zero means only the
     /// killer's own cell glows. Must not be negative.
     /// </summary>
@@ -364,12 +394,14 @@ public sealed record GameConfig
     public int StartingHearts { get; init; } = 3;
 
     /// <summary>
-    /// Gets the most hearts the player can hold on this floor. Defaults to 3.
+    /// Gets how many heart slots the floor's HUD draws and how many hearts its design expects.
+    /// Defaults to 3.
     /// </summary>
     /// <remarks>
-    /// This is the cap cards may raise, and it must be at least <see cref="StartingHearts"/>
-    /// so a floor cannot start above its own ceiling. It is separate from
-    /// <see cref="StartingHearts"/> because a run can arrive on a floor wounded.
+    /// <b>This is no longer a rule.</b> A run has no heart ceiling: a heal adds its hearts, and
+    /// hearts carry between floors without being clipped. The number survives because floors are
+    /// designed around it and because the footer draws that many slots; a healed run's
+    /// <see cref="StartingHearts"/> may legitimately be larger.
     /// </remarks>
     public int MaxHearts { get; init; } = 3;
 
@@ -458,6 +490,21 @@ public sealed record GameConfig
         if (CatchCost < 1)
         {
             throw new ArgumentOutOfRangeException(nameof(CatchCost), CatchCost, "A catch must cost at least one heart.");
+        }
+
+        if (FloorNumber < 0 || FloorNumber > FloorCatalog.ShippedFloorCount)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(FloorNumber),
+                FloorNumber,
+                $"A floor is numbered 0 (no run) or 1 to {FloorCatalog.ShippedFloorCount}.");
+        }
+
+        if (EchoEnabled && FloorNumber == 0)
+        {
+            throw new ArgumentException(
+                "An Echo needs a floor number, or it has no lines to speak.",
+                nameof(EchoEnabled));
         }
 
         if (!(VeilDurationSeconds > 0) || double.IsInfinity(VeilDurationSeconds))
@@ -591,12 +638,12 @@ public sealed record GameConfig
                 "A floor must start with at least one heart; a run with none is already over.");
         }
 
-        if (MaxHearts < StartingHearts)
+        if (MaxHearts < 1)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(MaxHearts),
                 MaxHearts,
-                "The heart ceiling cannot be below the hearts the floor starts with.");
+                "The heart slots are at least one; the run has no ceiling to be below it.");
         }
 
         // Written as "not greater than or equal to zero" so NaN is rejected as well as negatives.
@@ -763,8 +810,8 @@ public sealed record GameConfig
     /// </summary>
     /// <param name="floor">The floor to derive settings for.</param>
     /// <param name="startingHearts">
-    /// Hearts the player brings to the floor. Must be between 1 and <see cref="FloorDefinition.MaxHearts"/>,
-    /// or one above it when Mute is active.
+    /// Hearts the player brings to the floor. At least one; the run has no ceiling, so a healed
+    /// run may bring more than the floor's design expects.
     /// </param>
     /// <param name="conditions">
     /// The descent conditions in force, or null for none. Mute adds a heart and takes a tool away.
@@ -787,12 +834,12 @@ public sealed record GameConfig
         var heartBonus = mute ? 1 : 0;
         var ceiling = floor.MaxHearts + heartBonus;
 
-        if (startingHearts < 1 || startingHearts > ceiling)
+        if (startingHearts < 1)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(startingHearts),
                 startingHearts,
-                $"Floor {floor.Number} starts with between 1 and {ceiling} hearts.");
+                $"Floor {floor.Number} must start with at least one heart.");
         }
 
         var hearts = startingHearts + heartBonus;
@@ -817,6 +864,10 @@ public sealed record GameConfig
             EnemyStepSeconds = floor.EnemyStepSeconds,
             PlayerStepSeconds = floor.PlayerStepSeconds,
             StartingHearts = hearts,
+
+            // The design's own slot count, before the run's cards. <c>RunModifiers.Apply</c>
+            // widens it for the cards and never lets it fall below the hearts carried in, which
+            // is what keeps a healed run's footer honest now that hearts have no ceiling.
             MaxHearts = ceiling,
 
             // The floor's own kit, where it has one; otherwise the teaching ladder. Mute has
@@ -834,6 +885,12 @@ public sealed record GameConfig
             ExtraLoops = floor.ExtraLoops ?? ExtraLoops,
             DeadEndBraidPercent = floor.DeadEndBraidPercent ?? DeadEndBraidPercent,
             Shape = floor.Shape ?? Shape,
+            Rule = floor.Rule ?? Rule,
+
+            // The floor's identity, so the story knows which page it is on. The Echo is switched
+            // on by GameFactory, the one place a floor is built for a real run: a hand-built test
+            // floor keeps the plain "step and tick" behaviour its tests were written against.
+            FloorNumber = floor.Number,
             EnemyAuraRadius = floor.EnemyAuraRadius ?? EnemyAuraRadius,
             EnemyAuraDistance = floor.EnemyAuraDistance ?? EnemyAuraDistance,
             RespawnDistance = floor.RespawnDistance ?? RespawnDistance,

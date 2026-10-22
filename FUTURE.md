@@ -31,7 +31,11 @@ game is finished without you drawing anything.
 [Risks](#13-risks) · [Decisions](#14-open-decisions-recommended-defaults-in-bold) ·
 [Done](#15-definition-of-done-does-it-feel-like-an-indie-game) ·
 [Appendix](#16-appendix-the-generation-stack-at-a-glance) · [What I need](#17-what-i-need-from-you) ·
-[Powerups and variance](#18-second-playtest-a-new-powerup-kit-and-descent-variance)
+[Powerups and variance](#18-second-playtest-a-new-powerup-kit-and-descent-variance) ·
+[Flowers and interactions](#19-third-playtest-a-story-worth-descending-for) ·
+[Late-floor rules](#20-late-floor-rules-one-new-idea-per-floor) ·
+[Secret rooms](#21-secret-rooms-safe-rooms-and-their-economy) ·
+[The card system](#22-the-card-system-second-pass) · [The plan](#23-implementation-plan-exact)
 
 ---
 
@@ -1316,3 +1320,659 @@ the verbs that survived.
 
 The player chose the full kit, so the full kit is what shipped. The slice's test — does the player
 reach for a verb without being told — is now a playtest question rather than a build decision.
+
+---
+
+## 19. Third playtest: a story worth descending for
+
+**Status:** slices A and B are shipped (2026-10-21): the rename, the twenty-page herbarium with the
+garden strip, and the Echo on every floor. Slice C (the seed pod and the offering stone), the
+speakers on the gate cards and the floor-20 ending are still design. The section answers two asks:
+**the keys became flowers**, and **each floor got something to do besides collecting and leaving**,
+with everything reset when the run ends.
+
+### 19.1 The ask
+
+- The keys already look like flowers. Call them what they are.
+- There should be **a story**, not just a sequence of rooms.
+- Floors need **interactions and things to find**, so the descent feels like working toward
+  something rather than clearing twenty levels.
+- **Per playthrough only.** No unlocks, no codex, no currency that survives death.
+
+That last line is a real constraint, not a footnote, and it is the thing this section is built
+around. It rules out the easy answers — a hub that grows between runs, a bestiary, permanent
+upgrades — and leaves one option: **put the arc inside the run and make it worth seeing once.**
+
+### 19.2 What the indie games actually do
+
+| Game | What it does | What to steal | What not to copy |
+| --- | --- | --- | --- |
+| **Hades** | Dialogue is keyed to run state: a god comments on the weapon you carry, Hypnos jokes about how you died, and failing a run advances the story rather than stopping it. Story and play are one loop, not two. | Lines chosen by **state** (hearts left, floor, condition, how the floor was cleared), not a fixed script. Failure gets a line, so a bad run still reads as content. | The hub, the hundreds of dialogue variants, meta progression. We have one fixed run and no persistent save. |
+| **Slay the Spire** | Unknown (`?`) rooms present a scenario and a choice, often with a price. The design lesson, spelled out by Cloudfall Studios, is that a choice fails when one option is obviously correct: good options solve part of a problem and cost something. | **One choice per floor, price legible before you commit**, and no option that is strictly best. | Deck-building depth, gold, shops, relics. Our only currency is hearts and time. |
+| **Enter the Gungeon** | Optional shrines trade a resource or a handicap for a payoff, and secret rooms sit behind walls you have to suspect. | **Risk altars** and a reason to walk into dead ends; the reward can be aimed at a *problem* (too many hunters) rather than at raw power. | Bullet-hell combat, shops, gun economy. |
+| **Loop Hero** | You build the world as you walk it; the map is the progression, and tiles placed now pay off later. | **Planting something that resolves floors later**, so a run has a plan longer than the current room. | The idle auto-battler loop. |
+| **Inscryption** | The fiction and the interface are the same material: cards are objects on a table you can pick up. | The **herbarium page** as UI — a pressed bloom and three lines is a screen, not a cutscene. | The meta-narrative that needs a save file and several runs. |
+| **Dark Souls / Elden Ring** | Short authored fragments sit in the world and are read at the player's pace, in the player's order. | A **voice in the dark** that the player chooses to stop for. It can hint at the floor's rule while it tells the story. | Online messages, bloodstains, anything that needs a network. |
+| **Outer Wilds** | Knowledge is the only progression; nothing carries between loops, and the ending is understanding rather than an unlock. | Proof that a **run-scoped story can be the reward** if the world is authored tightly enough to be understood in one sitting. | The time loop and the ship log; we are a different genre. |
+
+The research points at one conclusion, and it is the opposite of what "add a story to a roguelike"
+usually costs. Hades needs hundreds of variants because its floor order varies and its runs repeat.
+**Our floors are fixed, numbered 1 to 20, and a run is one 40–60 minute sitting.** That means the
+story can be a **book with twenty chapters**, authored exactly, in order, with no procedural
+grammar and no repetition problem. Fixed order is usually a limitation; for narrative it is the
+cheapest good story in the genre. Twenty entries of about forty words is under a thousand words of
+writing that never has to be recombined or tested for contradictions.
+
+Two sources informed the table: Davide Aversa's case study of *Hades* (story blended into play,
+reacting to state) and Cloudfall Studios' analysis of *Slay the Spire* (a choice fails when one
+answer is obviously right). Everything else is genre knowledge, not a quote.
+
+### 19.3 Flowers, not keys
+
+The art is already done: `Rig.Key` draws a glowing cap on a pale stem that bobs over three frames.
+The rename is therefore mostly text, and it should happen in this order:
+
+1. **Player-facing strings only.** `KEYS` in the HUD becomes `BLOOMS`; the intro, cleared, summary
+   and footer lines say bloom/flower. The sound id can stay `KeyPicked` internally. **Bloom** is the
+   word for the HUD because the chip has six characters and `FLOWERS` does not fit the existing
+   layout; prose can say flower, and a bloom is the flower on the floor.
+2. **Atlas ids in a later bump.** `key-0..2` becomes `bloom-0..2` when the compiler is next run, so
+   the committed atlases and the code change together (the compiler's `--check` enforces that).
+3. **Leave `KeyCount` and `GameState.Keys` alone.** The mechanic is unchanged, the tests and the
+   campaign builder already speak it, and a rename there buys nothing the player can see. Document
+   the split once, in `DECISIONS.md`, so the next reader is not confused by a `key` that is a
+   flower.
+
+The fiction makes the mechanic literal instead of decorative: **the arch is a knot of roots, and
+the blooms are the only light the garden still makes.** The door does not want a key; it wants the
+light back. That is why the floor's flowers open it, and why the Warden — which carries a light it
+did not make — is walking the same route you are.
+
+One cheap audio idea: the pickup chime currently plays the same note every time. Give it three
+pre-rendered pitches and pick by `KeysCollected`, so the floor's last bloom is the highest note.
+The floor audibly fills up as you clear it. No mixer change, no synthesis work at runtime.
+
+### 19.4 The herbarium: twenty authored chapters
+
+A run keeps a **herbarium** — a page per floor, shown on the cleared card that already exists.
+
+- **One page per floor:** a pressed bloom (the floor's palette and emblem, both already compiled),
+  a title, and **three lines maximum**. The card is already on screen between floors; this adds a
+  block to it rather than a new screen.
+- **Fixed order means a book.** Floor 1's page always comes before floor 2's. No grammar, no
+  shuffling, no "the story contradicts itself" testing — just twenty entries in `StoryCatalog`, one
+  per shipped floor, checked by a test that there are exactly twenty and their floor numbers match.
+- **State-aware second lines, not variants of the whole page.** After the fixed three lines, one
+  extra line may be chosen by state: hearts at 1, a descent condition active, the floor cleared
+  without being seen, or the floor cleared with a hunter still on your trail. Three or four
+  conditions across twenty floors is ~30 extra sentences and gives Hades' trick — the story notices
+  how you played — at a fraction of Hades' cost.
+- **The garden strip.** Under the page, one small bloom for every flower picked this run, plus one
+  for the page itself. It grows across the twenty cards: by the Deep it is a garden. This is the
+  visible answer to "am I working toward something?" — a thing that only exists in this run and is
+  shown to you at every floor boundary. It resets with the run, by design.
+
+No page is missable in a way that locks the ending: the herbarium **records** the run, it does not
+gate it. A player who runs past every optional thing still gets all twenty chapters; they just get
+a barer garden and fewer of the conditional lines.
+
+### 19.5 The interaction grammar
+
+Floors are two to three minutes and a hunter is always on a clock, so an interaction has to be
+readable and fast. Rules, in the order they matter:
+
+1. **One per floor, off the critical path.** In a dead end or a side branch — the braider already
+   leaves those. Never on the shortest route between two keys.
+2. **Walk onto it, or one key.** No aiming, no menus, no placement mode. The powerup kit's lesson
+   was that anything that asks the player to place something and hope goes unused.
+3. **It has its own light.** A glow that reaches past the lantern, so curiosity has a target before
+   the player commits to the detour. If it cannot be seen from the path, it does not exist.
+4. **The price is on the thing.** A heart, a bell, a leaf, drawn in the pixel font next to it. The
+   player should know what it costs before touching it.
+5. **It resolves in under ten seconds and the hunt pauses** while it does (the seed pod is instant
+   and does not pause). Text is never read while a hunter closes.
+6. **Never required, never a trap, never random.** The floor must stay completable if the player
+   ignores it, and the outcome must be the same every time it is used on the same floor.
+
+Eight candidates, in the order I would build them:
+
+| Interaction | What it does | The price | Floors |
+| --- | --- | --- | --- |
+| **The Echo** | A bloom-shaped fossil in a dead end. Touching it pauses the hunt for three lines of the gardener's voice, and the last line **teaches the floor's gimmick** or points toward the exit. | The detour, and the pause. | Every floor, once |
+| **The seed pod** | Plant a seed for free. Three floors later it blooms at the start of that floor: **+1 heart** and one line from the gardener. | A plant on floor 18 or 19 never blooms. The cost is the plan. | Every floor, once |
+| **The offering stone** | Pay one heart to **banish one hunter for this floor**. At three hunters that is a real trade; at one it is a bad deal, and the stone should look worse for it. | One heart, carried across floors. | Floors 10-20, some |
+| **The bench** | Sit for three seconds: **heal one heart**. Every hunter learns your cell for five seconds when you stand. | Being found. | Floors where the run is bleeding |
+| **The cage** | A wisp in a cage. Free it and it follows you for the floor, lighting two extra cells — and hunters can see its light (aura +2). | Being seen sooner. | 3 floors |
+| **The mirror pool** | Shows the whole floor and the exit for ten seconds. | Your lantern goes out for the same ten seconds. | 3 floors |
+| **The toll door** | Opens a shortcut through a wall that stays open. | It stays open for the hunters too — the same rule as Blink's breach. | 2 floors |
+| **The salt line** | Hunters will not cross a corridor for fifteen seconds. | Neither will you, while it holds. | 2 floors |
+
+**The first three are the ones that matter**, and they cover three different jobs: the Echo is the
+story and the tutorial in one object, the seed pod is the run-long plan, and the offering stone is
+the choice with teeth. The bench is a cheap fourth if the run needs a mercy valve. The cage, pool,
+toll and salt line are good but each adds a rule the player has to learn on a floor that already
+has a gimmick; they wait.
+
+**Why the Echo should be on every floor.** It is the only interaction that makes the story
+*mechanical*: the gardener's last line hints at what the floor does — a closed lantern, a hunter
+without its glow, a corridor that seals. Story and teaching stop competing for the player's
+attention. It is also the cheapest to build: a cell, a prompt, a pause, a text card, one sound.
+
+### 19.6 The arc, on the floors we already ship
+
+The floor names are already a story: Shallows, Rootbound, Drowned Halls, the Glass Orchard, the
+Bramble, the Ash Garden, the Deep. The reframe costs no new content — it names what is there.
+
+| Act | Floors | The place | What the player learns |
+| --- | --- | --- | --- |
+| **I. The garden** | 1-7 (Shallows → The Hush) | Something was planted here, in rows. The blooms are the only colour left. | Someone tended this. The gardener's voice starts as instructions, then becomes company. |
+| **II. The house** | 8-14 (Long Gallery → Ossuary) | The garden grew over a house, or the house grew around the garden. Either way it is occupied. | The gardener lived here. The hunter is not a monster; it is still doing its job. |
+| **III. The root** | 15-20 (Tide → The Deep) | Below the house there is one root, and the garden is a single organism. | The blooms are its memories. Every flower you picked, it remembers. |
+
+**The two characters are systems we already have.** The **Gardener** is the Echo's voice — text.
+The **Warden** is the hunter — it needs no new behaviour, only a story and, at most, one visual
+change per act. Two characters, both already in the build, is the whole cast.
+
+**The existing escalation becomes plot.** Hunters go from one to two on floor 10 and to three on
+floor 16. That always read as difficulty; make it read as consequence: **the Warden was not alone,
+and the others are the gardeners who came before you.** The player already knows that extra
+hunters are coming; now they know what they are. No new mechanic, no new art, and floor 16's
+arrival lands as a reveal instead of a difficulty spike.
+
+**The gates become dialogue.** Floors 8 and 14 already stop the run and offer two descent
+conditions. Give the two cards speakers — the Gardener's instruction against the Warden's offer —
+and the choice the player was already making becomes the choice the story is about. No new screen;
+just a name and a line on each card.
+
+**The ending is a third gate.** On floor 20, after the last bloom, the same two-card UI offers the
+last choice: **cut the root** (walk out with the memories; the garden dies) or **plant yourself**
+(the garden lives; you do not). Both are complete, neither is the "good" one, and both are
+reachable in a single run. The summary card shows the garden you grew — full or bare, and which
+you chose. That is the something the run was working toward, and it is exactly as expensive as one
+more condition-style card.
+
+Tone samples, in the voice the gimmick lines already use:
+
+> **Floor 1, Shallows.** The water is ankle deep and warm. Someone planted along the path — in rows,
+> deliberately. Nothing else down here is in rows. *(The arch is roots. It takes the light back.)*
+
+> **Floor 11, Blind Mile.** "I stopped lighting the halls. It finds the light faster than it finds
+> me. If you are reading this, you still have a lamp. Put it out when you hear it." *(The hint is
+> the rule: this floor's hunter arrives without warning.)*
+
+> **Floor 20, The Deep.** The root is warm. It has been waiting for somebody to kneel. *(Cut it,
+> or be the next thing that grows.)*
+
+### 19.7 What this must not become
+
+- **No text during the chase.** Every line waits for a cleared card, an Echo pause, or a gate. A
+  paragraph over a live hunter is a death the player did not choose.
+- **No meta progression.** No unlock that survives a run, no codex that remembers, no currency. The
+  herbarium is a run artifact; when the run ends it is shown once and gone. This keeps the scope
+  honest and keeps the hearts meaning something.
+- **No procedural lore sentences.** Twenty authored pages will read better than a grammar and will
+  be testable line by line. This is the one place in the project where generated text is a
+  downgrade.
+- **No story that contradicts repeat runs.** Do not say "no one has ever come this far" to a player
+  on their ninth attempt. The narrator is the garden, not the player's history.
+- **No interaction that can kill you without a decision.** The offering stone refuses a payment that
+  would take the last heart; the bench's cost is being seen, not being caught.
+- **No collectible gate on the ending.** A player who ignores every Echo still reaches floor 20 with
+  the full story; the optional things add colour and hints, not access.
+
+### 19.8 Cost, tests, and the first slice
+
+| Slice | What ships | Cost | What it proves |
+| --- | --- | --- | --- |
+| **A. The rename and the book** | key-to-bloom strings, `StoryCatalog` with 20 pages, the page on the cleared card, the garden strip on the cleared card and the summary | **Small.** No new mechanics, no new state beyond a count. | Whether authored chapters plus a growing garden already feel like a story worth finishing. |
+| **B. The Echo** | one Echo per floor, off the path, pause, three lines, gimmick hint | **Small-to-medium.** A cell kind, a prompt, a pause flag, a text card, a chime. | Whether players stop in the dark, and whether the story can double as a tutorial. |
+| **C. The seed pod and the offering stone** | delayed bloom, and banish-a-hunter for one heart | **Medium.** Run-level state in `Campaign` (planted floors, banished hunter for the floor), two placement rules. | Whether the run has a long arc and a choice with teeth, not just rooms. |
+
+State lives where per-run state already lives: `Campaign` owns the herbarium pages read, the blooms
+picked per floor, the planted floors and any banished hunter. `GameState` owns only what happens on
+one floor (the Echo's cell and whether it was used, the bench's timer). No file is written, so
+nothing here needs a save format.
+
+Tests worth writing before the UI:
+
+- `StoryCatalog` has exactly one page per shipped floor, in run order, and every page is within the
+  three-line and length limits.
+- No player-facing string in the renderers still says "key" or "KEYS" (a string sweep, so the
+  rename cannot be half-done).
+- Garden count equals blooms picked plus pages read, and never exceeds floors times max blooms.
+- An interaction is always on a walkable cell reachable from the start, never on the player, exit,
+  hunter, bloom or barrier, and never on the critical path; consuming it cannot disconnect the exit.
+- The offering stone refuses to take the last heart, and no interaction can move hearts below one.
+- A planted seed blooms exactly three floors later, and never after the last floor.
+- Hunters do not step while an interaction card is open or a chapter is being read.
+- The floor-20 choice produces exactly two distinct endings, and the summary's garden matches the
+  run's picks.
+
+### 19.9 Recommendation
+
+Both A and B were built first, as recommended; a playtest should come before C. What shipped:
+`StoryCatalog` (twenty pages, twenty Echo scripts, twenty hints, two mood lines), the page and the
+garden strip on the cleared card and the run summary, and one Echo per floor — off the critical
+path, with its own light, freezing the floor, spent once. The rename is `BLOOMS` in the HUD, in the
+console, on the title and in every card and condition sentence, with a test that keeps it so; the
+code keeps `Keys` for the mechanic. On the original plan: the rename is nearly free and the
+sprite is already a flower; the twenty-page herbarium plus the garden strip is the cheapest story
+this project will ever get, because the floors are fixed; the Echo makes that story teach the floor
+instead of competing with it. If, after a run, the garden on the cleared card is the thing the
+player looks at first, C is worth building. If the player skips the Echo to save time, the seed pod
+and the offering stone will not fix that — the interaction grammar is wrong, not the content, and
+the answer is fewer, louder interactions rather than more.
+
+The one decision I would make now rather than later: **the herbarium records, it does not gate.**
+Any version of this where missing pages loses the ending turns a story into a checklist, which is
+the exact failure the ask is trying to avoid.
+
+---
+
+## 20. Late-floor rules: one new idea per floor
+
+**Status:** shipped for four floors. `FloorRule` is one enum value on a `FloorDefinition`, copied
+through `GameConfig` and read in one place in `GameState`; floors 14, 18, 19 and 20 carry the
+sleeper, the thread gates, the burning lantern and the long door, each with its own tests in
+`tests/MazeGame.Tests/Game/FloorRuleTests.cs`. The **pressure gate is deferred** (see §23.3): a
+door held open by a plate the player must stand on cannot be walked through, so it needs a reward
+that can be taken from a distance — the rooms in §21 are that reward, but the pairing is a later
+pass. Slick glass, drop shafts and the mimic bloom are still design only.
+
+### 20.1 Why a floor rule and not another dial
+
+Everything that makes floors differ today is a number: speed, vision, hunter count, braid
+percentage, shape, powerup charges. Those are good dials, and by floor 12 the player has learned all
+of them: "more hunters, faster, darker" stops reading as a new place. A **floor rule** is different
+in kind — a single exclusive verb the floor has and no other floor has.
+
+Five rules for a rule:
+
+1. **One per floor**, exclusive, expressed as one enum value on the floor. No floor gets two; a
+   floor that needs two is a floor that needs a redesign.
+2. **Readable in ten seconds.** If the player cannot tell what the floor does after the first key,
+   the rule is invisible and therefore not worth building.
+3. **No tutorial.** The floor's intro gimmick line names it, and the first encounter teaches it.
+   Nothing may require a new key or a menu.
+4. **The maze stays legal.** Keys and the arch must remain reachable, the maze must stay connected,
+   and no rule may strand the player or a hunter.
+5. **One switch in `GameState`, covered by tests.** If a rule needs a web of special cases, it is a
+   system, not a rule, and it belongs in a later pass.
+
+### 20.2 The set
+
+| Floor | Name | Rule | What the player learns | Cost |
+| --- | --- | --- | --- | --- |
+| **10. The Glass Orchard** | `Slick glass` | A step keeps going until a wall stops it. You cannot stop mid-slide. | Commit to a direction before you take it; entries matter, not just routes. | Small |
+| **12. The Foundry** | `Drop shafts` | One chute drops you to the cell farthest from the arch. It is one-way. | Losing orientation on purpose can be the fastest way across. | Small |
+| **13. The Moth Garden** | `The mimic bloom` | One bloom is alive. It runs away from you, one cell per step, and can be cornered. | The objective itself is a chase; clearing the floor is a hunt in both directions. | Medium |
+| **14. The Ossuary** | `The sleeper` | One hunter starts dormant. It wakes when you come within three cells, take a bloom, or are caught. | Stealth is a route, not a button. Some floors are crossed, not cleared. | Small |
+| **17. The Vault** | `Pressure gate` | A portcullis across a side branch is held open only while you stand on its plate. | Timing a route: the reward is behind a door that closes the moment you leave. | Medium |
+| **18. The Loom** | `Thread gates` | Two linked pads. Stepping on one places you on the other, with a two-second cooldown. | A shortcut that also teaches you the map's true distances. | Small |
+| **19. The Ash Garden** | `Burning lantern` | Vision falls one step every 40 s, to a floor of one. Each bloom restores it. | The floor becomes a race; the objective is also the light. | Small |
+| **20. The Deep** | `The long door` | The arch needs five continuous seconds of standing, not a touch. | The climax is a hold under pressure rather than a last sprint. | Small |
+| **15. The Tide** (stretch) | `Rising water` | The outer ring of cells floods, one ring every 30 s. | The floor shrinks around you. | Large |
+
+The floors without a rule are deliberate: The Blind Mile and The Bramble already have the strongest
+identities in the catalog (no aura; no dead ends at all), and stacking a rule on them would blur
+what they already teach.
+
+### 20.3 How each rule is built
+
+- **Slick glass** lives in `Step`: after an accepted move, keep stepping in the same direction while
+  the next cell is open. Stop before a hunter, stop at a wall, and collect whatever the slide passes
+  over (a bloom, the arch). One press is one slide; the cooldown is charged once. Sliding into a
+  hunter is not allowed to happen silently, so the slide stops on the cell before it.
+- **Drop shafts** is a cell placed at generation like a pad. Stepping on it moves the player to the
+  fixed cell farthest from the arch, raises `GameEvent.Teleported`, and recomputes visibility and
+  the hunt's route. It never lands on a hunter, a bloom or the arch; hunters never use it.
+- **The mimic bloom** is one key with a live flag. Each player step, if it is within three cells, it
+  moves one cell farther away, never onto a hunter, the player, the arch or another bloom. It is
+  still a bloom: walking onto it collects it. Its sprite is the normal bloom one palette step off,
+  which is the whole tell.
+- **The sleeper** is one hunter with a `Dormant` flag: no steps, no aura, drawn dimmed. It wakes
+  permanently on proximity (three cells), on a bloom pickup, or on a catch anywhere on the floor.
+- **The pressure gate** is two cells: a plate on the main route and a gate across a side branch. The
+  gate is a real wall pair, opened with `Grid.RemoveWall` on both sides and closed with
+  `AddWall` when you step off the plate. The branch-only placement is what guarantees closing it can
+  never cut the only route to the arch — the same reasoning that lets Regrowth seal a dead end.
+- **Thread gates** are two fixed cells chosen at generation as the farthest-apart pair that is not
+  the arch, a bloom, a hunter or the player. Stepping on one relocates to the other, with a two
+  second cooldown so holding a direction cannot ping-pong.
+- **The burning lantern** is a per-floor vision penalty driven by `Tick`: −1 step per 40 s, floor of
+  one, restored to the floor's base by each bloom. It reuses the existing visibility recompute.
+- **The long door** moves the win check out of `Step` and into `Tick` while the player stands on an
+  unlocked arch: five seconds, reset by leaving the cell, interrupted by a catch.
+
+### 20.4 Build order
+
+Build **thread gates, the sleeper, the pressure gate and the long door** first. All four are one
+cell, one flag or one timer, and together they prove that a rule can be exclusive, testable and
+legible without touching the maze generator. **Slick glass** is next because it is the one that
+changes movement and therefore the one that needs the most playtesting. **The mimic bloom** is the
+only rule that changes the objective, so it goes after the others have been lived with. **Rising
+water** is the stretch: it mutates the maze at runtime, which is the one thing this design has
+avoided everywhere else.
+
+---
+
+## 21. Secret rooms: safe rooms and their economy
+
+**Status:** shipped for the whole economy: the carver, the pause, and all eight rooms (the
+Cartographer, the Long Table, the Turn, the Stall, the Confessional, the Toll, the Seed Vault and
+the Mirror). One deviation from the ask, forced by measurement: a rectangle has no rock inside, so
+the site is a **hybrid** — a rock pocket where the shape left one, and a pocket reserved before
+generation otherwise. Both paths satisfy the guarantee below, and a seeded twenty-floor run now
+measures **2.10 rooms**, which is the curve the ask describes. No new atlas tiles and no new
+one-shots in v1, as recommended.
+
+### 21.1 The spec as asked for
+
+- A secret room is a **3x3 open area with exactly one entrance**.
+- It appears with a **1% chance on floor 1, rising to 20% on floor 20**.
+- **While the player is inside, the game is paused**: hunters do not move.
+- It **must not disturb the actual maze** — no corridor is rerouted, nothing is removed.
+- Rooms show something to *do*: gamble hearts, go back floors, buy cards, and more.
+
+Chance is the floor's own number as a percentage: floor 4 → 4%, floor 17 → 17%. That is the exact
+curve requested, and it is worth knowing what it totals: **a run expects about 2.1 rooms, and about
+one run in ten sees none at all.** That is a feature if rooms are meant to be events and a problem
+if they are meant to be a system the player plans around. The formula is one line in
+`SecretRoomCarver`; if playtests want more, `floor + 5` (capped at 30%) gives roughly 4.6 per run
+without a redesign.
+
+### 21.2 Generation: the exact algorithm
+
+1. Generate the floor exactly as today: shape, Kruskal, dead-end braid, extra loops. **Nothing in
+   the maze generator changes.**
+2. Draw from a **separate seeded stream** — `new SeededRandom(seed ^ RoomSalt)`, or a fresh stream
+   when the run is unseeded — so adding rooms does not shift the existing maze and placement
+   streams, and every seeded test keeps its layout.
+3. Roll `NextInt(100) < floorNumber`. On a miss there is no room and no further work.
+4. Scan candidate **3x3 blocks of solid rock**, one cell in from the border, whose nine cells are
+   all solid and which touch at least one existing floor cell. Shuffle, then take the first valid
+   block; the sealing step below is what guarantees its single door.
+5. Carve with a new internal `Grid.CarveCell(row, column)` (rock → floor). `RemoveWall` refuses any
+   edge touching rock, so the carve has to come first. Then, in this order: **open the twelve
+   internal edges** between the nine cells (a "3x3 open area" means one room, not nine cupboards),
+   **open exactly one boundary edge** to the chosen door cell, and `AddWall` every other boundary
+   edge that now faces a floor cell.
+6. Result: nine cells, one opening, reachable from the start. The room is a new dead end hanging off
+   the maze. It **adds** nine cells, **removes no original passage**, and adds exactly one passage
+   (the door); the twelve internal passages are new edges that exist only inside the room. That is
+   what "does not disturb the maze" means in a test.
+7. Reserve the nine cells before placement. `GameState` excludes them from the shuffle that picks
+   the player, hunters, arch and blooms, so a safe room can never contain an objective or a hunter,
+   and `ChooseHunterStarts` never picks one.
+
+Why not carve a dead end into a room? Because that would reroute the maze and could disconnect a
+hunter's only route. Carving into rock costs nothing and cannot break anything, at the price of
+being rarer on shaped floors (The Deep is a blob, so there is more rock and more room sites; The
+Vault is a rectangle, so fewer). A test should report the actual hit rate per floor so the number is
+known rather than assumed.
+
+### 21.3 The pause: the exact rule
+
+- `GameState.IsInSafeRoom` is true while the player stands on one of the nine cells. The door cell
+  is ordinary floor, outside the room.
+- In `Tick`, the player's buffered step and the player's own step cooldown still resolve — otherwise
+  you could not walk around inside — then the method returns **before** the world timers, the
+  descent conditions and the hunter loops. So inside a room: seals do not crack, wisps do not burn,
+  conditions do not tick, traps do not spring, hunters do not step.
+- **Hunters never enter the room.** While the player is inside they are frozen; on the way out they
+  resume from where they stood. If a hunter is standing on the door the instant you step in, you
+  were caught entering — visible, fair, and the only way in is through that cell.
+- All nine cells are lit while inside, so the room is a readable safe island rather than a dark box.
+- The room's *interaction* is single-use. The pause works again if you come back (it is a safe
+  alcove), but the shop counter is bare and the table is spent.
+
+No input is needed to enter the pause; walking in is enough. That is deliberate: a safe room that
+requires a keypress is a safe room half the players never use.
+
+### 21.4 The rooms
+
+Every room is one interaction, resolved on a card while the world is paused, and every price is
+visible before it is paid.
+
+| Room | What it does | Price | Notes |
+| --- | --- | --- | --- |
+| **The Long Table** (casino) | Stake hearts: 45% chance to double the stake, 55% to lose it. Choose the stake from 1 to `hearts - 1`. | The stake | The odds are printed on the table. The last heart cannot be staked. |
+| **The Turn** (reincarnation) | Go back **five floors**, or **to floor 1** for one heart. Cards, conditions and hearts are kept. | One heart for the deep option | Once per run. Enemy speed on the replayed floors is that floor's base × your card modifiers, never the floor you left. |
+| **The Stall** (card shop) | Three cards, one heart each. Buy while you can still afford to bleed; leave with the rest. | One heart per card | Uses the draft's own eligibility rules, so no card is offered twice unless it is stackable. |
+| **The Confessional** | Remove one card from the run. | One heart | The only removal in the game; it exists for the card pass in §22. |
+| **The Toll** | The next floor has one hunter fewer (never below one). | One heart | The answer to a floor you already fear. |
+| **The Seed Vault** | Plant a seed. Three floors later it blooms for **+1 heart** and a line from the gardener. | Nothing | Free, but a plant on floor 18 never blooms. |
+| **The Cartographer** | Reveals this floor's map and the **secret-room chance** of the next two floors. | Nothing | Information as a reward; the cheapest room to build. |
+| **The Mirror** | Swap one card for a random eligible card. | Nothing, once | Build repair without a heart; the replacement is not chosen. |
+
+Weights, out of 100: **casino 24, shop 24, confessional 15, toll 10, cartographer 8, seed vault 8,
+mirror 6, reincarnation 5** (reincarnation only from floor 6). With two rooms in a run, most runs
+see one money room and one utility room. If reincarnation is meant to be a real strategy rather
+than a story event, raise it to 12 and drop the casino to 17.
+
+### 21.5 The economy, and why hearts
+
+Hearts are the only currency, which is the whole point: every room asks whether a life is worth a
+card, and the answer changes with how the floor ahead looks. Guardrails, all testable:
+
+- **No purchase may take the last heart.** The casino caps the stake at `hearts - 1`; the shop and
+the confessional refuse at one heart. A safe room can never be the thing that kills you.
+- **Heals are capped** at the floor's ceiling, as every other heal already is.
+- **Reincarnation does not heal.** It rewinds position and difficulty, not damage.
+- **A room is spent after one interaction**, so a casino cannot be re-rolled and a shop cannot be
+  drained over two visits.
+- **Expected value is slightly negative at the table** (45% double is 0.9× per heart) so the casino
+  is a temptation, not an income.
+
+### 21.6 Rendering, input and sound
+
+- **No new atlas tiles in v1.** The room is nine ordinary floor tiles with a procedural ring in the
+  theme's accent colour and one existing `prop-N` in the centre; the used state dims the prop. That
+  avoids a twenty-theme compiler pass and any `--check` drift. If it reads poorly, one `room-floor`
+  tile is the next step, not the first.
+- **`Screen.Room`** in `RaylibFrontend`, drawn with the draft's existing layout in `PixelCards`:
+  name, two lines, the price, and options. `GameCommand.Interact` (E) opens it when standing in a
+  room; left/right and Enter choose; Esc leaves. The console frontend prints the same card as text.
+- **Six one-shots**: `SecretFound` on entry, `RoomOpen`, `GambleWin`, `GambleLost`, `CardBought`,
+  `Reincarnated`. All synthesised, no files.
+- **HUD**: a `SAFE` chip and the room's name in the footer while inside.
+
+### 21.7 Tests
+
+- **Carver**: for 10,000 seeded floors, every room has exactly one entrance and nine cells, all
+  inside the grid; the passages **among the original cells are unchanged** and exactly one boundary
+  edge joins the room; every original cell is still reachable; the room never contains the player,
+  arch, a bloom or a hunter.
+- **Chance**: over 10,000 seeds, the observed rate on floor *n* is within a point of *n* percent.
+- **Pause**: hunter elapsed time and every seal/wisp/condition timer are unchanged after ten seconds
+  inside; the player's own cooldown still ticks; leaving resumes all of them.
+- **Economy**: the casino refuses a stake above `hearts - 1`; no room resolves at one heart; a used
+  room cannot be used twice; a reincarnation rebuilds the right floor with the right hunter cadence
+  and does not re-offer a chosen gate.
+
+---
+
+## 22. The card system, second pass
+
+**Status:** steps 1–2 shipped (copies and removal); steps 3–5 are still open. `Card.MaxCopies`
+(with eight stackable cards) keeps the pool alive to the nineteenth draft, and
+`RunModifiers.FromCards` plus the Confessional makes removal real. The burden strip, the Press
+(card upgrades) and schools/keystones are not built.
+
+### 22.1 What is actually wrong, measured
+
+1. **The catalogue runs out.** A run offers **19 drafts** (after every floor but the last) from a
+   **23-card** catalogue, and nothing stacks — `IsStackable` is false on every shipped card. Vision
+   cards are additionally capped at two. By the last third of the run the eligible pool is nearly
+   empty, `DraftFactory` returns fewer than three offers because it must, and every run ends holding
+   almost the same cards. That is why the draft stops feeling like a choice: there is no choice left
+   to make.
+2. **Every card is a trade, so the run accumulates burdens.** The rule is right — a pure upgrade is
+   power creep — but 15 trades is a pile of drawbacks with no way to put one down.
+3. **The drawbacks are invisible in play.** You can read `KILLER PACE +12%` on the draft totals line
+   and never think about it again, though it is the reason a floor feels unfair.
+4. **Most effects are numbers, not verbs.** Only eight cards touch the powerup verbs (four add
+   charges, four change a duration or range); the rest change how fast a bar fills.
+5. **Skipping is often correct.** When the offers are weak (see 1), one heart is worth more than a
+   card, so a run can end with the same build it started with.
+
+### 22.2 The pass, in the order that fixes the most first
+
+1. **`MaxCopies`** — add `Card.MaxCopies` (default 1) and let eight numeric cards stack: Light Feet,
+   Quick Hands, Slow Pursuit, Blood Pact, Wide Eyes, Hollow Bones, Glass Cannon, Momentum. The draft
+   counts copies instead of rejecting them, and stops offering a card at its cap. This alone fixes
+   the exhausted pool, and it creates specialisation: three Light Feet is a build, not a repetition.
+2. **Removal** — the Confessional (§21.4) plus `RunModifiers.FromCards(cards)`, which rebuilds the
+   totals from the card list. Today `RunModifiers` only has `With(card)`, so removing one is
+   impossible without this. It is a small, well-tested refactor because every total is already a
+   fold over the cards.
+3. **The burden strip** — one HUD line (or five small icons) showing only the drawbacks that are
+   currently hurting: killer pace, vision loss, catch cost, heart ceiling, step penalty. Not every
+   number. The player should be able to look down and see what they traded away.
+4. **Upgrades** — every card gets a pressed form (upside +50%, drawback unchanged), applied at a
+   new room, **the Press**, for one heart. The Press joins the room table in §21.4 only when this
+   pass lands; it is left out of the weights until then because a room that upgrades cards has
+   nothing to do before upgrades exist. It gives a weak card a future and gives the late run a goal
+   that is not another card.
+5. **Schools and keystones** — three tags (Root, Light, Hunt) and six keystone cards that scale with
+   the number of cards of that school held. This is the content pass: it needs `Card.Tags`, counts
+   in `RunModifiers`, and a reason to take a card that is not its own numbers. Do it last.
+6. **Draft cadence** — only if 1–5 are not enough: drafts after every *other* floor, with the shop
+   and rooms filling the gaps. That is a large feel change; do not open with it.
+
+### 22.3 Numbers
+
+| Knob | Today | Proposed | Why |
+| --- | --- | --- | --- |
+| Drafts per run | 19 | 19 (unchanged for now) | Fewer drafts is a different game; fix the pool first. |
+| Copies per card | 1 | 1-3 by card | Ends the exhausted pool and allows a build. |
+| Shop price | — | 1 heart | A card is a life; that is the trade. |
+| Removal | — | 1 heart | The only way out of a bad early pick. |
+| Upgrade | — | 1 heart | Turns a weak card into a plan. |
+| Casino | — | 45% double | Slightly negative, honestly printed. |
+
+### 22.4 What not to change
+
+- **Keep "every card states both halves in one sentence".** It is the spine of the catalogue and the
+  thing that makes the draft honest.
+- **Do not add a second currency.** No petals, no coins, no souls. Hearts are the run; a second
+  currency would make the one resource that matters negotiable.
+- **Do not put curses in the draft.** A curse is a *price* for something optional (a room, a rare),
+  never a card that costs a pick.
+
+---
+
+## 23. Implementation plan (exact)
+
+**Status:** phases 1–7 shipped, each landing green before the next began (748 tests before, 802
+after). Phase 8 is partly done: the four rules of §20 are in, but slick glass, the mimic bloom, the
+card upgrades and the room sounds are not. The plan's two warnings held: phase 2 did not re-baseline
+a maze test, and reincarnation did need `MaxCopies` first.
+
+### 23.0 The order and why
+
+| Phase | Ships | Files | Tests | Cost | Depends on |
+| --- | --- | --- | --- | --- | --- |
+| **1. Copies** | `Card.MaxCopies`, stackable cards, draft counts copies | `Card.cs`, `CardCatalog.cs`, `DraftFactory.cs`, `CardCatalogTests.cs`, `DraftFactoryTests.cs` | No card offered past its cap; a capped card leaves the pool; a full run can still fill three offers | **Small** | — |
+| **2. Carving** | `Grid.CarveCell`, `SecretRoom`, `SecretRoomCarver`, factory call | `Maze/Grid.cs`, `Maze/SecretRoom.cs` (new), `Maze/SecretRoomCarver.cs` (new), `Game/GameFactory.cs` | One entrance, original passages unchanged, original connectivity preserved, chance curve, no reserved cell used | **Medium** | — |
+| **3. Pause** | room storage, reserved cells, safe pause, room visibility, events | `Game/GameState.cs`, `Game/GameEvent.cs`, `Game/GameFactory.cs` | Hunters frozen, seal/wisp/condition clocks frozen, player can still move inside, leaving resumes | **Medium** | 2 |
+| **4. One room** | `RoomKind`, `RoomOffer`, `GameState.Room`, `Campaign` room state, `Screen.Room`, the Cartographer | `Game/RoomKind.cs` (new), `Game/RoomOffer.cs` (new), `UI/Input/GameCommand.cs`, `UI/Input/GameCommands.cs`, `UI/Frontends/RaylibFrontend.cs`, `UI/Rendering/Pixels/PixelCards.cs`, `UI/Frontends/ConsoleFrontend.cs` | Enter, open, choose, leave; a used room stays used; the map reveal matches the maze | **Medium** | 3 |
+| **5. Money rooms** | casino, shop, confessional, `RunModifiers.FromCards` | `Game/Campaign.cs`, `Game/RunModifiers.cs`, `UI/Rendering/Pixels/PixelCards.cs` | Stake caps, no last-heart purchase, removal rebuilds totals, shop eligibility | **Medium** | 4 |
+| **6. Reincarnation** | rewind target, run counters, `_deepestFloor` for draft rarity | `Game/Campaign.cs`, `Game/DraftFactory.cs` (salt + effective floor) | 20 → 15 keeps cards, uses floor-15 base × card mods, does not re-offer gates, one per run | **Medium** | 1, 5 |
+| **7. Floor rules** | `FloorRule` enum + thread gates, sleeper, pressure gate, long door | `Game/FloorRule.cs` (new), `Game/FloorDefinition.cs`, `Game/GameConfig.cs`, `Game/GameState.cs`, `Game/FloorCatalog.cs`, renderer | Each rule has its own rule tests; connectivity unchanged; rules never combine | **Medium** | 3 |
+| **8. The rest** | slick glass, mimic bloom, burning lantern, card upgrades/tags, sounds, docs | as above + `Audio/*`, `README.md`, `PROGRESS.md`, `DECISIONS.md` | Per-feature tests plus a full-run smoke | **Large** | 7 |
+
+The story work from §19 is independent of all of this: slice A (the rename, the twenty pages, the
+garden strip) and slice B (the Echo) slot in between phases 4 and 5 without touching any of the
+systems below, and are the cheapest way to make a run feel like it is going somewhere while the
+rooms and rules are still being built.
+
+Two dependencies are worth calling out because they are easy to miss:
+
+- **Reincarnation needs Phase 1 first.** With no duplicates, a replayed floor's draft has almost
+  nothing eligible left: the room would hand the player a rewind and no cards. `MaxCopies` is what
+  makes the room mean anything.
+- **Phase 2 must not change the maze.** The carver adds cells after generation and never removes a
+  passage, and it draws from its own seeded stream. That is why it can land without re-baselining a
+  single existing maze test.
+
+### 23.1 Phase detail
+
+**Phase 1 — copies.** Add `MaxCopies` to `Card` (default 1, validate 1..3). `DraftFactory` replaces
+"already held → ineligible" with "copies held ≥ MaxCopies → ineligible", and counts copies per id.
+Mark the eight cards in `CardCatalog`; update `CardCatalogTests.OnlyLuckyFind...`-style tests and add
+a draft test that a run of 19 drafts still has three eligible cards to offer on each floor. Small,
+and it fixes the complaint that the draft has nothing in it.
+
+**Phase 2 — carving.** `Grid.CarveCell` is `internal` like `CloseCell`. `SecretRoom` is a record of
+nine cells, the door cell and a centre. `SecretRoomCarver.TryCarve(Grid grid, int floorNumber,
+IRandom random)` returns `SecretRoom?`. Call it in `GameFactory.CreateFloor` after `Generate` and
+before `new GameState(...)`, passing the room in. Tests live in
+`tests/MazeGame.Tests/Maze/SecretRoomTests.cs`.
+
+**Phase 3 — pause.** Split `AdvanceTimers` into the player's own clock and the world's; `Tick`
+returns after the player's clock when `IsInSafeRoom`. The room parameter on the `GameState`
+constructor is **optional (null by default)**, so the existing 748 tests compile untouched. Store
+the room in `GameState`, expose
+`IReadOnlyList<Cell> SafeRoomCells` and `bool IsInSafeRoom`, and light the nine cells in
+`RecomputeVisibility`. Add `GameEvent.SecretRoomEntered`/`Left`. Exclude the nine cells from the
+placement shuffle and from `ChooseHunterStarts`.
+
+**Phase 4 — one room.** Prove the whole loop with the room that needs no economy: the Cartographer.
+`RoomKind` enum, `RoomOffer` read model (options + resolved flag), `Campaign.OpenRoom()` /
+`Campaign.ResolveRoom(option)` with the map reveal carried on a new `GameState.RevealMapFor(seconds)`.
+`Screen.Room` in the frontend, drawn by `PixelCards.Room`, plus a console card. Only after this works
+end to end should the casino exist.
+
+**Phase 5 — money rooms.** `RunModifiers.FromCards` is the gate: rebuild totals from the card list,
+proven equal to `With` in sequence for every card in the catalogue. Then the casino (stake selector,
+seeded roll, payout), the shop (three offers from `DraftFactory.Offers` with a shop salt, one heart
+each, leave when done), and the confessional (choose a card, pay a heart, rebuild).
+
+**Phase 6 — reincarnation.** `Campaign.TryReincarnate(bool toStart)` sets `_floorIndex`, clears the
+draft and carry, builds the target with the current hearts and modifiers, and increments a counter.
+`DraftFactory` gains a salt and takes an "effective floor" so a rewind cannot hand out floor-15 rares
+on floor 5; `_deepestFloor` in `Campaign` supplies it. Gates already chosen stay chosen. Test the
+exact hearts, the hunter cadence, and that a second reincarnation is refused.
+
+**Phase 7 — floor rules.** One `FloorRule? Rule` on `FloorDefinition`, copied through
+`GameConfig.ForFloor`, read in `GameState` at exactly the points listed in §20.3. Assign the four
+cheap rules to The Loom, The Ossuary, The Vault and The Deep. Each rule gets a `FloorRuleTests` file
+with a hand-built corridor; the maze generator is not touched.
+
+**Phase 8 — the rest.** Slick glass (movement), the mimic bloom (objective), the burning lantern
+(time), then the card upgrades and schools, then sounds and the docs (`README.md`, `PROGRESS.md`,
+`DECISIONS.md` — including the decision that a `key` in code is a bloom in the fiction).
+
+### 23.2 Verification per phase
+
+```
+dotnet build MazeGame.sln --no-restore     # warning-free
+dotnet test MazeGame.sln                   # all green, count only goes up
+dotnet run --project tools/AssetForge -- --check   # only if a tile was added
+dotnet run --project src/MazeGame.UI       # play the phase's floor
+```
+
+Acceptance for the whole set, checked by hand once at the end: a seeded run reproduces its rooms;
+a room can be entered, used once and left; the pause is total; every room refuses to take the last
+heart; a rewind keeps the cards and rebuilds the floors at the right speed; and no floor rule makes
+the arch or a hunter unreachable.
+
+### 23.3 What I would not build
+
+- **Rising water** and any rule that mutates the maze at runtime: it breaks the "maze is legal"
+  guarantee that every other system relies on. Keep it in the stretch column.
+- **A second currency.** Hearts are the economy; everything in §21 is priced in them.
+- **A room per floor.** At 1-20% the rooms are events. Making one guaranteed per floor turns them
+  into a shop route and removes the wonder the ask is after.
+
+### 23.4 Open decisions (defaults in bold)
+
+| Question | Default | The alternative |
+| --- | --- | --- |
+| Room frequency | **Floor number percent** (~2.1/run) | `floor + 5` (~4.6/run) |
+| Reincarnation limit | **Once per run** | Unlimited, hearts as the only cap |
+| Deep rewind price | **One heart** | Free, or two hearts |
+| Shop purchases | **Three cards, buy any number while above one heart** | One card per visit |
+| Last-heart spending | **Never allowed** | Allowed, and the room can kill you |
+| Copies | **MaxCopies by card, 1-3** | Keep single copies and shorten the run instead |

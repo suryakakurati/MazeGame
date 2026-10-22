@@ -75,8 +75,9 @@ public sealed class DraftFactoryTests
     [Fact]
     public void Offers_NeverOfferACardThatContradictsAHeldOne()
     {
-        var left = Card("wide-eyes") with { Id = "test-left", IncompatibleWith = "test-right" };
-        var right = Card("wide-eyes") with { Id = "test-right", IncompatibleWith = "test-left" };
+        // Single copies, so the only rule that can decide the answer is the contradiction.
+        var left = Card("wide-eyes") with { Id = "test-left", MaxCopies = 1, IncompatibleWith = "test-right" };
+        var right = Card("wide-eyes") with { Id = "test-right", MaxCopies = 1, IncompatibleWith = "test-left" };
         var catalog = new[] { left, right };
 
         var withLeft = DraftFactory.Offers(1, 1, [left], 2, draftsRemaining: 2, catalog);
@@ -167,12 +168,47 @@ public sealed class DraftFactoryTests
     [Fact]
     public void Offers_RepeatAStackableCard()
     {
-        var stackable = Card("wide-eyes") with { IsStackable = true };
+        var stackable = Card("wide-eyes") with { MaxCopies = 2 };
 
         var offers = DraftFactory.Offers(1, 1, [stackable], 1, draftsRemaining: 2, [stackable]);
 
         Assert.Single(offers);
         Assert.Equal(stackable.Id, offers[0].Id);
+    }
+
+    [Fact]
+    public void Offers_StopOfferingAStackableCardAtItsCopyCap()
+    {
+        var stackable = Card("wide-eyes") with { MaxCopies = 2 };
+
+        var oneHeld = DraftFactory.Offers(1, 1, [stackable], 1, draftsRemaining: 2, [stackable]);
+        var twoHeld = DraftFactory.Offers(1, 1, [stackable, stackable], 1, draftsRemaining: 2, [stackable]);
+
+        Assert.Single(oneHeld);
+        Assert.Empty(twoHeld);
+    }
+
+    [Fact]
+    public void Offers_StillFillADraftOnTheLastFloorOfALongRun()
+    {
+        // The whole point of copies: a twenty-three card catalog has to keep feeding a
+        // nineteen-draft run, so a greedy player who always takes the first offer never reaches
+        // a draft with fewer than three eligible cards to choose from.
+        const int drafts = 19;
+        var held = new List<Card>();
+
+        for (var floor = 1; floor <= drafts; floor++)
+        {
+            var offers = DraftFactory.Offers(
+                4242,
+                floor,
+                held,
+                DraftFactory.DefaultOfferCount,
+                draftsRemaining: drafts - floor);
+
+            Assert.Equal(DraftFactory.DefaultOfferCount, offers.Count);
+            held.Add(offers[0]);
+        }
     }
 
     [Fact]
@@ -202,6 +238,36 @@ public sealed class DraftFactoryTests
         }
 
         Assert.True(late > early, $"late floors drew {late} rares against {early} early");
+    }
+
+    [Fact]
+    public void Offers_OnARewoundFloor_UseTheDepthsRarityCurve()
+    {
+        // A rewind to floor four must not hand out the rares of floor eighteen, so the draw reads
+        // the deepest floor the run ever reached rather than the floor it is standing on. Neither
+        // floor is a milestone, so the guaranteed rare cannot decide the answer.
+        var shallow = 0;
+        var deep = 0;
+
+        for (var seed = 0; seed < 200; seed++)
+        {
+            shallow += DraftFactory.Offers(seed, 4, [], 3, draftsRemaining: 2, effectiveFloor: 4)
+                .Count(card => card.Tier == CardTier.Rare);
+            deep += DraftFactory.Offers(seed, 4, [], 3, draftsRemaining: 2, effectiveFloor: 18)
+                .Count(card => card.Tier == CardTier.Rare);
+        }
+
+        Assert.True(deep > shallow, $"the rewound draft drew {deep} rares against {shallow}");
+    }
+
+    [Fact]
+    public void Offers_WithASalt_DifferFromThePlainDraft()
+    {
+        // A shop and a mirror salt their draw, so their cards are not the next draft's cards.
+        var plain = DraftFactory.Offers(3, 1, [], 3, draftsRemaining: 2);
+        var salted = DraftFactory.Offers(3, 1, [], 3, draftsRemaining: 2, salt: 0x1234);
+
+        Assert.NotEqual(Ids(plain), Ids(salted));
     }
 
     [Fact]

@@ -73,7 +73,7 @@ public static class PixelCards
         DrawTitleRule(centreX, ruleY, Glow);
 
         font.DrawCentered(
-            "COLLECT THE KEYS. OPEN THE ARCH. DO NOT BE CAUGHT.",
+            "PICK THE BLOOMS. OPEN THE ARCH. DO NOT BE CAUGHT.",
             centreX,
             ruleY + 18,
             width >= 760 ? 2 : 1,
@@ -254,6 +254,111 @@ public static class PixelCards
     }
 
     /// <summary>
+    /// Draws a safe room's card: its name, its prose, its price and its options.
+    /// </summary>
+    /// <param name="font">The loaded font.</param>
+    /// <param name="campaign">The run, whose open room is being read.</param>
+    /// <param name="selectedIndex">The option the keyboard is on, clamped to the card.</param>
+    /// <param name="accent">The floor's accent colour.</param>
+    /// <exception cref="ArgumentNullException">Thrown when an argument is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the campaign has no open room; the frontend only asks for this screen at the
+    /// right moment.
+    /// </exception>
+    /// <remarks>
+    /// The whole card is one column of lines rather than a grid of cards: a room asks one question
+    /// with two or three answers, and a list reads faster than a row. Once it is resolved the
+    /// options are replaced by what the choice actually did, so the player learns the odds.
+    /// </remarks>
+    public static void Room(PixelFont font, Campaign campaign, int selectedIndex, Color accent)
+    {
+        ArgumentNullException.ThrowIfNull(font);
+        ArgumentNullException.ThrowIfNull(campaign);
+
+        var room = campaign.Room
+            ?? throw new InvalidOperationException("There is no room card to draw.");
+
+        var width = Raylib.GetScreenWidth();
+        var height = Raylib.GetScreenHeight();
+        var centreX = width / 2;
+        var options = room.Options;
+        var selected = options.Count == 0 ? -1 : Math.Clamp(selectedIndex, 0, options.Count - 1);
+
+        Begin(width, height);
+
+        FloorEmblem.DrawCentered(campaign.CurrentFloor.ThemeId, centreX, 10, 2, accent);
+        font.DrawCentered("SAFE ROOM", centreX, 42, 2, Glow);
+        Heading(font, room.Name.ToUpperInvariant(), centreX, 66, width - 48, accent);
+
+        var proseScale = width >= 700 ? 2 : 1;
+        var y = 100;
+
+        foreach (var line in Wrap(room.Prompt, proseScale, width - 80))
+        {
+            font.DrawCentered(line, centreX, y, proseScale, Text);
+            y += (PixelFont.LineHeight * proseScale) + 4;
+        }
+
+        font.DrawCentered(Fit(room.Price, 2, width - 48), centreX, y + 6, 2, Dim);
+
+        var rowHeight = 46;
+        var listTop = Math.Max(y + 44, height / 2 - ((options.Count * rowHeight) / 2));
+        var rowWidth = Math.Min(width - 96, 520);
+        var left = centreX - (rowWidth / 2);
+
+        if (room.IsResolved)
+        {
+            var outcome = room.Outcome ?? "IT IS DONE";
+            font.DrawCentered(Fit(outcome, 2, width - 48), centreX, listTop + 20, 2, Glow);
+            font.DrawCentered("ENTER: LEAVE", centreX, height - 54, 2, Text);
+            return;
+        }
+
+        for (var index = 0; index < options.Count; index++)
+        {
+            var top = listTop + (index * rowHeight);
+            var isSelected = index == selected;
+            var colour = isSelected ? accent : Fade(accent, 0.40);
+
+            Raylib.DrawRectangle(left, top, rowWidth, rowHeight - 6, isSelected ? new Color(6, 24, 26, 248) : new Color(3, 12, 14, 238));
+            Frame(left, top, rowWidth, rowHeight - 6, colour);
+
+            if (isSelected)
+            {
+                Raylib.DrawRectangle(left, top + 4, 3, rowHeight - 14, accent);
+            }
+
+            font.DrawCentered(
+                Fit(options[index].Label, 2, rowWidth - 24),
+                centreX,
+                top + 6,
+                2,
+                isSelected ? Text : Dim);
+
+            if (options[index].Note is { } note)
+            {
+                font.DrawCentered(Fit(note, 1, rowWidth - 24), centreX, top + 24, 1, isSelected ? Glow : Dim);
+            }
+        }
+
+        var promptScale = width >= 700 ? 2 : 1;
+
+        font.DrawCentered(
+            Fit("A / D: CHOOSE   ENTER: TAKE   ESC: LEAVE", promptScale, width - 24),
+            centreX,
+            height - 54,
+            promptScale,
+            Text);
+        font.DrawCentered(
+            // No denominator: the run has no heart ceiling to compare against.
+            Fit($"HEARTS {campaign.Hearts}", 1, width - 24),
+            centreX,
+            height - 28,
+            1,
+            Dim);
+    }
+
+    /// <summary>
     /// Draws one descent condition: its name, its one-line rule and the take prompt.
     /// </summary>
     private static void DrawConditionCard(
@@ -373,31 +478,230 @@ public static class PixelCards
         font.DrawCentered("ENTER / SPACE: BEGIN", width / 2, centreY + 52, 2, Dim);
     }
 
-    /// <summary>Draws the card shown when a floor's exit is reached.</summary>
+    /// <summary>Draws the page shown when a floor's exit is reached.</summary>
     /// <param name="font">The loaded font.</param>
     /// <param name="floor">The floor that was cleared.</param>
     /// <param name="hearts">Hearts the player still has.</param>
     /// <param name="accent">The floor's accent colour.</param>
+    /// <param name="page">The floor's page of the gardener's book.</param>
+    /// <param name="moodLine">
+    /// The line the gardener adds when the run is in a particular state, or <see langword="null"/>.
+    /// </param>
+    /// <param name="garden">How many blooms the garden is worth so far.</param>
     /// <exception cref="ArgumentNullException">Thrown when an argument is null.</exception>
-    public static void FloorCleared(PixelFont font, FloorDefinition floor, int hearts, Color accent)
+    /// <remarks>
+    /// <para>
+    /// This is a page, not a HUD line: a full-window panel with a double frame, the chapter's
+    /// title at heading size and the prose at two pixels per glyph. The old card drew the story at
+    /// one pixel per glyph under a row of hearts, which on a laptop was the smallest text on the
+    /// screen — the story was there, but nobody could read it.
+    /// </para>
+    /// <para>
+    /// The layout is measured from the panel rather than pinned to the window's centre, so a
+    /// resized frame grows the margins instead of pushing the footer off the bottom.
+    /// </para>
+    /// </remarks>
+    public static void FloorCleared(
+        PixelFont font,
+        FloorDefinition floor,
+        int hearts,
+        Color accent,
+        StoryPage page,
+        string? moodLine,
+        int garden)
     {
         ArgumentNullException.ThrowIfNull(font);
         ArgumentNullException.ThrowIfNull(floor);
+        ArgumentNullException.ThrowIfNull(page);
 
         var width = Raylib.GetScreenWidth();
         var height = Raylib.GetScreenHeight();
-        var centreY = height / 2;
 
         Begin(width, height);
 
-        FloorEmblem.DrawCentered(floor.ThemeId, width / 2, centreY - 148, 4, accent);
-        DrawPaletteStrip(FloorStyleCatalog.For(floor.ThemeId), width / 2, centreY - 106);
+        var panel = PagePanel(width, height, accent);
+        var centreX = width / 2;
+        var panelLeft = (int)panel.X;
+        var panelTop = (int)panel.Y;
+        var panelWidth = (int)panel.Width;
+        var panelHeight = (int)panel.Height;
+        var innerWidth = panelWidth - 64;
+        var top = panelTop + 22;
 
-        Heading(font, "FLOOR CLEARED", width / 2, centreY - 96, width - 96, accent);
-        font.DrawCentered(floor.Name.ToUpperInvariant(), width / 2, centreY - 56, 2, Dim);
-        DrawHearts(font, width / 2, centreY - 24, hearts);
-        Rule(width / 2, centreY + 24, accent);
-        font.DrawCentered("ENTER: DESCEND", width / 2, centreY + 40, 2, Dim);
+        font.DrawCentered(
+            FormattableString.Invariant($"FLOOR {floor.Number} CLEARED"),
+            centreX,
+            top,
+            1,
+            Dim);
+
+        var pageNumber = FormattableString.Invariant($"PAGE {page.FloorNumber}");
+        font.Draw(pageNumber, panelLeft + panelWidth - 30 - PixelFont.MeasureWidth(pageNumber, 1), top, 1, Fade(accent, 0.7));
+
+        top += PixelFont.LineHeight + 14;
+
+        // The chapter title is the page's identity, so it takes heading size and only drops a
+        // step for a title that would run off the panel.
+        var titleScale = 3;
+        while (titleScale > 2 && PixelFont.MeasureWidth(page.Title, titleScale) > innerWidth)
+        {
+            titleScale--;
+        }
+
+        font.DrawCentered(page.Title, centreX, top, titleScale, accent);
+        top += (PixelFont.LineHeight * titleScale) + 12;
+
+        DrawTitleRule(centreX, top, Fade(accent, 0.8));
+        top += 26;
+
+        // The prose is the point: two pixels per glyph whenever the panel can hold a sentence at
+        // that size, wrapped to the panel rather than clipped.
+        var lineScale = innerWidth >= 380 ? 2 : 1;
+        var lineHeight = (PixelFont.LineHeight * lineScale) + 7;
+
+        foreach (var line in page.Lines)
+        {
+            foreach (var row in Wrap(line, lineScale, innerWidth))
+            {
+                font.DrawCentered(row, centreX, top, lineScale, Text);
+                top += lineHeight;
+            }
+        }
+
+        if (moodLine is not null)
+        {
+            top += 4;
+            font.DrawCentered(Fit(moodLine, 1, innerWidth), centreX, top, 1, Dim);
+            top += PixelFont.LineHeight + 8;
+        }
+
+        top += 8;
+        DrawGarden(centreX, top, garden, accent, Glow);
+        top += 20;
+
+        font.DrawCentered(
+            Fit(FormattableString.Invariant($"GARDEN {garden}   HEARTS {hearts}"), 1, innerWidth),
+            centreX,
+            top,
+            1,
+            Fade(accent, 0.75));
+
+        Rule(centreX, panelTop + panelHeight - 74, accent);
+        font.DrawCentered(
+            "ENTER: TURN THE PAGE",
+            centreX,
+            panelTop + panelHeight - 56,
+            2,
+            Text);
+    }
+
+    /// <summary>
+    /// Draws the Echo's card: the gardener's voice, read in the dark with the hunt held still.
+    /// </summary>
+    /// <param name="font">The loaded font.</param>
+    /// <param name="title">The page title, which names the floor's chapter.</param>
+    /// <param name="lines">The lines to read, the last of which teaches the floor's rule.</param>
+    /// <param name="accent">The floor's accent colour.</param>
+    /// <exception cref="ArgumentNullException">Thrown when an argument is null.</exception>
+    /// <remarks>
+    /// The card is deliberately plain: this is a voice, not a menu. It never offers a choice and
+    /// it never has a price, because an interaction that can kill you without a decision is the one
+    /// thing the grammar forbids.
+    /// </remarks>
+    public static void Echo(PixelFont font, string title, IReadOnlyList<string> lines, Color accent)
+    {
+        ArgumentNullException.ThrowIfNull(font);
+        ArgumentNullException.ThrowIfNull(title);
+        ArgumentNullException.ThrowIfNull(lines);
+
+        var width = Raylib.GetScreenWidth();
+        var height = Raylib.GetScreenHeight();
+        var centreX = width / 2;
+
+        Begin(width, height);
+
+        var panel = PagePanel(width, height, accent);
+        var panelTop = (int)panel.Y;
+        var panelHeight = (int)panel.Height;
+        var innerWidth = (int)panel.Width - 64;
+        var top = panelTop + 26;
+
+        font.DrawCentered("THE ECHO", centreX, top, 1, Glow);
+        top += PixelFont.LineHeight + 16;
+
+        var titleScale = 3;
+        while (titleScale > 2 && PixelFont.MeasureWidth(title, titleScale) > innerWidth)
+        {
+            titleScale--;
+        }
+
+        font.DrawCentered(title, centreX, top, titleScale, accent);
+        top += (PixelFont.LineHeight * titleScale) + 12;
+
+        DrawTitleRule(centreX, top, Fade(accent, 0.8));
+        top += 26;
+
+        var lineScale = innerWidth >= 380 ? 2 : 1;
+        var lineHeight = (PixelFont.LineHeight * lineScale) + 8;
+
+        foreach (var line in lines)
+        {
+            foreach (var row in Wrap(line, lineScale, innerWidth))
+            {
+                font.DrawCentered(row, centreX, top, lineScale, Text);
+                top += lineHeight;
+            }
+        }
+
+        top += 6;
+
+        // What the Echo actually gives, in the one place the player is already reading. A story
+        // beat that only speaks is a cutscene; this one leaves a heart in the hand.
+        font.DrawCentered("IT WARMS YOU: ONE HEART", centreX, top, 1, Glow);
+        top += PixelFont.LineHeight + 10;
+
+        Rule(centreX, panelTop + panelHeight - 74, accent);
+        font.DrawCentered("ENTER: LET GO", centreX, panelTop + panelHeight - 56, 2, Text);
+    }
+
+    /// <summary>
+    /// Draws the garden: one small bloom for every bloom picked this run, plus one for every page
+    /// turned.
+    /// </summary>
+    /// <param name="centreX">The centre column.</param>
+    /// <param name="y">The top edge.</param>
+    /// <param name="count">How many marks to draw.</param>
+    /// <param name="accent">The marks' colour.</param>
+    /// <param name="highlight">The colour of every fifth mark, so the row can be counted.</param>
+    /// <remarks>
+    /// It is a strip rather than a number because the strip is what grows: by the Deep it is the
+    /// widest thing on the card, and it exists only in this run. Past the window's width the row
+    /// stops growing instead of wrapping, so a long run cannot push the card's footer off screen.
+    /// </remarks>
+    private static void DrawGarden(int centreX, int y, int count, Color accent, Color highlight)
+    {
+        const int Mark = 4;
+        const int Gap = 3;
+        const int MaxMarks = 64;
+
+        if (count <= 0)
+        {
+            return;
+        }
+
+        var shown = Math.Min(count, MaxMarks);
+        var rowWidth = (shown * (Mark + Gap)) - Gap;
+        var x = centreX - (rowWidth / 2);
+
+        for (var index = 0; index < shown; index++)
+        {
+            Raylib.DrawRectangle(
+                x + (index * (Mark + Gap)),
+                y,
+                Mark,
+                Mark,
+                (index % 5) == 4 ? highlight : accent);
+        }
     }
 
     /// <summary>Draws the run summary after the last floor.</summary>
@@ -406,8 +710,19 @@ public static class PixelCards
     /// <param name="hearts">Hearts the player finished with.</param>
     /// <param name="accent">The final floor's accent colour.</param>
     /// <param name="themeId">The final floor's theme, whose emblem and palette close the run.</param>
+    /// <param name="garden">How many blooms the run's garden came to.</param>
     /// <exception cref="ArgumentNullException">Thrown when an argument is null.</exception>
-    public static void RunComplete(PixelFont font, int floorCount, int hearts, Color accent, string themeId)
+    /// <remarks>
+    /// The garden is the run's only score: every bloom picked and every page turned, drawn as a
+    /// strip that will not exist once the window closes. It is not an unlock and it is not saved.
+    /// </remarks>
+    public static void RunComplete(
+        PixelFont font,
+        int floorCount,
+        int hearts,
+        Color accent,
+        string themeId,
+        int garden)
     {
         ArgumentNullException.ThrowIfNull(font);
         ArgumentNullException.ThrowIfNull(themeId);
@@ -430,6 +745,7 @@ public static class PixelCards
             2,
             Text);
         DrawHearts(font, width / 2, centreY + 2, hearts);
+        DrawGarden(width / 2, centreY + 24, garden, accent, Glow);
         Rule(width / 2, centreY + 48, accent);
         font.DrawCentered("R / ENTER: NEW RUN      ESC: QUIT", width / 2, centreY + 64, 2, Dim);
     }
@@ -538,6 +854,33 @@ public static class PixelCards
     /// <param name="height">The window's height.</param>
     private static void Begin(int width, int height) =>
         Raylib.DrawRectangle(0, 0, width, height, Backdrop);
+
+    /// <summary>
+    /// Paints the full-window page a cleared floor turns: a dark sheet inside a double frame, with
+    /// a shadow so it reads as a pop-up rather than as a second HUD strip.
+    /// </summary>
+    /// <param name="width">The window's width.</param>
+    /// <param name="height">The window's height.</param>
+    /// <param name="accent">The floor's accent colour.</param>
+    /// <returns>The page's inner rectangle.</returns>
+    private static Rectangle PagePanel(int width, int height, Color accent)
+    {
+        var margin = Math.Clamp(width / 18, 18, 56);
+        var left = margin;
+        var top = margin;
+        var panelWidth = width - (2 * margin);
+        var panelHeight = height - (2 * margin);
+
+        Raylib.DrawRectangle(left + 7, top + 7, panelWidth, panelHeight, new Color(0, 0, 0, 120));
+        Raylib.DrawRectangle(left, top, panelWidth, panelHeight, new Color(4, 11, 13, 250));
+
+        Frame(left, top, panelWidth, panelHeight, Fade(accent, 0.62));
+        Frame(left + 4, top + 4, panelWidth - 8, panelHeight - 8, Fade(accent, 0.22));
+        Raylib.DrawRectangle(left, top, panelWidth, 2, Fade(accent, 0.9));
+        Raylib.DrawRectangle(left, top + panelHeight - 2, panelWidth, 2, Fade(accent, 0.9));
+
+        return new Rectangle(left, top, panelWidth, panelHeight);
+    }
 
     /// <summary>
     /// Draws five small colour blocks that summarise the floor's look: accent, weather, fog and

@@ -152,16 +152,18 @@ public sealed class CampaignDraftTests
     }
 
     [Fact]
-    public void SkipDraft_IsCappedByTheNextFloorsCeiling()
+    public void SkipDraft_IsNotClipped_WhenTheRunIsAlreadyAtFullHealth()
     {
+        // There is no heart ceiling: the banked heal is carried onto the next floor whole, even
+        // though the run cleared the last one at the floor's full design.
         var campaign = CampaignOf(maxHearts: 3);
         ClearFloor(campaign);
 
         Assert.True(campaign.SkipDraft());
         Assert.True(campaign.TryAdvanceFloor());
 
-        Assert.Equal(3, campaign.Hearts);
-        Assert.Equal(3, campaign.MaxHearts);
+        Assert.Equal(4, campaign.Hearts);
+        Assert.Equal(4, campaign.MaxHearts);
     }
 
     [Fact]

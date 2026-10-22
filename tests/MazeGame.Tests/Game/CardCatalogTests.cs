@@ -69,6 +69,53 @@ public sealed class CardCatalogTests
     }
 
     [Fact]
+    public void ExactlyEightNumericCardsStack()
+    {
+        // Stacking is the draft's answer to an exhausted pool, so the set is content: eight cards
+        // whose downside compounds exactly as their upside does. Anything else is single-copy.
+        var expected = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "wide-eyes",
+            "blood-pact",
+            "quick-hands",
+            "glass-cannon",
+            "slow-pursuit",
+            "light-feet",
+            "momentum",
+            "hollow-bones",
+        };
+
+        var stackable = new List<string>();
+
+        foreach (var card in CardCatalog.All)
+        {
+            Assert.InRange(card.MaxCopies, Card.MinCopies, Card.MaxCopiesAllowed);
+            Assert.Equal(card.MaxCopies > 1, card.IsStackable);
+
+            if (card.IsStackable)
+            {
+                stackable.Add(card.Id);
+            }
+        }
+
+        Assert.Equal(expected, new HashSet<string>(stackable, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void AStackableCard_StillStatesItsTradeOnItsFace()
+    {
+        // A second copy compounds the drawback too, so the honest face is unchanged: the same
+        // sentence describes one copy and any number of them.
+        foreach (var card in CardCatalog.All)
+        {
+            if (card.MaxCopies > 1)
+            {
+                Assert.Contains(" but ", card.FaceText, StringComparison.Ordinal);
+            }
+        }
+    }
+
+    [Fact]
     public void ById_ReturnsTheMatchingCard()
     {
         var card = Assert.IsType<Card>(CardCatalog.ById("wide-eyes"));

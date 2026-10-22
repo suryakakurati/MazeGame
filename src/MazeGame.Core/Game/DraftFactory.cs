@@ -15,11 +15,11 @@ namespace MazeGame.Core.Game;
 /// recorded. Reality comes from <see cref="IRandom"/> like everything else in the project.
 /// </para>
 /// <para>
-/// Four guards keep the draft honest: a card already held is not offered again (unless the
-/// catalog marks it stackable), a card that contradicts a held one is not offered, no card may
-/// change vision once the run already holds two that do, and no card is offered when the part of
-/// the run that pays for it does not exist. Rares are drawn less often than commons early in the
-/// run and more often late, and every fifth floor's draft guarantees one when one is still
+/// Four guards keep the draft honest: a card is not offered again once the run holds its
+/// <see cref="Card.MaxCopies"/> copies, a card that contradicts a held one is not offered, no card
+/// may change vision once the run already holds two that do, and no card is offered when the part
+/// of the run that pays for it does not exist. Rares are drawn less often than commons early in
+/// the run and more often late, and every fifth floor's draft guarantees one when one is still
 /// eligible, so a rare feels like an event without being a lottery.
 /// </para>
 /// </remarks>
@@ -63,6 +63,15 @@ public static class DraftFactory
     /// is withheld when there are not enough left for the trade to exist.
     /// </param>
     /// <param name="catalog">The cards to draw from; defaults to <see cref="CardCatalog.All"/>.</param>
+    /// <param name="effectiveFloor">
+    /// The depth the rarity curve is measured against, for a run that has turned back: a rewind to
+    /// floor five must not hand out the rares of floor fifteen. Defaults to
+    /// <paramref name="floorNumber"/>.
+    /// </param>
+    /// <param name="salt">
+    /// Mixed into the draw's seed so a shop or a mirror is not a copy of the next draft's offers.
+    /// Zero (the default) is the draft itself.
+    /// </param>
     /// <returns>The offers in draw order, as a read-only list. May be empty if nothing is eligible.</returns>
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="held"/> is null, or when it or <paramref name="catalog"/> holds a null.
@@ -77,7 +86,9 @@ public static class DraftFactory
         IReadOnlyList<Card> held,
         int offerCount,
         int draftsRemaining,
-        IReadOnlyList<Card>? catalog = null)
+        IReadOnlyList<Card>? catalog = null,
+        int? effectiveFloor = null,
+        int salt = 0)
     {
         ArgumentNullException.ThrowIfNull(held);
 
@@ -97,12 +108,16 @@ public static class DraftFactory
         }
 
         var heldVisionCards = 0;
+        var copiesHeld = new Dictionary<string, int>(StringComparer.Ordinal);
+
         foreach (var card in held)
         {
             if (card.Effect.TouchesVision)
             {
                 heldVisionCards++;
             }
+
+            copiesHeld[card.Id] = copiesHeld.TryGetValue(card.Id, out var count) ? count + 1 : 1;
         }
 
         var pool = new List<Card>();
@@ -120,18 +135,19 @@ public static class DraftFactory
 
         foreach (var card in catalog)
         {
-            if (IsEligible(card, held, heldVisionCards, draftsRemaining))
+            if (IsEligible(card, held, copiesHeld, heldVisionCards, draftsRemaining))
             {
                 pool.Add(card);
             }
         }
 
         var offers = new List<Card>(Math.Min(offerCount, pool.Count));
-        var random = new SeededRandom(Mix(runSeed, floorNumber));
+        var depth = effectiveFloor ?? floorNumber;
+        var random = new SeededRandom(unchecked(Mix(runSeed, floorNumber) ^ salt));
 
         while (offers.Count < offerCount && pool.Count > 0)
         {
-            var index = ChooseIndex(pool, random, floorNumber);
+            var index = ChooseIndex(pool, random, depth);
             if (index < 0)
             {
                 break;
@@ -144,7 +160,7 @@ public static class DraftFactory
         // Every fifth floor is a milestone: the draft guarantees a rare when one is still eligible.
         // A weighted draw alone would make that a promise the RNG could break, so a missed rare is
         // swapped in for the last offer. The swap is seeded, so a replay is unchanged.
-        if (floorNumber % 5 == 0 && offers.Count > 0 && !ContainsRare(offers))
+        if (depth % 5 == 0 && offers.Count > 0 && !ContainsRare(offers))
         {
             var rares = new List<Card>();
 
@@ -168,9 +184,15 @@ public static class DraftFactory
     /// <summary>
     /// Tests whether <paramref name="card"/> may be offered to a run holding <paramref name="held"/>.
     /// </summary>
+    /// <param name="card">The candidate offer.</param>
+    /// <param name="held">Every card taken so far, repeats included.</param>
+    /// <param name="copiesHeld">How many copies of each id the run holds.</param>
+    /// <param name="heldVisionCards">How many held cards change what the player can see.</param>
+    /// <param name="draftsRemaining">How many drafts still happen after this one.</param>
     private static bool IsEligible(
         Card card,
         IReadOnlyList<Card> held,
+        Dictionary<string, int> copiesHeld,
         int heldVisionCards,
         int draftsRemaining)
     {
@@ -186,13 +208,13 @@ public static class DraftFactory
             return false;
         }
 
+        if (copiesHeld.TryGetValue(card.Id, out var copies) && copies >= card.MaxCopies)
+        {
+            return false;
+        }
+
         foreach (var taken in held)
         {
-            if (string.Equals(taken.Id, card.Id, StringComparison.Ordinal) && !card.IsStackable)
-            {
-                return false;
-            }
-
             if (!card.IsCompatibleWith(taken))
             {
                 return false;

@@ -75,6 +75,11 @@ public static class GameCommands
             case GameCommand.Shove:
                 state.TryShove();
                 break;
+            case GameCommand.Interact:
+
+                // Rooms belong to the run, not to one floor: the frontend opens the campaign's
+                // safe-room card in response to this command.
+                break;
             case GameCommand.Quit:
                 return false;
         }

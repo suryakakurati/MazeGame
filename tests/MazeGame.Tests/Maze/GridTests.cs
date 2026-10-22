@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using MazeGame.Core.Maze;
 
 namespace MazeGame.Tests.Maze;
@@ -165,6 +166,27 @@ public sealed class GridTests
                 seen[index] = true;
             }
         }
+    }
+
+    [Fact]
+    public void Cells_AreEqualByPosition_EvenAfterAWallMoves()
+    {
+        // A stored cell is a snapshot of the walls as well as the position. Walls move during a
+        // floor (Fracture, Regrowth, a room being carved), and every reference the game keeps —
+        // a key, the arch, the player — was taken before that move. Equality therefore has to be
+        // positional, or those references stop matching the cells the rest of the game reads.
+        var grid = new Grid(Rows, Columns);
+        var before = grid.GetCell(1, 1);
+
+        grid.RemoveWall(1, 1, Direction.East);
+        var after = grid.GetCell(1, 1);
+
+        Assert.NotEqual(before.WallCount, after.WallCount);
+        Assert.Equal(before, after);
+        Assert.Equal(before.GetHashCode(), after.GetHashCode());
+        Assert.True(before == after);
+        Assert.Contains(before, new HashSet<Cell> { after });
+        Assert.NotEqual(before, grid.GetCell(1, 2));
     }
 
     [Fact]

@@ -54,6 +54,25 @@ public sealed class GameStateConditionTests
     }
 
     [Fact]
+    public void Regrowth_DoesNotSealAnUnreadEcho()
+    {
+        // The Echo deliberately sits in a dead end, which is exactly the cell Regrowth wants to
+        // close. Sealing it would hide the floor's story and its heal behind a wall the player
+        // never saw move.
+        var state = DeadEndLevel(echo: true);
+
+        Assert.NotNull(state.EchoCell);
+        var echo = state.EchoCell.Value;
+
+        Assert.Single(state.Maze.OpenDirections(echo.Row, echo.Column));
+
+        state.Tick(18.0);
+
+        Assert.Single(state.Maze.OpenDirections(echo.Row, echo.Column));
+        Assert.DoesNotContain(GameEvent.WallSealed, state.DrainEvents());
+    }
+
+    [Fact]
     public void Fracture_OpensAWallAndClosesOneThatKeepsTheFloorConnected()
     {
         var state = TestLevels.GameOver(
@@ -177,7 +196,7 @@ public sealed class GameStateConditionTests
     /// A 5x5 ring with two empty dead ends: a near one at (1,1) and a far one at (3,3). The
     /// killer starts on the far one, so Regrowth has exactly one legal cell to seal.
     /// </summary>
-    private static GameState DeadEndLevel()
+    private static GameState DeadEndLevel(bool echo = false)
     {
         var grid = new Grid(5, 5);
 
@@ -196,9 +215,14 @@ public sealed class GameStateConditionTests
         grid.RemoveWall(1, 0, Direction.East);
         grid.RemoveWall(3, 4, Direction.West);
 
-        return TestLevels.GameOver(
-            grid,
-            Config(5, 5, keyCount: 1, conditions: DescentCondition.Regrowth));
+        var config = Config(5, 5, keyCount: 1, conditions: DescentCondition.Regrowth);
+
+        if (echo)
+        {
+            config = config with { EchoEnabled = true, FloorNumber = 1 };
+        }
+
+        return TestLevels.GameOver(grid, config);
     }
 
     /// <summary>A 1x6 corridor with the requested conditions.</summary>

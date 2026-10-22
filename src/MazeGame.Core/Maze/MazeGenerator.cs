@@ -67,6 +67,17 @@ public sealed class MazeGenerator : IMazeGenerator
         // carve passages into the rock and could cut the maze in two.
         options.Shape?.ApplyTo(grid);
 
+        // A reserved pocket is closed before the first candidate wall is collected, so the maze is
+        // generated around it and no corridor is ever routed through it. Carving the room later is
+        // then the only thing that can open those cells.
+        if (options.ReservedCells is { } reserved)
+        {
+            foreach (var cell in reserved)
+            {
+                grid.CloseCell(cell.Row, cell.Column);
+            }
+        }
+
         // One set per cell. The index arithmetic comes from Grid so that the mapping
         // between (row, column) and set index lives in exactly one place.
         var sets = new DisjointSet(grid.CellCount);

@@ -10,8 +10,16 @@ namespace MazeGame.Core.Maze;
 /// A cell is an immutable value. Removing a wall therefore produces a new
 /// <see cref="Cell"/> rather than mutating the existing one; <see cref="Grid"/> swaps the
 /// new value into place. That makes walls impossible to change by accident from outside
-/// the grid, and keeps equality simple (two cells are equal when they describe exactly
-/// the same square with the same walls).
+/// the grid.
+/// </para>
+/// <para>
+/// Equality is by position only: two cells are the same cell when they sit at the same
+/// row and column, whatever walls they currently carry. Walls move during a floor (Fracture,
+/// Regrowth, a secret room being carved), and everything that holds a cell — the player, a key,
+/// the arch, an Echo, a barrier — holds the copy it was given. If equality included the walls,
+/// moving a wall at one of those cells would quietly make the stored copy stop matching the
+/// cell the rest of the game reads, and a key could become uncollectable or an arch impossible
+/// to enter. Comparing by position keeps every reference valid for the whole floor.
 /// </para>
 /// <para>
 /// The four walls are packed into one byte, one bit per <see cref="Direction"/>, because
@@ -57,6 +65,27 @@ public readonly record struct Cell
     /// Gets the column index of this cell. Column 0 is the leftmost column.
     /// </summary>
     public int Column { get; }
+
+    /// <summary>
+    /// Determines whether <paramref name="other"/> is the same square of the maze.
+    /// </summary>
+    /// <param name="other">The cell to compare with.</param>
+    /// <returns>
+    /// <see langword="true"/> when both cells share a row and a column, regardless of the walls
+    /// they currently describe.
+    /// </returns>
+    /// <remarks>
+    /// The walls are deliberately not part of equality: a wall may be opened or closed after a
+    /// cell has been stored (see the type's remarks), and every consumer wants the position, not
+    /// a snapshot of the walls.
+    /// </remarks>
+    public bool Equals(Cell other) => Row == other.Row && Column == other.Column;
+
+    /// <summary>
+    /// Returns a hash code based on the cell's position, matching <see cref="Equals(Cell)"/>.
+    /// </summary>
+    /// <returns>A hash consistent with positional equality.</returns>
+    public override int GetHashCode() => HashCode.Combine(Row, Column);
 
     /// <summary>
     /// Gets the number of walls still standing on this cell.

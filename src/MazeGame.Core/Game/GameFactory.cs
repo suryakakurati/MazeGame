@@ -33,6 +33,16 @@ public sealed class GameFactory
     /// </summary>
     private const int FloorSeedStride = 7919;
 
+    /// <summary>
+    /// Mixed into a floor's seed to give the secret rooms a stream of their own.
+    /// </summary>
+    /// <remarks>
+    /// Rooms must not move an existing maze or its placement, so they cannot draw from the same
+    /// stream the maze does: a room rolled on floor 7 would otherwise change every wall after it.
+    /// Salting the seed gives rooms a reproducible stream that is independent of generation.
+    /// </remarks>
+    private const int RoomSalt = 0x5EC2B00F;
+
     private readonly GameConfig _config;
     private readonly Func<int?, IRandom> _createRandom;
     private readonly IPathfinder _pathfinder;
@@ -68,7 +78,7 @@ public sealed class GameFactory
     public GameConfig Config => _config;
 
     /// <summary>
-    /// Builds the shipped campaign: three floors, in order, starting with full hearts.
+    /// Builds the shipped campaign: twenty floors, in order, starting with the first floor's hearts.
     /// </summary>
     /// <returns>A run that starts on floor 1.</returns>
     /// <remarks>
@@ -94,8 +104,8 @@ public sealed class GameFactory
     /// Thrown when <paramref name="floor"/> or <paramref name="modifiers"/> is null.
     /// </exception>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// Thrown when the floor is invalid, the carried hearts do not fit its ceiling, or the seeded
-    /// random source is missing.
+    /// Thrown when the floor is invalid, the carried hearts are below one, or the seeded random
+    /// source is missing.
     /// </exception>
     /// <exception cref="ArgumentException">
     /// Thrown when the floor's maze is too small for its player, killer, exit and keys — including
@@ -131,30 +141,35 @@ public sealed class GameFactory
         // The floor's own numbers first, so a bad floor definition fails with its own message,
         // then the cards over them, which may change the key count and the heart ceiling.
         //
-        // The hearts are checked against the *composed* floor: a card can raise a floor's ceiling
-        // (Blood Pact, Hearth), so the floor definition's own ceiling cannot be the last word on
-        // how many hearts it accepts. ForFloor is given the floor's own ceiling, then the lifted
-        // hearts are restored over the composed maximum once the cards have run.
-        var floorCeiling = floor.MaxHearts + (conditions.Contains(DescentCondition.Mute) ? 1 : 0);
-        var config = modifiers.Apply(
-            _config.ForFloor(floor, Math.Min(startingHearts, floorCeiling), conditions));
+        // A run has no heart ceiling, so the carried hearts are passed through whole: clipping
+        // them to the floor's design would quietly delete everything a player had earned above
+        // it. ForFloor itself rejects only a floor with no hearts at all.
+        var config = modifiers.Apply(_config.ForFloor(floor, startingHearts, conditions));
 
-        if (startingHearts > config.StartingHearts)
-        {
-            if (startingHearts > config.MaxHearts)
-            {
-                throw new ArgumentOutOfRangeException(
-                    nameof(startingHearts),
-                    startingHearts,
-                    $"Floor {floor.Number} accepts at most {config.MaxHearts} hearts with the run's cards.");
-            }
-
-            config = config with { StartingHearts = startingHearts };
-        }
+        // Every shipped floor carries one Echo, and it is switched on here rather than in
+        // ForFloor so a hand-built test floor keeps the plain "step and tick" behaviour its tests
+        // were written against. This is still the only place a floor is built for a real run.
+        config = config with { EchoEnabled = true };
 
         var seed = FloorSeed(floor);
         var random = _createRandom(seed)
             ?? throw new InvalidOperationException("The random factory returned null.");
+
+        // The outline is grown first, from the maze's own stream, exactly as before rooms existed.
+        var shape = config.Shape == ShapeKind.Rect
+            ? null
+            : MazeShape.Create(config.Shape, config.Rows, config.Columns, random);
+
+        // The room's roll and site come from a salted stream, so a room never shifts the maze.
+        var roomRandom = _createRandom(seed is { } roomSeed ? unchecked(roomSeed ^ RoomSalt) : null)
+            ?? throw new InvalidOperationException("The random factory returned null.");
+
+        var site = SecretRoomCarver.Plan(
+            shape,
+            config.Rows,
+            config.Columns,
+            floor.Number,
+            roomRandom);
 
         var generator = new BraidedMazeGenerator(
             new DeadEndBraider(new MazeGenerator(random), random, config.DeadEndBraidPercent),
@@ -163,13 +178,19 @@ public sealed class GameFactory
 
         var maze = generator.Generate(new MazeOptions(config.Rows, config.Columns, seed)
         {
-            Shape = config.Shape == ShapeKind.Rect
-                ? null
-                : MazeShape.Create(config.Shape, config.Rows, config.Columns, random),
+            Shape = shape,
+
+            // A floor whose outline has no rock left gets a pocket reserved instead, so the room's
+            // chance does not depend on the shape it happens to wear.
+            ReservedCells = site is { Reserved: true } pocket
+                ? SecretRoomCarver.ReservedCells(pocket)
+                : null,
         });
 
+        var room = SecretRoomCarver.TryCarve(maze, site, roomRandom);
+
         // The same random source drives placement, so one seed reproduces the whole floor.
-        return new GameState(config, maze, _pathfinder, random);
+        return new GameState(config, maze, _pathfinder, random, room);
     }
 
     /// <summary>

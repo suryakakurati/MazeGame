@@ -264,6 +264,33 @@ public sealed class RunModifiers
         }
     }
 
+    /// <summary>
+    /// Rebuilds the run's totals from exactly <paramref name="cards"/>.
+    /// </summary>
+    /// <param name="cards">The cards the run now holds, in the order they were taken.</param>
+    /// <returns>A new instance; the cards' order does not change the totals.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="cards"/> is null.</exception>
+    /// <exception cref="ArgumentException">Thrown when a card is invalid.</exception>
+    /// <remarks>
+    /// Removal needs a way back from the totals, and this is it: the Confessional hands over the
+    /// run's cards minus the one given up, and the fold runs again from nothing. Every total is
+    /// already a fold over the cards (see <see cref="With"/>), so rebuilding is the same arithmetic
+    /// in the same order — which is what makes "rebuild equals with" a test rather than a hope.
+    /// </remarks>
+    public static RunModifiers FromCards(IReadOnlyList<Card> cards)
+    {
+        ArgumentNullException.ThrowIfNull(cards);
+
+        var modifiers = None;
+
+        foreach (var card in cards)
+        {
+            modifiers = modifiers.With(card);
+        }
+
+        return modifiers;
+    }
+
     /// <summary>Returns a new set of modifiers with <paramref name="card"/> added.</summary>
     /// <param name="card">The card just taken.</param>
     /// <returns>A new instance; this one is unchanged.</returns>
@@ -410,7 +437,7 @@ public sealed class RunModifiers
         Append(text, "SHOVE", ShoveCharges);
         Append(text, "BARRIERS", BarrierBudget);
         Append(text, "WISPS", LureCount);
-        Append(text, "KEYS", KeyCount);
+        Append(text, "BLOOMS", KeyCount);
         Append(text, "HEARTS", MaxHearts);
         Append(text, "LANTERN RANGE", LanternRange);
 

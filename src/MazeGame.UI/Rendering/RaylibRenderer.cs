@@ -539,7 +539,9 @@ public sealed partial class RaylibRenderer : IRenderer
     {
         foreach (var hunter in state.Enemies)
         {
-            if (!state.IsVisible(hunter.Cell))
+            // A sleeper is not drawn until it wakes: the floor rule has to be legible from the
+            // first frame, and an empty cell where a hunter should be is the tell.
+            if (hunter.Dormant || !state.IsVisible(hunter.Cell))
             {
                 continue;
             }
@@ -1002,34 +1004,50 @@ public sealed partial class RaylibRenderer : IRenderer
     }
 
     /// <summary>
-    /// Draws the run's hearts: filled for the hearts left, dim for the ones spent, in the footer
-    /// beside the control hints.
+    /// Draws the run's hearts in the footer beside the control hints. One pip per heart, with a
+    /// count once the run holds more than the row can draw.
     /// </summary>
     /// <remarks>
-    /// The hearts live in the footer rather than in the HUD because the status pills and the
-    /// "it is close" warning already fill that strip; the footer has room for five hearts next
-    /// to the centred hints, which is the cap cards may raise.
+    /// There is no ceiling any more, so the row must not imply one: drawing empty slots for a cap
+    /// would say "the rest are lost" about hearts that are not. Eight pips is the widest that
+    /// still leaves the hints room on the minimum window; past that the number is printed.
     /// </remarks>
     /// <param name="state">The game to read the heart count from.</param>
     /// <param name="x">Left edge of the row.</param>
     /// <param name="centerY">Vertical centre of the hearts.</param>
-    private static void DrawHearts(GameState state, float x, float centerY)
+    private void DrawHearts(GameState state, float x, float centerY)
     {
         const float size = 15f;
         const float gap = 6f;
+        const int maxPips = 8;
+        var shown = Math.Clamp(state.Hearts, 0, maxPips);
         var lastHeart = state.Hearts == 1;
 
-        for (var index = 0; index < state.MaxHearts; index++)
+        for (var index = 0; index < shown; index++)
         {
-            var filled = index < state.Hearts;
-            var pulse = lastHeart && filled ? 0.65 + (Math.Sin(Raylib.GetTime() * 7.0) * 0.35) : 0.0;
-            var color = filled
-                ? Rgba(255, 96, 138, (byte)(185 + (pulse * 70)))
-                : Rgba(58, 84, 78, 150);
+            var pulse = lastHeart ? 0.65 + (Math.Sin(Raylib.GetTime() * 7.0) * 0.35) : 0.0;
+            var color = Rgba(255, 96, 138, (byte)(185 + (pulse * 70)));
 
             DrawHeart(x + (index * (size + gap)) + (size / 2f), centerY, size, color);
         }
+
+        if (state.Hearts > maxPips)
+        {
+            var count = FormattableString.Invariant($"x{state.Hearts}");
+
+            Text(
+                count,
+                x + (maxPips * (size + gap)),
+                centerY - (PixelFont.LineHeight / 2f),
+                1,
+                Rgba(255, 120, 158, 235));
+        }
     }
+
+    /// <summary>Returns how wide the footer's heart row is, for the hint's left edge.</summary>
+    /// <param name="state">The game to read the heart count from.</param>
+    private static float HeartsWidth(GameState state) =>
+        Math.Clamp(state.Hearts, 0, 8) * 21f + (state.Hearts > 8 ? 26f : 0f);
 
     /// <summary>
     /// Draws one small pip per hunter beside the hearts, so a floor with two or three of them says
@@ -1182,7 +1200,7 @@ public sealed partial class RaylibRenderer : IRenderer
         // whatever room is left rather than a hard-coded column that breaks on a narrow window.
         var chips = new (string Label, string Value, Color Colour)[]
         {
-            ("KEYS", $"{state.KeysCollected}/{state.Config.KeyCount}", GlowPink),
+            ("BLOOMS", $"{state.KeysCollected}/{state.Config.KeyCount}", GlowPink),
             ("EXIT", state.IsExitUnlocked ? "OPEN" : "LOCKED", state.IsExitUnlocked ? ExitOpenColor : ExitLockedColor),
         };
 
@@ -1381,7 +1399,7 @@ public sealed partial class RaylibRenderer : IRenderer
             Rgba(accent.R, accent.G, accent.B, 55));
 
         var centreY = top + (RaylibLayout.FooterHeight / 2f);
-        var heartsEnd = OriginHeartX + (state.MaxHearts * 21f);
+        var heartsEnd = OriginHeartX + HeartsWidth(state);
 
         DrawHearts(state, OriginHeartX, centreY);
         DrawHunterPips(state, heartsEnd + 4, centreY);
@@ -1390,13 +1408,18 @@ public sealed partial class RaylibRenderer : IRenderer
         {
             PlacementMode.Barrier => "WASD: AIM    SPACE / ENTER: SEAL    ESC: CANCEL",
             PlacementMode.Lure => "WASD: AIM    SPACE / ENTER: LIGHT    ESC: CANCEL",
-            _ => "WASD: MOVE   SHIFT: RUN   SPACE: BLINK   V: VEIL   T: SLOW   L: LIGHT   F: SHOVE   ESC: QUIT",
+
+            // Inside a safe room the footer says what the room is: the pause is the one rule the
+            // player has to be told about, because nothing moving is exactly when it is unclear.
+            _ => state.IsInSafeRoom
+                ? "SAFE ROOM   E: LOOK   WASD: WALK   ESC: QUIT"
+                : "WASD: MOVE   SHIFT: RUN   SPACE: BLINK   V: VEIL   T: SLOW   L: LIGHT   F: SHOVE   ESC: QUIT",
         };
         var color = state.AimMode switch
         {
             PlacementMode.Barrier => CursorColor,
             PlacementMode.Lure => GlowCyan,
-            _ => HintText,
+            _ => state.IsInSafeRoom ? GlowGreen : HintText,
         };
 
         // The hints are centred in what the hearts and the hunter pips leave, not in the whole

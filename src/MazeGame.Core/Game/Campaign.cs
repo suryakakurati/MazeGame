@@ -25,6 +25,26 @@ namespace MazeGame.Core.Game;
 /// </remarks>
 public sealed class Campaign
 {
+    /// <summary>How many floors the Turn takes the player back.</summary>
+    private const int TurnFloors = 5;
+
+    /// <summary>How many floors a planted seed waits before it blooms.</summary>
+    private const int SeedBloomFloors = 3;
+
+    /// <summary>How long the Cartographer's map stays revealed: the rest of the floor.</summary>
+    /// <remarks>
+    /// The card used to say "this floor and the next two rooms" and delivered thirty seconds and
+    /// nothing about the next two rooms. A promise no system keeps is an unfinished feature, so
+    /// the map now simply holds until the floor is left, which is what the card says it does.
+    /// </remarks>
+    private const double CartographerRevealSeconds = 3600.0;
+
+    /// <summary>Mixed into the stall's offers, so a shop is not a second draft of the same cards.</summary>
+    private const int ShopSalt = 0x5107;
+
+    /// <summary>Mixed into the mirror's replacement, so it is not the shop's first card.</summary>
+    private const int MirrorSalt = 0x33A1;
+
     private readonly IReadOnlyList<FloorDefinition> _floors;
     private readonly Func<FloorDefinition, int, RunModifiers, IReadOnlyList<DescentCondition>, GameState> _createFloor;
     private readonly int _runSeed;
@@ -43,8 +63,27 @@ public sealed class Campaign
     /// </summary>
     private int _carryHearts;
 
+    // Blooms picked on floors the run has already left, so the garden keeps growing after the
+    // floor that grew it has been rebuilt or left behind.
+    private int _bloomsBanked;
+
     private int _nextDraftBonus;
     private int _followingDraftBonus;
+
+    // The safe room: the card on screen, whether this floor's room has been used, and the cards a
+    // shop is selling (fixed at the moment the card is opened, so a purchase cannot reroll them).
+    private RoomOffer? _room;
+    private bool _roomSpent;
+    private IReadOnlyList<Card> _shopCards = Array.Empty<Card>();
+
+    // Promises a room made about the floors ahead.
+    private int _huntersOffNextFloor;
+    private int? _seedBloomsOnFloor;
+
+    // The Turn is once per run, and the draft's rarity follows the deepest floor ever reached so a
+    // rewind cannot hand out late-run rares on an early floor.
+    private bool _reincarnated;
+    private int _deepestFloor;
 
     /// <summary>
     /// Starts a new run on the first floor of <paramref name="floors"/>.
@@ -103,6 +142,7 @@ public sealed class Campaign
         _floors = new ReadOnlyCollection<FloorDefinition>(snapshot);
         _createFloor = createFloor;
         _runSeed = runSeed ?? Random.Shared.Next();
+        _deepestFloor = snapshot[0].Number;
         _floor = Build(snapshot[0], snapshot[0].MaxHearts);
     }
 
@@ -138,6 +178,50 @@ public sealed class Campaign
 
     /// <summary>Gets how many floors have been cleared so far.</summary>
     public int FloorsCleared => _floor.Status == GameStatus.Won ? _floorIndex + 1 : _floorIndex;
+
+    /// <summary>
+    /// Gets how many blooms the run has picked, including the ones on the floor being played.
+    /// </summary>
+    /// <remarks>
+    /// The number the garden strip draws. It is banked when a floor is left rather than when it is
+    /// cleared, so a rewind keeps the blooms it took and a rebuilt floor starts its own count at
+    /// zero.
+    /// </remarks>
+    public int BloomsPicked => _bloomsBanked + _floor.KeysCollected;
+
+    /// <summary>
+    /// Gets how many blooms the garden is worth: one for every bloom picked, plus one for every
+    /// page turned.
+    /// </summary>
+    /// <remarks>
+    /// This is the visible answer to "am I working toward something?". It grows on every cleared
+    /// card and resets with the run, by design: there is no unlock and no codex behind it.
+    /// </remarks>
+    public int GardenCount => BloomsPicked + FloorsCleared;
+
+    /// <summary>
+    /// Gets the page of the gardener's book for the current floor.
+    /// </summary>
+    public StoryPage CurrentPage => StoryCatalog.Page(FloorNumber);
+
+    /// <summary>
+    /// Gets how the run looked when the current floor's page was turned, which decides whether the
+    /// gardener adds a line under it.
+    /// </summary>
+    /// <remarks>
+    /// The last heart outranks a condition: a run about to end reads differently from a run that
+    /// merely took a rule at a gate.
+    /// </remarks>
+    public StoryMood CurrentMood =>
+        _floor.Hearts <= 1 ? StoryMood.LastHeart :
+        _conditions.Count > 0 ? StoryMood.Conditioned :
+        StoryMood.None;
+
+    /// <summary>
+    /// Gets the extra line the gardener adds to the current page, or <see langword="null"/> when
+    /// there is nothing to say.
+    /// </summary>
+    public string? CurrentMoodLine => StoryCatalog.MoodLine(CurrentMood);
 
     /// <summary>Gets a value indicating whether the current floor is the last of the run.</summary>
     public bool IsOnLastFloor => _floorIndex == _floors.Count - 1;
@@ -195,13 +279,12 @@ public sealed class Campaign
     public int PendingHeals => _carryHearts;
 
     /// <summary>
-    /// Gets the hearts the next floor will start with, capped by that floor's ceiling (raised by
-    /// the run's cards), or the current hearts when this is the last floor.
+    /// Gets the hearts the next floor will start with, or the current hearts when this is the
+    /// last floor.
     /// </summary>
     /// <remarks>
-    /// The cap has to include the run's heart bonus. A ceiling taken from the floor definition
-    /// alone would drop the extra slot a card such as <c>blood-pact</c> paid for, and every heal
-    /// banked above the floor's own ceiling would vanish on the way in.
+    /// There is no ceiling to clip against: the run keeps every heart it has earned, so a player
+    /// who banked a heal at full health walks into the next floor holding it.
     /// </remarks>
     public int HeartsOnNextFloor
     {
@@ -212,10 +295,7 @@ public sealed class Campaign
                 return _floor.Hearts;
             }
 
-            var next = _floors[_floorIndex + 1];
-            var muteBonus = _conditions.Contains(DescentCondition.Mute) ? 1 : 0;
-            var ceiling = Math.Max(1, next.MaxHearts + _modifiers.MaxHearts + muteBonus);
-            return Math.Min(_floor.Hearts + _carryHearts + _modifiers.HealOnFloorClear, ceiling);
+            return _floor.Hearts + _carryHearts + _modifiers.HealOnFloorClear;
         }
     }
 
@@ -238,6 +318,147 @@ public sealed class Campaign
 
             return _draft ??= CreateDraft();
         }
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether the player is standing in this floor's safe room.
+    /// </summary>
+    /// <remarks>
+    /// Entering is enough: no key opens the room, because a safe room behind a keypress is a safe
+    /// room half the players never find. The world is already paused while this is true.
+    /// </remarks>
+    public bool IsInSafeRoom => _floor.IsInSafeRoom;
+
+    /// <summary>
+    /// Gets a value indicating whether the room's interaction can be opened right now.
+    /// </summary>
+    /// <remarks>
+    /// Being inside is not enough on its own: a spent room is a bare counter, and the player has to
+    /// be able to hear the floor's rules before a card covers them.
+    /// </remarks>
+    public bool CanOpenRoom =>
+        _floor.SafeRoom is not null &&
+        _floor.IsInSafeRoom &&
+        !_roomSpent &&
+        _floor.Status == GameStatus.InProgress;
+
+    /// <summary>Gets the room card on screen, or <see langword="null"/> when none is open.</summary>
+    public RoomOffer? Room => _room;
+
+    /// <summary>
+    /// Opens the safe room's card.
+    /// </summary>
+    /// <returns><see langword="true"/> when the card is now open; false when the player is not in a
+    /// room, the room is spent, or a card is already open.</returns>
+    /// <remarks>
+    /// The room's kind is drawn from the run's seed and this floor, so a replay visits the same
+    /// rooms in the same order. The card is built once and cached, so the offers cannot change
+    /// under the player while it is on screen.
+    /// </remarks>
+    public bool OpenRoom()
+    {
+        if (CanOpenRoom is false)
+        {
+            return false;
+        }
+
+        _room ??= CreateRoom(RoomCatalog.Pick(_runSeed, FloorNumber));
+        return true;
+    }
+
+    /// <summary>Closes the card without spending the room.</summary>
+    /// <remarks>
+    /// Looking is free: a player who wants to read the odds and walk away can come back to the same
+    /// card, which is why only a resolved choice marks a room spent.
+    /// </remarks>
+    public void CloseRoom() => _room = null;
+
+    /// <summary>
+    /// Resolves the open room card with <paramref name="option"/>.
+    /// </summary>
+    /// <param name="option">The option to take; it must be one of the card's.</param>
+    /// <returns>
+    /// <see langword="true"/> when the option was applied; false when no card is open, the card is
+    /// spent, or the option is not offered.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="option"/> is null.</exception>
+    public bool ResolveRoom(RoomOption option)
+    {
+        ArgumentNullException.ThrowIfNull(option);
+
+        var offer = _room;
+
+        if (offer is null || offer.IsResolved)
+        {
+            return false;
+        }
+
+        // Leaving is not a resolution: the counter stays as it was and the player can return.
+        if (string.Equals(option.Id, RoomOption.Leave.Id, StringComparison.Ordinal))
+        {
+            _room = null;
+            return true;
+        }
+
+        if (!offer.TryResolve(option))
+        {
+            return false;
+        }
+
+        // A Turn rebuilds the run, which resets the room state: it must not then be marked spent
+        // on the floor the player just arrived on.
+        var rebuilt = false;
+
+        switch (offer.Kind)
+        {
+            case RoomKind.Cartographer:
+                _floor.RevealMapFor(CartographerRevealSeconds);
+                offer.RecordOutcome("THE MAP IS YOURS");
+                break;
+
+            case RoomKind.LongTable:
+                ResolveStake(offer);
+                break;
+
+            case RoomKind.Stall:
+                ResolveBuy(offer);
+                break;
+
+            case RoomKind.Confessional:
+                ResolveGive(offer);
+                break;
+
+            case RoomKind.Toll:
+                if (!_floor.TrySpendHeart())
+                {
+                    offer.RecordOutcome("NOT ENOUGH HEARTS");
+                    break;
+                }
+
+                _huntersOffNextFloor = 1;
+                offer.RecordOutcome("THE NEXT FLOOR KEEPS ONE AT HOME");
+                break;
+
+            case RoomKind.SeedVault:
+                _seedBloomsOnFloor = FloorNumber + SeedBloomFloors;
+                offer.RecordOutcome($"IT BLOOMS ON FLOOR {_seedBloomsOnFloor}");
+                break;
+
+            case RoomKind.Mirror:
+                ResolveSwap(offer);
+                break;
+
+            case RoomKind.Turn:
+                rebuilt = ResolveTurn(offer);
+                break;
+        }
+
+        if (!rebuilt)
+        {
+            _roomSpent = true;
+        }
+
+        return true;
     }
 
     /// <summary>Gets the outcome of the whole run.</summary>
@@ -283,13 +504,9 @@ public sealed class Campaign
             return false;
         }
 
-        _modifiers = _modifiers.With(card);
-        _carryHearts += card.Effect.HealNow;
-
         // The bonus applies to the next draft and the penalty to the one after it, so the queue
         // is read one draft late. That is what makes the extra choice cost something.
-        _nextDraftBonus += card.Effect.NextDraftOfferBonus;
-        _followingDraftBonus += card.Effect.FollowingDraftOfferBonus;
+        AddCard(card);
 
         return true;
     }
@@ -351,8 +568,8 @@ public sealed class Campaign
     /// floor has not been cleared, when it was the last floor, or when its draft is still open.
     /// </returns>
     /// <remarks>
-    /// The new floor starts with the hearts left on the old one plus any pending heals, capped by
-    /// its own ceiling, so damage is remembered across the run without a second health model. Keys,
+    /// The new floor starts with the hearts left on the old one plus any pending heals, with no
+    /// ceiling, so damage is remembered across the run without a second health model. Keys,
     /// barriers and the layout are per floor and are naturally reset by building a new
     /// <see cref="GameState"/>; the cards are not, because they live in
     /// <see cref="RunModifiers"/> and are applied to every floor built from now on.
@@ -376,11 +593,69 @@ public sealed class Campaign
 
         var hearts = HeartsOnNextFloor;
 
+        // The garden keeps what this run picked: a floor's blooms are banked before the next floor
+        // starts its own count at zero.
+        _bloomsBanked += _floor.KeysCollected;
+
         _floorIndex++;
+        _deepestFloor = Math.Max(_deepestFloor, next.Number);
         _draft = null;
         _conditionOffer = null;
         _carryHearts = 0;
+        _room = null;
+        _roomSpent = false;
         _floor = Build(next, hearts);
+        return true;
+    }
+
+    /// <summary>
+    /// Turns the descent back: to floor one, or five floors up.
+    /// </summary>
+    /// <param name="toStart">
+    /// When true, go back to the first floor for one heart; otherwise rewind five floors for free.
+    /// </param>
+    /// <returns><see langword="true"/> when the run was rebuilt on the target floor.</returns>
+    /// <remarks>
+    /// <para>
+    /// Cards, conditions and hearts are kept: a rewind undoes position and difficulty, not damage.
+    /// The floors are rebuilt from their definitions, so a replayed floor's hunters move at that
+    /// floor's own cadence times the cards, never at the speed of the floor the player left.
+    /// </para>
+    /// <para>
+    /// Once per run, and there has to be somewhere to go: a floor-five Turn has no five floors
+    /// behind it, so the card is not offered there.
+    /// </para>
+    /// </remarks>
+    public bool TryReincarnate(bool toStart)
+    {
+        if (_reincarnated || _floor.Status != GameStatus.InProgress)
+        {
+            return false;
+        }
+
+        var target = toStart ? 0 : Math.Max(0, _floorIndex - TurnFloors);
+
+        if (target >= _floorIndex)
+        {
+            return false;
+        }
+
+        if (toStart && !_floor.TrySpendHeart())
+        {
+            return false;
+        }
+
+        var hearts = _floor.Hearts;
+
+        _reincarnated = true;
+        _bloomsBanked += _floor.KeysCollected;
+        _floorIndex = target;
+        _draft = null;
+        _conditionOffer = null;
+        _carryHearts = 0;
+        _room = null;
+        _roomSpent = false;
+        _floor = Build(_floors[target], hearts);
         return true;
     }
 
@@ -420,17 +695,342 @@ public sealed class Campaign
             FloorNumber,
             _modifiers.Cards,
             count,
-            draftsRemaining);
+            draftsRemaining,
+            effectiveFloor: _deepestFloor);
 
         return new Draft(offers);
     }
 
+    /// <summary>Builds the room card for <paramref name="kind"/> from the run's current state.</summary>
+    /// <param name="kind">The room this floor holds.</param>
+    /// <returns>The card, with only the options the run can actually pay for.</returns>
+    /// <remarks>
+    /// The options are a snapshot, not a menu: a stake the player cannot cover, a swap with nothing
+    /// eligible and a confession with no cards are simply absent. Every price on the card is
+    /// therefore a price that can be paid, which is what makes taking the last heart impossible
+    /// without a special case in the resolution.
+    /// </remarks>
+    private RoomOffer CreateRoom(RoomKind kind)
+    {
+        var options = new List<RoomOption>(4);
+
+        switch (kind)
+        {
+            case RoomKind.Cartographer:
+                options.Add(new RoomOption("reveal", "REVEAL THE MAP", "THE WHOLE FLOOR, UNTIL YOU LEAVE IT"));
+                break;
+
+            case RoomKind.LongTable:
+                // The stake is bounded by the hearts the run is actually carrying, not by the
+                // floor's design, and by the card's own row budget: with no ceiling a rich run
+                // would otherwise be offered a list longer than the window.
+                var most = Math.Min(_floor.Hearts - 1, RoomCatalog.MaxStake);
+
+                for (var stake = 1; stake <= most; stake++)
+                {
+                    options.Add(new RoomOption(
+                        $"stake-{stake}",
+                        $"STAKE {stake}",
+                        "45% DOUBLE"));
+                }
+
+                break;
+
+            case RoomKind.Stall:
+                // The last heart is not a price: at one heart there is nothing on the counter.
+                if (_floor.Hearts <= 1)
+                {
+                    break;
+                }
+
+                _shopCards = DraftFactory.Offers(
+                    _runSeed,
+                    FloorNumber,
+                    _modifiers.Cards,
+                    DraftFactory.DefaultOfferCount,
+                    Math.Max(0, _floors.Count - _floorIndex - 2),
+                    effectiveFloor: _deepestFloor,
+                    salt: ShopSalt);
+
+                for (var index = 0; index < _shopCards.Count; index++)
+                {
+                    options.Add(new RoomOption(
+                        $"buy-{index}",
+                        _shopCards[index].Name.ToUpperInvariant(),
+                        "ONE HEART"));
+                }
+
+                break;
+
+            case RoomKind.Confessional:
+                // Removal is a heart; with one left there is nothing to give up.
+                if (_floor.Hearts <= 1)
+                {
+                    break;
+                }
+
+                for (var index = 0; index < _modifiers.Cards.Count; index++)
+                {
+                    options.Add(new RoomOption(
+                        $"give-{index}",
+                        _modifiers.Cards[index].Name.ToUpperInvariant(),
+                        "ONE HEART"));
+                }
+
+                break;
+
+            case RoomKind.Toll:
+                if (_floor.Hearts > 1)
+                {
+                    options.Add(new RoomOption("toll", "PAY THE TOLL", "ONE HEART"));
+                }
+
+                break;
+
+            case RoomKind.SeedVault:
+                options.Add(new RoomOption("plant", "PLANT A SEED", "BLOOMS THREE FLOORS DOWN"));
+                break;
+
+            case RoomKind.Mirror:
+                for (var index = 0; index < _modifiers.Cards.Count; index++)
+                {
+                    if (ReplacementFor(index) is null)
+                    {
+                        continue;
+                    }
+
+                    options.Add(new RoomOption(
+                        $"swap-{index}",
+                        $"GIVE {_modifiers.Cards[index].Name.ToUpperInvariant()}",
+                        "FOR ONE THE MIRROR PICKS"));
+                }
+
+                break;
+
+            case RoomKind.Turn:
+                options.Add(new RoomOption("back-5", "GO BACK FIVE FLOORS", "NOTHING"));
+
+                if (_floor.Hearts > 1)
+                {
+                    options.Add(new RoomOption("back-1", "GO BACK TO FLOOR ONE", "ONE HEART"));
+                }
+
+                break;
+        }
+
+        options.Add(RoomOption.Leave);
+
+        return new RoomOffer(
+            kind,
+            RoomCatalog.Name(kind),
+            RoomCatalog.Prompt(kind),
+            RoomCatalog.Price(kind),
+            options);
+    }
+
+    /// <summary>Applies the casino's stake and roll.</summary>
+    private void ResolveStake(RoomOffer offer)
+    {
+        var stake = OptionIndex(offer.Chosen!.Id, "stake-");
+
+        if (stake < 1 || stake > _floor.Hearts - 1)
+        {
+            offer.RecordOutcome("THE TABLE REFUSES");
+            return;
+        }
+
+        for (var spent = 0; spent < stake; spent++)
+        {
+            _floor.TrySpendHeart();
+        }
+
+        if (RoomCatalog.GambleWins(_runSeed, FloorNumber))
+        {
+            var winnings = stake * 2;
+            _floor.AddHearts(winnings);
+            offer.RecordOutcome($"WON {winnings} HEARTS");
+            return;
+        }
+
+        offer.RecordOutcome($"LOST {stake}");
+    }
+
+    /// <summary>Buys one card from the stall for a heart.</summary>
+    private void ResolveBuy(RoomOffer offer)
+    {
+        var index = OptionIndex(offer.Chosen!.Id, "buy-");
+
+        if (index < 0 || index >= _shopCards.Count)
+        {
+            offer.RecordOutcome("THE STALL IS EMPTY");
+            return;
+        }
+
+        var card = _shopCards[index];
+
+        if (!_floor.TrySpendHeart())
+        {
+            offer.RecordOutcome("NOT ENOUGH HEARTS");
+            return;
+        }
+
+        AddCard(card);
+        offer.RecordOutcome($"BOUGHT {card.Name.ToUpperInvariant()}");
+    }
+
+    /// <summary>Gives up one card for a heart, and rebuilds the run's totals.</summary>
+    private void ResolveGive(RoomOffer offer)
+    {
+        var index = OptionIndex(offer.Chosen!.Id, "give-");
+        var cards = _modifiers.Cards;
+
+        if (index < 0 || index >= cards.Count)
+        {
+            offer.RecordOutcome("THE CONFESSIONAL IS EMPTY");
+            return;
+        }
+
+        if (!_floor.TrySpendHeart())
+        {
+            offer.RecordOutcome("NOT ENOUGH HEARTS");
+            return;
+        }
+
+        var name = cards[index].Name.ToUpperInvariant();
+        _modifiers = RunModifiers.FromCards(Without(cards, index));
+        offer.RecordOutcome($"GAVE UP {name}");
+    }
+
+    /// <summary>Swaps one card for one the mirror picks, free.</summary>
+    private void ResolveSwap(RoomOffer offer)
+    {
+        var index = OptionIndex(offer.Chosen!.Id, "swap-");
+        var replacement = ReplacementFor(index);
+
+        if (replacement is null)
+        {
+            offer.RecordOutcome("THE MIRROR IS BLANK");
+            return;
+        }
+
+        var kept = Without(_modifiers.Cards, index);
+        var next = new List<Card>(kept) { replacement };
+
+        _modifiers = RunModifiers.FromCards(next);
+        offer.RecordOutcome($"NOW HOLDING {replacement.Name.ToUpperInvariant()}");
+    }
+
+    /// <summary>Turns the descent back, if the run can still afford to.</summary>
+    private bool ResolveTurn(RoomOffer offer)
+    {
+        var toStart = string.Equals(offer.Chosen!.Id, "back-1", StringComparison.Ordinal);
+
+        if (!TryReincarnate(toStart))
+        {
+            offer.RecordOutcome("THE TURN DOES NOT TAKE");
+            return false;
+        }
+
+        offer.RecordOutcome(toStart ? "THE DESCENT BEGINS AGAIN" : $"BACK ON FLOOR {FloorNumber}");
+        return true;
+    }
+
     /// <summary>
-    /// Builds one floor with the run's cards and rejects a builder that returns nothing.
+    /// Returns the card the mirror would offer in place of the one at <paramref name="index"/>.
+    /// </summary>
+    /// <remarks>
+    /// The replacement is drawn with the draft's own rules — eligibility, tier weights, the vision
+    /// cap — from a salted stream, so a mirror on a seeded run always hands back the same card.
+    /// </remarks>
+    private Card? ReplacementFor(int index)
+    {
+        var cards = _modifiers.Cards;
+
+        if (index < 0 || index >= cards.Count)
+        {
+            return null;
+        }
+
+        var offers = DraftFactory.Offers(
+            _runSeed,
+            FloorNumber,
+            Without(cards, index),
+            1,
+            Math.Max(0, _floors.Count - _floorIndex - 2),
+            effectiveFloor: _deepestFloor,
+            salt: MirrorSalt);
+
+        return offers.Count > 0 ? offers[0] : null;
+    }
+
+    /// <summary>Adds a card to the run, banking its one-shot effects exactly as a draft does.</summary>
+    private void AddCard(Card card)
+    {
+        _modifiers = _modifiers.With(card);
+        _carryHearts += card.Effect.HealNow;
+        _nextDraftBonus += card.Effect.NextDraftOfferBonus;
+        _followingDraftBonus += card.Effect.FollowingDraftOfferBonus;
+    }
+
+    /// <summary>Returns <paramref name="cards"/> without the entry at <paramref name="index"/>.</summary>
+    private static List<Card> Without(IReadOnlyList<Card> cards, int index)
+    {
+        var kept = new List<Card>(cards.Count - 1);
+
+        for (var position = 0; position < cards.Count; position++)
+        {
+            if (position != index)
+            {
+                kept.Add(cards[position]);
+            }
+        }
+
+        return kept;
+    }
+
+    /// <summary>Reads the number at the end of an option id, or -1 when it is missing.</summary>
+    private static int OptionIndex(string id, string prefix)
+    {
+        if (!id.StartsWith(prefix, StringComparison.Ordinal) ||
+            !int.TryParse(id.AsSpan(prefix.Length), out var index))
+        {
+            return -1;
+        }
+
+        return index;
+    }
+
+    /// <summary>
+    /// Builds one floor with the run's cards, the promises rooms made and rejects a builder that
+    /// returns nothing.
     /// </summary>
     /// <param name="floor">The floor to build.</param>
     /// <param name="hearts">Hearts the player brings to it.</param>
-    private GameState Build(FloorDefinition floor, int hearts) =>
-        _createFloor(floor, hearts, _modifiers, _conditions)
-        ?? throw new InvalidOperationException("The floor builder returned null.");
+    private GameState Build(FloorDefinition floor, int hearts)
+    {
+        var definition = floor;
+
+        // The Toll: one hunter stays home, never below one. Consumed by the next floor only.
+        if (_huntersOffNextFloor > 0)
+        {
+            definition = floor with
+            {
+                HunterCount = Math.Max(1, floor.HunterCount - _huntersOffNextFloor),
+            };
+
+            _huntersOffNextFloor = 0;
+        }
+
+        // The Seed Vault: the bloom pays on the floor it lands on, not a floor later. The heart
+        // is never clipped, like every other heal in the run.
+        if (_seedBloomsOnFloor is { } bloom && floor.Number >= bloom)
+        {
+            hearts++;
+            _seedBloomsOnFloor = null;
+        }
+
+        return _createFloor(definition, hearts, _modifiers, _conditions)
+            ?? throw new InvalidOperationException("The floor builder returned null.");
+    }
+
 }
