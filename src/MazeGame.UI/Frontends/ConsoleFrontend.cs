@@ -570,6 +570,20 @@ internal static class ConsoleFrontend
                     PrintTutorial();
                     break;
 
+                case ConsoleKey.P:
+                    // The practice floor ends by offering the real descent, so the title's answer
+                    // is whatever the lesson's last card says.
+                    if (Practice())
+                    {
+                        return true;
+                    }
+
+                    break;
+
+                case ConsoleKey.C:
+                    PrintCodex();
+                    break;
+
                 case ConsoleKey.Q:
                 case ConsoleKey.Escape:
                     return false;
@@ -596,7 +610,145 @@ internal static class ConsoleFrontend
         Console.WriteLine();
         Console.WriteLine("   pick the blooms. open the arch. do not be caught.");
         Console.WriteLine();
-        Console.WriteLine("   [D] descend    [T] tutorial    [Q] leave");
+        Console.WriteLine("   [D] descend    [T] tutorial    [P] practice    [C] cards    [Q] leave");
+    }
+
+    /// <summary>
+    /// Prints the whole catalog, grouped by rarity, and waits for a key.
+    /// </summary>
+    /// <remarks>
+    /// The same data the window's codex draws: a run's choices are only as readable as the cards
+    /// the player has seen, and a rare card offered in a draft is not the moment to learn it.
+    /// </remarks>
+    private static void PrintCodex()
+    {
+        if (!Console.IsOutputRedirected)
+        {
+            Console.Clear();
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(new string('=', 64));
+        Console.WriteLine($"  THE CATALOG — {CardCatalog.All.Count} CARDS, RAREST LAST");
+        Console.WriteLine(new string('=', 64));
+
+        foreach (var tier in new[] { CardTier.Common, CardTier.Uncommon, CardTier.Rare, CardTier.SuperRare })
+        {
+            Console.WriteLine();
+            Console.WriteLine($"  {TierLabel(tier)}");
+
+            foreach (var card in CardCatalog.All)
+            {
+                if (card.Tier != tier)
+                {
+                    continue;
+                }
+
+                Console.WriteLine($"    {card.Name}");
+
+                foreach (var row in Wrap(card.FaceText, 58))
+                {
+                    Console.WriteLine($"      {row}");
+                }
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("  press any key to go back...");
+        Console.ReadKey(intercept: true);
+    }
+
+    /// <summary>Returns a card tier's printed name, matching the window's labels.</summary>
+    /// <param name="tier">The tier.</param>
+    private static string TierLabel(CardTier tier) => tier switch
+    {
+        CardTier.Common => "COMMON",
+        CardTier.Uncommon => "UNCOMMON",
+        CardTier.Rare => "RARE",
+        _ => "SUPER RARE",
+    };
+
+    /// <summary>
+    /// Plays the tutorial's practice floor in the terminal: walk, pick the blooms, open the arch.
+    /// </summary>
+    /// <returns><see langword="true"/> when the player asked to begin the real descent.</returns>
+    /// <remarks>
+    /// The floor is Core's (<see cref="PracticeTutorial"/>), not a script printed here: the walk
+    /// is a real timed step, so the terminal and the window teach the same movement rule.
+    /// </remarks>
+    private static bool Practice()
+    {
+        var practice = new PracticeTutorial();
+        var renderer = new ConsoleRenderer();
+
+        while (true)
+        {
+            if (!Console.IsOutputRedirected)
+            {
+                Console.Clear();
+            }
+
+            renderer.Draw(practice.Floor);
+
+            var step = Math.Min(practice.CompletedSteps + 1, PracticeTutorial.StepCount);
+
+            Console.WriteLine();
+            Console.WriteLine($"  PRACTICE {step}/{PracticeTutorial.StepCount}");
+
+            foreach (var row in Wrap(practice.Prompt, 58))
+            {
+                Console.WriteLine($"    {row}");
+            }
+
+            Console.WriteLine();
+
+            if (practice.IsComplete)
+            {
+                Console.WriteLine("  [ENTER] begin the descent    [Q] back to the title");
+
+                var done = Console.ReadKey(intercept: true).Key;
+
+                if (done is ConsoleKey.Enter or ConsoleKey.Spacebar)
+                {
+                    return true;
+                }
+
+                if (done is ConsoleKey.Q or ConsoleKey.Escape)
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            Console.WriteLine("  WASD / arrows: walk    Q: back to the title");
+
+            var key = Console.ReadKey(intercept: true).Key;
+
+            if (key is ConsoleKey.Q or ConsoleKey.Escape)
+            {
+                return false;
+            }
+
+            var move = key switch
+            {
+                ConsoleKey.W or ConsoleKey.UpArrow => GameCommand.MoveNorth,
+                ConsoleKey.S or ConsoleKey.DownArrow => GameCommand.MoveSouth,
+                ConsoleKey.A or ConsoleKey.LeftArrow => GameCommand.MoveWest,
+                ConsoleKey.D or ConsoleKey.RightArrow => GameCommand.MoveEast,
+                _ => (GameCommand?)null,
+            };
+
+            if (move is { } command)
+            {
+                GameCommands.Apply(practice.Floor, command);
+            }
+
+            // The floor is timed even with nothing hunting: the tick spends the step, so the
+            // next tap can move again.
+            practice.Floor.Tick(0.3);
+            practice.Update();
+        }
     }
 
     /// <summary>
@@ -673,7 +825,7 @@ internal static class ConsoleFrontend
     {
         Console.WriteLine();
         Console.WriteLine("PAUSED — the dark waits");
-        Console.WriteLine("  [C] continue    [Q] quit run");
+        Console.WriteLine("  [C] continue    [L] cards    [Q] quit run");
 
         while (true)
         {
@@ -688,6 +840,13 @@ internal static class ConsoleFrontend
             if (key == ConsoleKey.Q)
             {
                 return true;
+            }
+
+            if (key == ConsoleKey.L)
+            {
+                PrintCodex();
+                Console.WriteLine("PAUSED — the dark waits");
+                Console.WriteLine("  [C] continue    [L] cards    [Q] quit run");
             }
         }
     }

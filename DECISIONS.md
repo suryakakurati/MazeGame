@@ -1905,3 +1905,76 @@ without revealing the corridor and why a renderer only has to brighten a bloom t
 made visible; `Ashen Bloom` stacks to three copies, one step each. `Tutorial` is content, so it is
 covered by its own tests rather than by the rules' tests, and `CardCatalogTests` pins that
 `House Favour` is the only `SuperRare`.
+
+## 2026-10-22 — The catalog is readable, the tutorial is walked, and the fourth wave is priced in the catalog's units
+
+**Decision:** The card catalog gets a screen (`PixelCards.Codex`, `Screen.Codex`) reachable from the
+title's `CARDS` entry and from the pause menu, and a terminal equivalent (`PrintCodex`) printed from
+the title or a pause. The tutorial gains a practice floor (`PracticeTutorial` in Core) that lays the
+player, arch, blooms and hunter out in reading order through a private non-shuffling `IRandom`, puts
+the hunter on a ten-minute clock, and derives four steps from the floor itself. Ashen Bloom's price
+falls from two killer-aura steps to one; Coiled Spring pays `EnemyStepScale` 0.94 instead of a heart
+on the catch; Second Skin gains `InvulnerabilitySeconds` 1; Patient Hunter pays a step of torch
+instead of drag's hangover. `ConsoleRenderer` lists only the verbs with charges left.
+
+**Reason:** A card is only a choice if the player can read it before it is offered, and a draft of
+three was the only place the game explained its own catalog — a rare could be met for the first time
+on the card that takes a heart for it. The tutorial explained the loop but never asked for it, so
+"pick the blooms, open the arch" stayed a sentence; a corridor where nothing can reach the player is
+the cheapest place to spend a first mistake. The balance changes come from comparing each price with
+the currency the rest of the catalog charges in: a price paid only when the player chooses to use an
+optional verb (drag's hangover) is not a price, a whole heart is too much for a sprint burst once a
+catch costs four, and a card that is strictly worse than another card in its own tier is not a
+trade at all. The glow's two-step sight price was the harshest in the catalog for a two-second,
+one-step reveal.
+
+**Consequences:** The codex draws from `CardCatalog.All`, so it cannot fall behind the catalog, and it
+adds no rules — the pause still freezes the floor while it is open. `PracticeTutorial` is the one
+floor in the game that is not generated; that is why its random source does not shuffle, and why it
+is documented as such. Its steps are derived, not scripted, so a player who runs ahead is never told
+to do what they have already done. The re-prices are pinned by a test that names the reasoning, so a
+future edit has to argue with it rather than drift.
+
+## 2026-10-22 — The bloom glow lights every flower, one tile each
+
+**Decision:** `Ashen Bloom`'s glow lights **every bloom on the floor**, not the blooms near the
+player: a catch makes each flower visible for two seconds on its own tile, and nothing else. The
+knob is renamed `GameConfig.BloomGlowReach` (and `CardEffect.BloomGlowReach`), where 0 is dark,
+1 is every bloom's own tile, and each step above one lights that many cells around every glowing
+bloom. The card still grants reach 1 and still stacks to three copies.
+
+**Reason:** "One tile" was being read as one tile of radius around the player, which made the card
+a small puddle of sight near someone who had just been thrown clear of the hunter. The reveal is
+meant to be a scent across the whole floor: after a catch you learn where the flowers *are*, which
+is a decision you can act on, while the corridor they sit in stays dark so the map is not given
+away. That also makes the upgrade meaningful in the same direction: more reach means a halo around
+each flower, not more flowers in the list, which had already included all of them.
+
+**Consequences:** The reveal runs per bloom (`DistancesFrom(maze, bloom, reach - 1)`), so a floor
+with many flowers and two copies costs a handful of small searches in `RecomputeVisibility`, never a
+full map reveal. A revealed flower is an ordinary visible cell to the renderer, so it enters the
+explored memory like anything else the torch has touched and stays marked after the glow fades,
+which is the behaviour the point of the card wants. `GameStateBloomGlowTests` now asserts every
+bloom is lit, that the empty cell beside a lit flower is not, and that a second copy is the one that
+lights the neighbours.
+
+## 2026-10-22 — The practice floor is a room, because the window draws floors through a viewport
+
+**Decision:** `PracticeTutorial` builds a 9x9 chamber with a lantern radius of six, instead of the
+first pass's 1x6 corridor. The lesson itself is unchanged: the player, the arch, the two blooms and
+the hunter are still taken in reading order, still along the top row, and the four steps are still
+derived from the floor.
+
+**Reason:** The window does not draw a floor edge to edge. It draws a viewport sized by the lantern
+(`PixelLayout.ViewCells`, 13 cells at radius six) and centres a smaller floor inside it, so a
+one-row lesson painted six cells of a 169-cell canvas: a thin lit line inside a black frame, which
+reads as a broken display rather than as a place. The practice floor is the one floor that is
+content rather than generation, so its shape is the tutorial's problem to get right: it has to fill
+the frame the way a real floor does before it can teach anything.
+
+**Consequences:** The chamber is a plain open room with the grid's own boundary as its rock, built by
+removing the interior walls of a fresh `Grid` — no generator, no shape, no placement roll. Its first
+frame lights twenty-eight cells instead of six, so the arch and both blooms are visible from the
+first tap. `PracticeTutorialTests.ThePracticeFloor_OpensOnALitRoomRatherThanABlankCanvas` pins both
+halves: the room is nine cells across and covers more than half the viewport, and at least twenty
+cells are lit before the player moves.

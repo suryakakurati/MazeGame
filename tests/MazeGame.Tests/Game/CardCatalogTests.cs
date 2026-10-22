@@ -151,6 +151,33 @@ public sealed class CardCatalogTests
     }
 
     [Fact]
+    public void TheFourthWave_PricesItsTradesInUnitsTheCatalogAlreadyUses()
+    {
+        // A price that is only paid when the player chooses to use an optional verb is not a
+        // price: old Patient Hunter charged drag's hangover, which a player who never drags never
+        // felt, so it now pays a step of torch like Second Wind and Threshold Sense. Coiled
+        // Spring charged a whole heart for a sprint burst the deeper floors barely use, so it
+        // pays a share of the hunt instead, the way Slow Pursuit and Root Memory do.
+        var ashen = Assert.IsType<Card>(CardCatalog.ById("ashen-bloom"));
+        Assert.Equal(1, ashen.Effect.BloomGlowReach);
+        Assert.Equal(1, ashen.Effect.EnemyAuraDistance);
+
+        var coiled = Assert.IsType<Card>(CardCatalog.ById("coiled-spring"));
+        Assert.Equal(0, coiled.Effect.CatchCost);
+        Assert.Equal(0.94, coiled.Effect.EnemyStepScale);
+
+        var patient = Assert.IsType<Card>(CardCatalog.ById("patient-hunter"));
+        Assert.Equal(-1, patient.Effect.VisionRadius);
+        Assert.Equal(0, patient.Effect.DragPenaltySeconds);
+
+        // Second Skin was Blood Pact with a smaller penalty and none of its second half, so it
+        // was dominated by an Uncommon in the same tier. It now carries a longer grace instead.
+        var secondSkin = Assert.IsType<Card>(CardCatalog.ById("second-skin"));
+        Assert.Equal(2, secondSkin.Effect.HealNow);
+        Assert.Equal(1, secondSkin.Effect.InvulnerabilitySeconds);
+    }
+
+    [Fact]
     public void ById_ReturnsTheMatchingCard()
     {
         var card = Assert.IsType<Card>(CardCatalog.ById("wide-eyes"));
@@ -241,7 +268,7 @@ public sealed class CardCatalogTests
                 effect.LanternRange != 0 ||
                 effect.HealNow != 0 ||
                 effect.HealOnFloorClear != 0 ||
-                effect.BloomGlowRadius != 0 ||
+                effect.BloomGlowReach != 0 ||
                 effect.NextDraftOfferBonus != 0 ||
                 effect.FollowingDraftOfferBonus != 0 ||
                 effect.RoomChancePercent != 0 ||

@@ -105,12 +105,62 @@ public sealed class ConsoleRenderer : IRenderer
 
         AppendMaze(frame, state);
 
-        // A safe room is the one place nothing moves, said in the one place the player is looking.
-        frame.AppendLine(state.IsInSafeRoom
-            ? "SAFE ROOM — E: look around    WASD: walk    Q: quit"
-            : "WASD / arrows: move    Space: blink   V: veil   T: drag   L: lantern   F: shove   Q: quit");
+        frame.AppendLine(DescribeHints(state));
 
         return frame.ToString();
+    }
+
+    /// <summary>
+    /// Returns the one line of keys for the floor: the verbs the player still has charges for,
+    /// plus walking and leaving.
+    /// </summary>
+    /// <param name="state">The floor being drawn.</param>
+    /// <returns>The hint line.</returns>
+    /// <remarks>
+    /// The practice floor has no charges at all, and a Mute floor loses one: a line that lists
+    /// a key which does nothing teaches the wrong thing, and the shorter line fits a terminal.
+    /// </remarks>
+    private static string DescribeHints(GameState state)
+    {
+        // A safe room is the one place nothing moves, said in the one place the player is looking.
+        if (state.IsInSafeRoom)
+        {
+            return "SAFE ROOM — E: look around    WASD: walk    Q: quit";
+        }
+
+        var charges = state.PowerupsRemaining;
+        var verbs = new List<string>(5);
+
+        if (charges.Blink > 0)
+        {
+            verbs.Add("Space: blink");
+        }
+
+        if (charges.Veil > 0)
+        {
+            verbs.Add("V: veil");
+        }
+
+        if (charges.Drag > 0)
+        {
+            verbs.Add("T: drag");
+        }
+
+        if (charges.Lantern > 0)
+        {
+            verbs.Add("L: lantern");
+        }
+
+        if (charges.Shove > 0)
+        {
+            verbs.Add("F: shove");
+        }
+
+        var line = verbs.Count == 0
+            ? "WASD / arrows: move"
+            : $"WASD / arrows: move    {string.Join("   ", verbs)}";
+
+        return $"{line}    Q: quit";
     }
 
     /// <summary>

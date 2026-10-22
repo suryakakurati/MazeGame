@@ -86,7 +86,7 @@ public sealed class RunModifiers
         TurnPenaltySeconds = turnPenaltySeconds;
         MaxHearts = maxHearts;
         KeyCount = keyCount;
-        BloomGlowRadius = bloomGlowRadius;
+        BloomGlowReach = bloomGlowRadius;
         LureCount = lureCount;
         LureSeconds = lureSeconds;
         LureStunSeconds = lureStunSeconds;
@@ -195,8 +195,11 @@ public sealed class RunModifiers
     /// <summary>Gets the change to each floor's key count.</summary>
     public int KeyCount { get; }
 
-    /// <summary>Gets the change to the radius blooms glow from after a catch.</summary>
-    public int BloomGlowRadius { get; }
+    /// <summary>
+    /// Gets the change to how far the blooms glow after a catch: one lights every bloom on the
+    /// floor, and each step above one lights a step around each of them.
+    /// </summary>
+    public int BloomGlowReach { get; }
 
     /// <summary>Gets the change to each floor's wisp count.</summary>
     public int LureCount { get; }
@@ -341,7 +344,7 @@ public sealed class RunModifiers
             TurnPenaltySeconds + effect.TurnPenaltySeconds,
             MaxHearts + effect.MaxHearts,
             KeyCount + effect.KeyCount,
-            BloomGlowRadius + effect.BloomGlowRadius,
+            BloomGlowReach + effect.BloomGlowReach,
             LureCount + effect.LureCount,
             effect.LureSeconds ?? LureSeconds,
             LureStunSeconds + effect.LureStunSeconds,
@@ -404,7 +407,7 @@ public sealed class RunModifiers
             BarrierBudget = Math.Max(0, config.BarrierBudget + BarrierBudget),
             LureCount = Math.Max(0, config.LureCount + LureCount),
             KeyCount = Math.Max(0, config.KeyCount + KeyCount),
-            BloomGlowRadius = Math.Max(0, config.BloomGlowRadius + BloomGlowRadius),
+            BloomGlowReach = Math.Max(0, config.BloomGlowReach + BloomGlowReach),
             MaxHearts = Math.Max(config.StartingHearts, config.MaxHearts + MaxHearts),
             BarrierSealSeconds = sealSeconds,
             LureSeconds = lureSeconds,
@@ -460,7 +463,7 @@ public sealed class RunModifiers
         Append(text, "BARRIERS", BarrierBudget);
         Append(text, "WISPS", LureCount);
         Append(text, "BLOOMS", KeyCount);
-        Append(text, "BLOOM GLOW", BloomGlowRadius);
+        Append(text, "BLOOM GLOW", BloomGlowReach);
         Append(text, "HEARTS", MaxHearts);
         Append(text, "LANTERN RANGE", LanternRange);
         Append(text, "ROOMS", RoomChancePercent);

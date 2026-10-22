@@ -87,7 +87,8 @@ public static class PixelCards
 
         DrawMenuItem(font, "DESCEND", centreX, menuY, selectedItem == 0, time, menuScale);
         DrawMenuItem(font, "TUTORIAL", centreX, menuY + rowStep, selectedItem == 1, time, menuScale);
-        DrawMenuItem(font, "LEAVE", centreX, menuY + (rowStep * 2), selectedItem == 2, time, menuScale);
+        DrawMenuItem(font, "CARDS", centreX, menuY + (rowStep * 2), selectedItem == 2, time, menuScale);
+        DrawMenuItem(font, "LEAVE", centreX, menuY + (rowStep * 3), selectedItem == 3, time, menuScale);
 
         font.DrawCentered(
             "W/S OR ARROWS: SELECT   ENTER: CONFIRM   ESC: LEAVE",
@@ -869,7 +870,7 @@ public static class PixelCards
         var height = Raylib.GetScreenHeight();
         var centreX = width / 2;
         var panelWidth = Math.Min(width - 64, 420);
-        var panelHeight = 272;
+        var panelHeight = 300;
         var left = centreX - (panelWidth / 2);
         var top = (height / 2) - (panelHeight / 2);
         var time = Raylib.GetTime();
@@ -884,8 +885,9 @@ public static class PixelCards
         font.DrawCentered("PAUSED", centreX, top + 26, 3, Glow);
         font.DrawCentered("THE DARK WAITS", centreX, top + 66, 1, Dim);
 
-        DrawMenuItem(font, "CONTINUE", centreX, top + 104, selectedItem == 0, time, 3);
-        DrawMenuItem(font, "QUIT RUN", centreX, top + 152, selectedItem == 1, time, 3);
+        DrawMenuItem(font, "CONTINUE", centreX, top + 100, selectedItem == 0, time, 3);
+        DrawMenuItem(font, "CARDS", centreX, top + 146, selectedItem == 1, time, 3);
+        DrawMenuItem(font, "QUIT RUN", centreX, top + 192, selectedItem == 2, time, 3);
 
         Rule(centreX, top + panelHeight - 62, Glow);
         font.DrawCentered(
@@ -894,6 +896,162 @@ public static class PixelCards
             top + panelHeight - 46,
             1,
             Text);
+    }
+
+    /// <summary>
+    /// Draws the card codex: every shipped card, its rarity and its trade, one scrolling row each.
+    /// </summary>
+    /// <param name="font">The loaded font.</param>
+    /// <param name="scroll">The first row to draw, clamped to the catalog.</param>
+    /// <param name="accent">The accent colour for the heading and the rule.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="font"/> is null.</exception>
+    /// <remarks>
+    /// The catalog is the game's whole bargain, so it is readable in one place rather than only
+    /// when a draft happens to offer a card: a row is a name, its tier on the right, and the same
+    /// sentence the card's own face carries. The rows are in catalog order, which is tier order,
+    /// so the super-rare is the last row.
+    /// </remarks>
+    public static void Codex(PixelFont font, int scroll, Color accent)
+    {
+        ArgumentNullException.ThrowIfNull(font);
+
+        var width = Raylib.GetScreenWidth();
+        var height = Raylib.GetScreenHeight();
+        var centreX = width / 2;
+        var cards = CardCatalog.All;
+        const int left = 32;
+        const int rowHeight = 48;
+        var right = width - left;
+        var top = 118;
+        var visible = Math.Max(1, (height - top - 74) / rowHeight);
+        var maxScroll = Math.Max(0, cards.Count - visible);
+        var first = Math.Clamp(scroll, 0, maxScroll);
+        var last = Math.Min(cards.Count, first + visible);
+
+        Begin(width, height);
+
+        font.DrawCentered("THE CATALOG", centreX, 26, 1, Glow);
+        Heading(font, "EVERY CARD", centreX, 44, width - 72, accent);
+        font.DrawCentered("COMMON, UNCOMMON, RARE - AND ONE SUPER RARE", centreX, 92, 1, Dim);
+        Rule(centreX, 108, accent);
+
+        for (var row = first; row < last; row++)
+        {
+            var card = cards[row];
+            var y = top + ((row - first) * rowHeight);
+            var tier = TierWord(card.Tier);
+
+            font.Draw(card.Name.ToUpperInvariant(), left, y, 2, Text);
+            font.Draw(tier, right - PixelFont.MeasureWidth(tier, 1), y + 4, 1, TierColor(card.Tier));
+
+            var lines = Wrap(card.FaceText, 1, right - left);
+
+            for (var line = 0; line < lines.Count && line < 2; line++)
+            {
+                var text = line == 1 && lines.Count > 2 ? $"{lines[line]} ..." : lines[line];
+                font.Draw(Fit(text, 1, right - left), left, y + 20 + (line * 11), 1, Dim);
+            }
+
+            Raylib.DrawRectangle(left, y + rowHeight - 3, right - left, 1, Fade(Dim, 0.16));
+        }
+
+        font.DrawCentered(
+            FormattableString.Invariant($"CARDS {first + 1}-{last} OF {cards.Count}"),
+            centreX,
+            height - 62,
+            1,
+            Dim);
+        font.DrawCentered(
+            Fit("W/S OR ARROWS: SCROLL   ESC: BACK", width >= 700 ? 2 : 1, width - 24),
+            centreX,
+            height - 38,
+            width >= 700 ? 2 : 1,
+            Text);
+    }
+
+    /// <summary>
+    /// Draws the interactive tutorial: the practice chamber's current instruction, and the card
+    /// that ends the lesson.
+    /// </summary>
+    /// <param name="font">The loaded font.</param>
+    /// <param name="practice">The practice floor being played.</param>
+    /// <param name="accent">The accent colour for the strip and the rule.</param>
+    /// <exception cref="ArgumentNullException">Thrown when an argument is null.</exception>
+    /// <remarks>
+    /// The floor itself is drawn underneath by the pixel renderer; this only adds the line to read
+    /// and replaces the footer's ability hints, which the practice floor deliberately does not
+    /// have, with the keys it does use.
+    /// </remarks>
+    public static void Practice(PixelFont font, PracticeTutorial practice, Color accent)
+    {
+        ArgumentNullException.ThrowIfNull(font);
+        ArgumentNullException.ThrowIfNull(practice);
+
+        var width = Raylib.GetScreenWidth();
+        var height = Raylib.GetScreenHeight();
+        var centreX = width / 2;
+        var promptScale = width >= 760 ? 2 : 1;
+        var lines = Wrap(practice.Prompt, promptScale, width - 64);
+        var lineHeight = (PixelFont.LineHeight * promptScale) + 4;
+        var stripHeight = 24 + (lines.Count * lineHeight) + 10;
+
+        // The lesson sits at the foot of the chamber rather than over it: the HUD above the maze
+        // carries the bloom count the lesson keeps talking about, and the cells stay readable.
+        var footer = RaylibLayout.FooterHeight;
+        var stripTop = height - footer - stripHeight;
+        Raylib.DrawRectangle(0, stripTop, width, stripHeight, new Color(3, 12, 14, 234));
+        Raylib.DrawRectangle(0, stripTop - 2, width, 2, Fade(accent, 0.75));
+        font.DrawCentered("PRACTICE", centreX, stripTop + 8, 1, Glow);
+
+        var y = stripTop + 24;
+
+        foreach (var line in lines)
+        {
+            font.DrawCentered(line, centreX, y, promptScale, Text);
+            y += lineHeight;
+        }
+
+        // The footer's ability hints are for the real floors: here the only keys are walking and
+        // leaving, so the strip says exactly that.
+        Raylib.DrawRectangle(0, height - footer, width, footer, new Color(3, 12, 14, 234));
+        font.DrawCentered(
+            practice.IsComplete
+                ? "ENTER: BEGIN THE DESCENT   ESC: TITLE"
+                : FormattableString.Invariant(
+                    $"STEP {Math.Min(practice.CompletedSteps + 1, PracticeTutorial.StepCount)} OF {PracticeTutorial.StepCount}   WASD / ARROWS: WALK   ESC: TITLE"),
+            centreX,
+            height - (footer / 2) - (PixelFont.LineHeight / 2),
+            1,
+            practice.IsComplete ? accent : Dim);
+
+        if (!practice.IsComplete)
+        {
+            return;
+        }
+
+        // The lesson is over: a panel over a room the player already cleared.
+        var panelWidth = Math.Min(width - 64, 480);
+        var panelHeight = 210;
+        var left = centreX - (panelWidth / 2);
+        var top = (height / 2) - (panelHeight / 2);
+
+        Raylib.DrawRectangle(0, 0, width, height, new Color(2, 7, 9, 170));
+        Raylib.DrawRectangle(left + 7, top + 7, panelWidth, panelHeight, new Color(0, 0, 0, 130));
+        Raylib.DrawRectangle(left, top, panelWidth, panelHeight, new Color(4, 11, 13, 250));
+        Frame(left, top, panelWidth, panelHeight, Fade(Glow, 0.55));
+        Heading(font, "THE ARCH IS OPEN", centreX, top + 26, panelWidth - 48, Glow);
+
+        var body = Wrap(practice.Prompt, 1, panelWidth - 40);
+        var bodyY = top + 70;
+
+        foreach (var line in body)
+        {
+            font.DrawCentered(line, centreX, bodyY, 1, Text);
+            bodyY += 12;
+        }
+
+        Rule(centreX, top + panelHeight - 58, Glow);
+        font.DrawCentered("ENTER: BEGIN THE DESCENT   ESC: TITLE", centreX, top + panelHeight - 42, 1, Dim);
     }
 
     /// <summary>
@@ -981,13 +1139,14 @@ public static class PixelCards
             1,
             Dim);
 
-        var promptScale = width >= 700 ? 2 : 1;
-        font.DrawCentered(
-            Fit("ENTER: NEXT   A / D: PAGE   ESC: BACK TO THE TITLE", promptScale, width - 24),
-            centreX,
-            height - 44,
-            promptScale,
-            Text);
+        // The guide is read one page at a time, but the last page is the offer to walk the loop:
+        // the prompt says so there, and P does it from any page.
+        var promptScale = width >= 900 ? 2 : 1;
+        var prompt = pageNumber >= Tutorial.PageCount - 1
+            ? "ENTER: PRACTISE THE BASICS   ESC: TITLE"
+            : "ENTER: NEXT PAGE   A / D: PAGE   P: PRACTISE   ESC: TITLE";
+
+        font.DrawCentered(Fit(prompt, promptScale, width - 24), centreX, height - 44, promptScale, Text);
     }
 
     /// <summary>

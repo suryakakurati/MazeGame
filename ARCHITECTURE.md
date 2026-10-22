@@ -150,6 +150,7 @@ draft, then builds the next floor with the hearts left plus pending heals, out o
 | `WallStrips` | AssetForge | The four thin wall faces per theme (`wall-north`/`-east`/`-south`/`-west`): a 5 px band on a transparent canvas, rock then lit rim then contact shadow, with the theme's wall motif as its texture (moss rock, cut block, woven root, ribbed, plate, crystal, silk, bone, grate or frost). A per-id maker's mark keeps even two floors that share a motif distinct. Drawn as whole-cell tiles because this maze stores walls *between* cells; corners overlap deliberately. | done (Phase 6, Phase 8) |
 | `CardCatalog` | Core / Game | The thirty-nine shipped cards, as a read-only list, with `ById`. The content seam: another card is a record here — and, if it changes a rule, one validated `GameConfig` knob (the bloom-glow knobs are the worked example). Every tier is on the face, and `House Favour` is the only `SuperRare`. | done (Phase 9, 11) |
 | `Tutorial` / `TutorialStep` | Core / Game | The guided tutorial's pages as content: a caption, a heading, prose and the exact keys, with `Validate`. Both frontends draw the same list, so the window and the terminal cannot teach different controls. No rules change from it. | done (seventh pass) |
+| `PracticeTutorial` | Core / Game | The tutorial's do-it floor: a 9x9 chamber whose player, arch, blooms and hunter are taken in reading order (a private `IRandom` that does not shuffle), with a hunter whose clock is ten minutes a step so nothing can catch the player. The four steps are derived from the floor (moved, picked one bloom, picked all, opened the arch), so one walk can pass two of them; `Update` advances and `Prompt` says what to do next. | done (eighth pass) |
 | `RunModifiers` | Core / Game | The totals of the held cards, immutable (`With(card)`), composing over a floor's `GameConfig` with `Apply`: clamped (vision ≥ 1 once touched, budgets ≥ 0, both step times ≥ 0.05 s, ceiling ≥ carried hearts) and validated, so a card changes the floor's *inputs*, never its rules. `Describe()` renders the totals for the draft screen and console. | done (Phase 9) |
 | `Draft` | Core / Game | The choice between two floors: the offers (read-only), whether it is resolved, which card was taken, and whether it was skipped. Mutation is internal to Core, so only `Campaign` can resolve it. | done (Phase 9) |
 | `DraftFactory` | Core / Game | Builds the offers from `{run seed, floor number, held cards}` with a seeded draw weighted by tier **and floor band**, so rares become common later. Every fifth floor guarantees a rare when one is eligible. Guards: no duplicates unless stackable, no contradictory pair, at most two vision cards per run, and no card whose price is paid in a draft the run cannot reach. | done (Phase 9, 11) |
@@ -195,7 +196,9 @@ draft, then builds the next floor with the hearts left plus pending heals, out o
 2. The window opens on the title screen (`RaylibRenderer.DrawTitle`). The frontend owns the
    selection; confirming `DESCEND` calls the factory, resets the renderer's explored cells, shows
    the floor intro card for 1.6 s (Enter/Space skips it) and switches to the game screen.
-   `TUTORIAL` opens `Screen.Tutorial`, which pages through Core's `Tutorial` list.
+   `TUTORIAL` opens `Screen.Tutorial`, which pages through Core's `Tutorial` list and hands over
+   to `Screen.Practice` (Core's `PracticeTutorial`); `CARDS` opens `Screen.Codex`, the readable
+   catalog, which the pause menu opens too.
    `LEAVE` or Esc closes the window; Esc during a floor opens the pause card instead.
 3. The frontend reads its own keyboard API and translates input into one `GameCommand`.
    `GameCommands.Apply` performs it: normally `TryMove(direction)` or one of

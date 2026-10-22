@@ -24,7 +24,22 @@ If they are not green, fixing that is the first task, not the new feature.
 
 ## Project state at handoff (2026-10-22)
 
-**The latest pass (pause, tutorial, rerolls and a fourth card wave) is in:** Escape now opens a
+**The latest pass (a codex, a practice floor and the fourth wave's balance) is in:** the catalog is
+readable in the game — `PixelCards.Codex` from the title's `CARDS` entry and the pause menu's, with
+W/S scrolling, and `ConsoleFrontend.PrintCodex` printing the same data by rarity. The tutorial now
+has a floor to walk: `PracticeTutorial` in Core builds a 9x9 chamber laid out in reading order
+over a private non-shuffling `IRandom`, with a hunter on a ten-minute step, and derives its four
+steps from the floor (`Update`/`Prompt`/`IsComplete`); `Screen.Practice` and
+`ConsoleFrontend.Practice` play it, and the tutorial's last page (or `P`) starts it. The fourth
+wave was re-priced — Ashen Bloom pays one aura step, Coiled Spring pays 6% of the hunt rather than a
+heart, Second Skin gained a second of grace, Patient Hunter pays a step of torch instead of drag's
+hangover — pinned by `CardCatalogTests.TheFourthWave_PricesItsTradesInUnitsTheCatalogAlreadyUses`.
+`ConsoleRenderer.DescribeHints` now lists only the verbs that have charges, which keeps the
+practice floor honest, and the practice floor is a 9x9 chamber rather than the first pass's
+one-row corridor, which was a thin lit line in a dark viewport and read as a black screen.
+**The suite is 877 tests, all green.**
+
+**The pass before that (pause, tutorial, rerolls and a fourth card wave) is in:** Escape now opens a
 pause card (`Screen.Paused`, `PixelCards.Pause`, `ConsoleFrontend.PauseMenu`) with `CONTINUE` and
 `QUIT RUN` instead of ending the run; the console restarts its `Stopwatch` on resume so a pause is
 not charged to the hunters. `GameConfig.ForFloor` adds one heart to `CatchCost` for every five
@@ -33,9 +48,10 @@ turning roulette wheel from primitives (`PixelCards.DrawRoulette`, driven by `Ge
 can be rerolled for hearts (`Campaign.DraftRerollCost` 1 then 2 then 3, `TryRerollDraft`, with
 `TryAdvanceFloor`/`TryReincarnate` clearing the ladder) and the last heart is never a price. The
 catalog is **thirty-nine cards**: `CardTier.SuperRare` exists for House Favour alone, and the fourth
-wave adds fourteen trades led by **Ashen Bloom** — a catch lights every bloom within 1 step for 2
-seconds through `GameConfig.BloomGlowRadius`/`BloomGlowSeconds`, `GameState.IsBloomGlowActive` and
-`RecomputeVisibility`, with each copy adding a step of reach. The title's second entry opens a
+wave adds fourteen trades led by **Ashen Bloom** — a catch lights every bloom on the floor for 2
+seconds, each flower on its own tile only, through `GameConfig.BloomGlowReach`/`BloomGlowSeconds`,
+`GameState.IsBloomGlowActive` and `RecomputeVisibility`, with each extra copy lighting one more step
+around every flower. The title's second entry opens a
 **guided Tutorial** (`Tutorial`, `TutorialStep` in Core, `PixelCards.DrawTutorial` in the window,
 `ConsoleFrontend.PrintTutorial` in the terminal): twelve pages covering the floor, the hunters,
 hearts, every ability and the pause menu. **The suite is 868 tests, all green.**

@@ -29,18 +29,22 @@ namespace MazeGame.UI.Frontends;
 internal static class RaylibFrontend
 {
     /// <summary>Menu entries on the title screen.</summary>
-    private const int MenuItemCount = 3;
+    private const int MenuItemCount = 4;
 
     private const int DescendItem = 0;
 
     private const int TutorialItem = 1;
 
-    private const int LeaveItem = 2;
+    private const int CodexItem = 2;
 
-    /// <summary>The pause menu's two entries.</summary>
+    private const int LeaveItem = 3;
+
+    /// <summary>The pause menu's three entries.</summary>
     private const int PauseContinueItem = 0;
 
-    private const int PauseQuitItem = 1;
+    private const int PauseCodexItem = 1;
+
+    private const int PauseQuitItem = 2;
 
     /// <summary>How long a floor intro card stays up before play begins.</summary>
     private const double IntroSeconds = 1.6;
@@ -76,6 +80,12 @@ internal static class RaylibFrontend
         Raylib.SetConfigFlags(ConfigFlags.ResizableWindow);
         Raylib.InitWindow(width, height, RaylibLayout.Title);
         Raylib.SetWindowMinSize(RaylibLayout.MinWindowWidth, RaylibLayout.MinWindowHeight);
+
+        // Raylib closes the window on Escape by default, which would quit the game before the loop
+        // below ever sees the key: Escape is the pause key in play, "back" on the tutorial and the
+        // practice floor, and a cancel while aiming. Only the title's LEAVE ends the session, so
+        // the exit key is cleared and WindowShouldClose listens to the window's close button alone.
+        Raylib.SetExitKey(KeyboardKey.Null);
 
         if (!Raylib.IsWindowReady())
         {
@@ -139,6 +149,9 @@ internal static class RaylibFrontend
         var selected = DescendItem;
         var introEndsAt = 0.0;
         var tutorialPage = 0;
+        var codexScroll = 0;
+        var codexReturn = Screen.Title;
+        PracticeTutorial? practice = null;
 
         // Walking is a tap or a hold, and the difference is what keeps one press worth one tile.
         // The rule itself is Core's, so it is tested without a window.
@@ -162,13 +175,19 @@ internal static class RaylibFrontend
                             tutorialPage = 0;
                             screen = Screen.Tutorial;
                             break;
+
+                        case TitleChoice.Codex:
+                            codexScroll = 0;
+                            codexReturn = Screen.Title;
+                            screen = Screen.Codex;
+                            break;
                     }
 
                     break;
 
                 case Screen.Tutorial:
                     // A guided read, not a menu: each page is one idea, and the last one hands the
-                    // player back to the title so they can descend with the keys fresh.
+                    // player to the practice floor so they walk the loop once before descending.
                     if (Pressed(KeyboardKey.Escape))
                     {
                         screen = Screen.Title;
@@ -189,14 +208,92 @@ internal static class RaylibFrontend
                     {
                         if (tutorialPage >= Tutorial.PageCount - 1)
                         {
-                            screen = Screen.Title;
-                            selected = TutorialItem;
+                            // The last page hands the player to the practice floor: they have
+                            // read the loop, so the next beat is walking it once.
+                            StartPractice();
                         }
                         else
                         {
                             tutorialPage++;
                         }
                     }
+                    else if (Pressed(KeyboardKey.P))
+                    {
+                        StartPractice();
+                    }
+
+                    break;
+
+                case Screen.Codex:
+                    if (Pressed(KeyboardKey.S) || Pressed(KeyboardKey.Down))
+                    {
+                        codexScroll = Math.Min(CardCatalog.All.Count - 1, codexScroll + 1);
+                    }
+                    else if (Pressed(KeyboardKey.W) || Pressed(KeyboardKey.Up))
+                    {
+                        codexScroll = Math.Max(0, codexScroll - 1);
+                    }
+                    else if (Pressed(KeyboardKey.Escape) || Pressed(KeyboardKey.Q) ||
+                             Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter))
+                    {
+                        // Back to wherever the codex was opened from, with that menu's entry on
+                        // the codex highlighted so the eye lands where it left.
+                        screen = codexReturn;
+                        selected = codexReturn == Screen.Paused ? PauseCodexItem : CodexItem;
+                    }
+
+                    break;
+
+                case Screen.Practice:
+                    if (practice is null)
+                    {
+                        screen = Screen.Title;
+                        break;
+                    }
+
+                    if (Pressed(KeyboardKey.Escape))
+                    {
+                        practice = null;
+                        screen = Screen.Title;
+                        selected = TutorialItem;
+                        break;
+                    }
+
+                    if (practice.IsComplete)
+                    {
+                        if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) ||
+                            Pressed(KeyboardKey.Space))
+                        {
+                            practice = null;
+                            StartRun();
+                        }
+
+                        break;
+                    }
+
+                    // Walking only: the practice floor has no verbs, and the tutorial has already
+                    // taught the keys for them.
+                    if (Pressed(KeyboardKey.W) || Pressed(KeyboardKey.Up))
+                    {
+                        GameCommands.Apply(practice.Floor, GameCommand.MoveNorth);
+                    }
+                    else if (Pressed(KeyboardKey.S) || Pressed(KeyboardKey.Down))
+                    {
+                        GameCommands.Apply(practice.Floor, GameCommand.MoveSouth);
+                    }
+                    else if (Pressed(KeyboardKey.A) || Pressed(KeyboardKey.Left))
+                    {
+                        GameCommands.Apply(practice.Floor, GameCommand.MoveWest);
+                    }
+                    else if (Pressed(KeyboardKey.D) || Pressed(KeyboardKey.Right))
+                    {
+                        GameCommands.Apply(practice.Floor, GameCommand.MoveEast);
+                    }
+
+                    // The floor ticks even though nothing hunts: the step is timed, so a walk has
+                    // to be spent before the next tap counts.
+                    practice.Floor.Tick(Raylib.GetFrameTime());
+                    practice.Update();
 
                     break;
 
@@ -282,17 +379,25 @@ internal static class RaylibFrontend
                     else if (Pressed(KeyboardKey.W) || Pressed(KeyboardKey.Up) ||
                              Pressed(KeyboardKey.A) || Pressed(KeyboardKey.Left))
                     {
-                        selected = PauseContinueItem;
+                        selected = selected == PauseContinueItem ? PauseQuitItem : selected - 1;
                     }
                     else if (Pressed(KeyboardKey.S) || Pressed(KeyboardKey.Down) ||
                              Pressed(KeyboardKey.D) || Pressed(KeyboardKey.Right))
                     {
-                        selected = PauseQuitItem;
+                        selected = selected == PauseQuitItem ? PauseContinueItem : selected + 1;
                     }
                     else if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) ||
                              Pressed(KeyboardKey.Space))
                     {
-                        if (selected == PauseQuitItem)
+                        if (selected == PauseCodexItem)
+                        {
+                            // Reading the catalog does not end the pause: the floor is still
+                            // frozen, and Escape comes back to this menu.
+                            codexScroll = 0;
+                            codexReturn = Screen.Paused;
+                            screen = Screen.Codex;
+                        }
+                        else if (selected == PauseQuitItem)
                         {
                             // Quitting the run returns to the title rather than closing the game:
                             // the title's LEAVE is the only way out for good.
@@ -440,7 +545,7 @@ internal static class RaylibFrontend
                 selected = 0;
             }
 
-            DrawFrame(screen, selected, campaign, renderer, pixels, tutorialPage);
+            DrawFrame(screen, selected, campaign, renderer, pixels, tutorialPage, codexScroll, practice);
         }
 
         return screen == Screen.Title ? null : campaign;
@@ -451,6 +556,18 @@ internal static class RaylibFrontend
             renderer.Reset();
             pixels.Reset();
             StartFloorIntro();
+        }
+
+        void StartPractice()
+        {
+            practice = new PracticeTutorial();
+            renderer.Reset();
+            pixels.Reset();
+            pixels.SetFloor(practice.Definition);
+            pixels.SetTheme(practice.Definition.ThemeId);
+            audio?.SetIntensity(MusicIntensity.Calm);
+            screen = Screen.Practice;
+            selected = 0;
         }
 
         void StartFloorIntro()
@@ -482,7 +599,9 @@ internal static class RaylibFrontend
         Campaign? campaign,
         RaylibRenderer renderer,
         PixelRenderer pixels,
-        int tutorialPage = 0)
+        int tutorialPage = 0,
+        int codexScroll = 0,
+        PracticeTutorial? practice = null)
     {
         Raylib.BeginDrawing();
 
@@ -493,6 +612,16 @@ internal static class RaylibFrontend
         else if (screen == Screen.Tutorial)
         {
             PixelCards.DrawTutorial(pixels.Font, tutorialPage, RaylibRenderer.AccentFor("shallows"));
+        }
+        else if (screen == Screen.Codex)
+        {
+            PixelCards.Codex(pixels.Font, codexScroll, RaylibRenderer.AccentFor("shallows"));
+        }
+        else if (screen == Screen.Practice && practice is not null)
+        {
+            // The lesson is drawn over its own chamber: the floor underneath is the real one.
+            pixels.Draw(practice.Floor);
+            PixelCards.Practice(pixels.Font, practice, RaylibRenderer.AccentFor("shallows"));
         }
         else
         {
@@ -1016,6 +1145,7 @@ internal static class RaylibFrontend
             {
                 DescendItem => TitleChoice.Descend,
                 TutorialItem => TitleChoice.Tutorial,
+                CodexItem => TitleChoice.Codex,
                 _ => TitleChoice.Quit,
             };
         }
@@ -1041,6 +1171,12 @@ internal static class RaylibFrontend
 
         /// <summary>The guided tutorial, read before a run.</summary>
         Tutorial,
+
+        /// <summary>The practice floor: the tutorial's loop, walked once.</summary>
+        Practice,
+
+        /// <summary>The card catalog, readable from the title or from a pause.</summary>
+        Codex,
 
         /// <summary>A pause menu drawn over a frozen floor.</summary>
         Paused,
@@ -1084,6 +1220,9 @@ internal static class RaylibFrontend
 
         /// <summary>Open the guided tutorial.</summary>
         Tutorial,
+
+        /// <summary>Open the card catalog.</summary>
+        Codex,
 
         /// <summary>Close the window.</summary>
         Quit,

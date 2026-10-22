@@ -261,19 +261,21 @@ public sealed record GameConfig
     public int CatchCost { get; init; } = 1;
 
     /// <summary>
-    /// Gets the radius, in steps, that the floor's blooms glow for after a catch. Defaults to
-    /// zero, which leaves them dark; a card is what lights them.
+    /// Gets how far the floor's blooms glow after a catch. Defaults to zero, which leaves them
+    /// dark; a card is what lights them.
     /// </summary>
     /// <remarks>
-    /// The glow is a rule, not a drawing effect: <see cref="GameState.IsVisible"/> includes the
-    /// blooms inside this radius for <see cref="BloomGlowSeconds"/>, so a renderer cannot reveal
-    /// them on its own and a test can read the reveal without a window.
+    /// The glow is a rule, not a drawing effect: <see cref="GameState.IsVisible"/> includes
+    /// <b>every</b> bloom on the floor for <see cref="BloomGlowSeconds"/>, and a reach of one
+    /// reveals each bloom's own tile and nothing else. A reach above one lights that many steps
+    /// around every glowing bloom. A renderer cannot reveal them on its own, and a test can read
+    /// the reveal without a window.
     /// </remarks>
-    public int BloomGlowRadius { get; init; }
+    public int BloomGlowReach { get; init; }
 
     /// <summary>
     /// Gets how long a bloom glow lasts after a catch, in seconds. Defaults to 2. Ignored when
-    /// <see cref="BloomGlowRadius"/> is zero. Must be finite and not negative.
+    /// <see cref="BloomGlowReach"/> is zero. Must be finite and not negative.
     /// </summary>
     public double BloomGlowSeconds { get; init; } = 2.0;
 
@@ -514,11 +516,11 @@ public sealed record GameConfig
             throw new ArgumentOutOfRangeException(nameof(CatchCost), CatchCost, "A catch must cost at least one heart.");
         }
 
-        if (BloomGlowRadius < 0)
+        if (BloomGlowReach < 0)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(BloomGlowRadius),
-                BloomGlowRadius,
+                nameof(BloomGlowReach),
+                BloomGlowReach,
                 "A bloom glow cannot have a negative radius.");
         }
 
@@ -947,7 +949,7 @@ public sealed record GameConfig
             SealedBarrierCost = SealedBarrierCost,
             LureStunSeconds = LureStunSeconds,
             LureVisionPenalty = LureVisionPenalty,
-            BloomGlowRadius = BloomGlowRadius,
+            BloomGlowReach = BloomGlowReach,
             BloomGlowSeconds = BloomGlowSeconds,
             SprintMultiplier = SprintMultiplier,
             SprintStaminaSeconds = SprintStaminaSeconds,

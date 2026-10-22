@@ -35,14 +35,17 @@ graph/pathfinding libraries are used.
 > skip for a heart** — from a catalog of thirty-nine, including four movement cards, four powerup
 > cards, ten second-wave cards that change catches, blooms, durations and revivals, three room
 > cards that raise the secret-room roll or buy one promised casino, and a fourth wave led by
-> **Ashen Bloom** (a catch lights every bloom near you for two seconds, and each copy reaches a
-> step further). Rarity is on every card's face, and **House Favour** is the catalog's one
+> **Ashen Bloom** (a catch lights every bloom on the floor for two seconds, each flower shown only
+> on its own tile; every extra copy lights a step around each flower). Rarity is on every card's face, and **House Favour** is the catalog's one
 > **super-rare**: the card that promises a casino. The shop shows every card's face before it takes a
 > heart, and a reroll buys a fresh table for hearts (1, then 2, and so on, per floor).
 > **The title screen also offers a Tutorial**: twelve pages that walk through walking, the blooms,
-> the arch, the hunters, hearts and every ability, key by key, before the first descent. ESC now
-> opens a **pause menu** (continue or quit the run) instead of abandoning it.
-> A run summary follows (868 unit tests; the sprite compiler has produced 2,264 validated pixel-art tiles across
+> the arch, the hunters, hearts and every ability, key by key, before the first descent, then hand
+> over to a **practice floor** — a nine-by-nine chamber whose hunter never moves, where the player
+> walks, takes two blooms and opens the arch with nothing at stake. ESC now opens a **pause menu**
+> (continue, the cards, or quit the run) instead of abandoning it, and a **card catalog** on the
+> title and in that menu lists every card with its rarity and its trade.
+> A run summary follows (877 unit tests; the sprite compiler has produced 2,264 validated pixel-art tiles across
 > twenty themes, and the game draws the floor from them).
 > **Late floors have a rule, not just a dial**: floor 14 keeps one hunter asleep until you come
 > close, 18 carries you between two thread gates, 19's lantern burns down a step every forty
@@ -120,10 +123,12 @@ The first restore downloads the Raylib native library for your platform (see
 
 | Key | Action |
 | --- | --- |
-| W / S or arrows (title) | Select `DESCEND`, `TUTORIAL` or `LEAVE` |
+| W / S or arrows (title) | Select `DESCEND`, `TUTORIAL`, `CARDS` or `LEAVE` |
 | Enter or Space (title) | Confirm the highlighted entry |
 | Esc (tutorial) | Back to the title |
 | Enter / A / D / arrows (tutorial) | Turn the page |
+| P (tutorial) | Practise the loop on the teaching floor |
+| C (title or pause) | Open the card catalog: every card, its rarity and its trade |
 | W A S D / arrow keys | Walk: a tap is one tile, a hold keeps walking at the cadence |
 | Shift (hold) | Sprint, while the stamina bar lasts |
 | Space | Blink through the wall you face (the breach stays open) |
@@ -136,17 +141,19 @@ The first restore downloads the Raylib native library for your platform (see
 | Enter, Space or 1–4 (draft) | Take the highlighted card |
 | S (draft) | Skip: take a heart instead |
 | R (draft) | Reroll the table: 1 heart, then 2, then 3, resetting each floor |
-| Esc (in a floor) | Pause: continue, or quit the run back to the title |
+| Esc (in a floor) | Pause: continue, open the cards, or quit the run back to the title |
 | R or Enter (after a run) | Descend again, on a new maze |
 | Q (title) | Quit |
 
 ## How to play
 
 The game opens on a title screen over the cave: `BIOLUMINESCENT / DEPTHS`, with `DESCEND`,
-`TUTORIAL` and `LEAVE`. The tutorial is a guided read rather than a simulation: one idea per page,
-the exact keys for it, and a page count so the player knows how much explaining is left. Starting a
-run (or pressing R after a run ends) builds a brand-new campaign: floor 1,
-three hearts, every budget full. A floor intro card names the floor (The Shallows, Rootbound,
+`TUTORIAL`, `CARDS` and `LEAVE`. The tutorial is a guided read rather than a lecture: one idea per
+page, the exact keys for it, and a page count so the player knows how much explaining is left; its
+last page (or `P` on any page) opens the practice floor, where the same loop is walked once on a
+corridor nothing can reach them on. `CARDS` is the whole catalog with its rarities, and the pause
+menu opens it mid-run. Starting a run (or pressing R after a run ends) builds a brand-new
+campaign: floor 1, three hearts, every budget full. A floor intro card names the floor (The Shallows, Rootbound,
 Drowned Halls) before play begins.
 
 A run is twenty floors. Clearing a floor's arch shows a floor-cleared card; Enter opens the

@@ -261,8 +261,8 @@ public static class CardCatalog
             Name = "Ashen Bloom",
             Tier = CardTier.Common,
             MaxCopies = 3,
-            FaceText = "When hunters catch you, blooms within 1 step glow for 2 seconds, but the killer's light reaches 2 steps further.",
-            Effect = new CardEffect { BloomGlowRadius = 1, EnemyAuraDistance = 2 },
+            FaceText = "When hunters catch you, every bloom on the floor glows for 2 seconds, but the killer's light reaches a step further.",
+            Effect = new CardEffect { BloomGlowReach = 1, EnemyAuraDistance = 1 },
         },
         new()
         {
@@ -287,8 +287,8 @@ public static class CardCatalog
             Id = "coiled-spring",
             Name = "Coiled Spring",
             Tier = CardTier.Uncommon,
-            FaceText = "Your sprint lasts 60% longer, but every catch costs one more heart.",
-            Effect = new CardEffect { SprintStaminaScale = 1.6, CatchCost = 1 },
+            FaceText = "Your sprint lasts 60% longer, but the killer moves 6% faster.",
+            Effect = new CardEffect { SprintStaminaScale = 1.6, EnemyStepScale = 0.94 },
         },
         new()
         {
@@ -296,16 +296,16 @@ public static class CardCatalog
             Name = "Patient Hunter",
             Tier = CardTier.Uncommon,
             MaxCopies = 2,
-            FaceText = "Hunters move 10% slower, but drag's hangover lasts 3 seconds longer.",
-            Effect = new CardEffect { EnemyStepScale = 1.10, DragPenaltySeconds = 3 },
+            FaceText = "Hunters move 10% slower, but your torch loses a step for the rest of the run.",
+            Effect = new CardEffect { EnemyStepScale = 1.10, VisionRadius = -1 },
         },
         new()
         {
             Id = "second-skin",
             Name = "Second Skin",
             Tier = CardTier.Uncommon,
-            FaceText = "Heal 2 hearts now, but the killer gives you 10% less time between steps.",
-            Effect = new CardEffect { HealNow = 2, EnemyStepScale = 0.90 },
+            FaceText = "Heal 2 hearts and take a second more grace after a catch, but the killer gives you 10% less time between steps.",
+            Effect = new CardEffect { HealNow = 2, InvulnerabilitySeconds = 1, EnemyStepScale = 0.90 },
         },
         new()
         {

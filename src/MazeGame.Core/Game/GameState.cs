@@ -1124,8 +1124,9 @@ public sealed class GameState
     /// </summary>
     /// <remarks>
     /// The glow is granted by a card and lasts <see cref="GameConfig.BloomGlowSeconds"/>; while it
-    /// holds, every bloom within <see cref="GameConfig.BloomGlowRadius"/> steps is visible, so the
-    /// renderer only has to brighten a flower the rules have already revealed.
+    /// holds, every bloom on the floor is visible on its own tile (plus
+    /// <see cref="GameConfig.BloomGlowReach"/> minus one steps around it), so the renderer only has
+    /// to brighten flowers the rules have already revealed.
     /// </remarks>
     public bool IsBloomGlowActive => _bloomGlowSecondsLeft > 0;
 
@@ -3164,7 +3165,7 @@ public sealed class GameState
     /// </summary>
     private void StartBloomGlow()
     {
-        if (_config.BloomGlowRadius <= 0 || !(_config.BloomGlowSeconds > 0))
+        if (_config.BloomGlowReach <= 0 || !(_config.BloomGlowSeconds > 0))
         {
             return;
         }
@@ -3656,14 +3657,17 @@ public sealed class GameState
             _visible.Add(cell);
         }
 
-        // A catch with the right card wakes the flowers: every bloom inside the glow's reach is
-        // visible for a couple of seconds, walls or no walls. It is a scent rather than sight, so
-        // the bloom is revealed without revealing the corridor around it.
-        if (_bloomGlowSecondsLeft > 0 && _config.BloomGlowRadius > 0)
+        // A catch with the right card wakes the flowers: every bloom on the floor is visible for a
+        // couple of seconds, walls or no walls. It is a scent rather than sight, so a bloom is
+        // revealed on its own tile without revealing the corridor around it; a second copy of the
+        // card widens each bloom's own halo by a step rather than adding more blooms to the list.
+        if (_bloomGlowSecondsLeft > 0 && _config.BloomGlowReach > 0)
         {
-            foreach (var cell in DistancesFrom(_maze, _player, _config.BloomGlowRadius).Keys)
+            var halo = _config.BloomGlowReach - 1;
+
+            foreach (var bloom in _keys)
             {
-                if (_keys.Contains(cell))
+                foreach (var cell in DistancesFrom(_maze, bloom, halo).Keys)
                 {
                     _visible.Add(cell);
                 }

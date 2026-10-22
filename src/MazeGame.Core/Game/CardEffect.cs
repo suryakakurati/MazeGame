@@ -73,11 +73,14 @@ public sealed record CardEffect
     public int KeyCount { get; init; }
 
     /// <summary>
-    /// Gets the change to the radius, in steps, that blooms glow from after a hunter's catch.
-    /// Zero (the default) leaves the flowers dark; one copy lights the neighbouring cells for
-    /// two seconds, and every further copy widens the glow by another step.
+    /// Gets the change to how far the blooms glow after a hunter's catch.
     /// </summary>
-    public int BloomGlowRadius { get; init; }
+    /// <remarks>
+    /// Zero (the default) leaves the flowers dark. One lights every bloom on the floor on its own
+    /// tile for a couple of seconds; each further step of reach lights that many cells around each
+    /// glowing bloom as well, so a second copy is a halo rather than a bigger map reveal.
+    /// </remarks>
+    public int BloomGlowReach { get; init; }
 
     /// <summary>Gets the change to the wisps available on each floor.</summary>
     public int LureCount { get; init; }

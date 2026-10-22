@@ -162,7 +162,7 @@ public static class Tutorial
             [
                 "Press ESC during a floor to pause. The pause menu offers CONTINUE, which puts you straight back where you stood, and QUIT RUN, which ends the run and returns to the title.",
                 "ESC also closes a safe-room card without spending it, and cancels an aim.",
-                "That is everything. Descend carefully.",
+                "That is everything. Press ENTER to walk the practice floor once, or ESC to go back to the title and descend for real.",
             ],
             Keys = "ESC: PAUSE      ENTER: CONFIRM",
         },

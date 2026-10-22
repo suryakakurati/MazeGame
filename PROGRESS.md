@@ -3,11 +3,11 @@
 Single source of truth for the state of the project. Update this file at the end of
 every work session (see the handoff protocol in `HANDOFF.md`).
 
-Last updated: 2026-10-22 (seventh pass: pause, tutorial, rerolls, a deeper hunt and a fourth card wave)
+Last updated: 2026-10-22 (eighth pass: a card codex, a practice floor, and the fourth wave's balance)
 
 ## Current Status
 
-The solution builds with zero warnings, `dotnet test` is green (868 tests), and the game runs
+The solution builds with zero warnings, `dotnet test` is green (877 tests), and the game runs
 **in a Raylib window** as a **twenty-floor campaign with a card draft between floors, five
 powerups and timed steps**: the title leads to a floor intro card, then a seeded maze (15x15 at
 the top, 25x25 at the bottom) drawn as a bioluminescent cave — fog of war, braided dead ends,
@@ -47,6 +47,38 @@ Raylib's stream callback; with no device the game is silent rather than broken.
 
 What changed in this pass:
 
+- **The catalog is readable in the game.** `PixelCards.Codex` draws all thirty-nine cards one row
+  each — name, tier on the right, the card's own face sentence — with W/S scrolling and a
+  `CARDS n-m OF 39` counter. It opens from the title's `CARDS` entry and from the pause menu's,
+  and returns to whichever menu it came from. The terminal's `PrintCodex` prints the same catalog
+  grouped by rarity, and the pause menu opens it with `L`.
+- **The tutorial has a floor to walk.** `PracticeTutorial` in Core builds a 9x9 chamber whose
+  player, arch, blooms and hunter are placed in reading order (a private `IRandom` that does not
+  shuffle, because this is the one floor that is not generated), with the hunter on a ten-minute
+  step so nothing can catch the player. Its four steps are derived from the floor — moved, took a
+  bloom, took both, opened the arch — so one long walk can pass two at once and a frontend only
+  calls `Update` and reads `Prompt`. The window's `Screen.Practice` draws the real pixel floor with
+  the lesson at its foot, and the terminal's `Practice` plays the same floor in ASCII. The
+  tutorial's last page (or `P` on any page) starts it; the completion card offers the real descent.
+- **The practice floor is a room, not a corridor.** The window draws a floor through a viewport
+  sized by the lantern, so the one-row lesson painted six cells of a 169-cell canvas and read as a
+  black screen. `PracticeTutorial` now builds a 9x9 chamber with a lantern radius of six, so the
+  first frame lights twenty-eight cells and the lesson has the same frame a real floor has. The
+  walk is unchanged — player, arch, two blooms and the hunter are still taken in reading order
+  along the top row — and `PracticeTutorialTests.ThePracticeFloor_OpensOnALitRoomRatherThanABlankCanvas`
+  pins the size and the lit first frame.
+- **The fourth wave was re-priced.** Ashen Bloom's sight price fell from two aura steps to one,
+  because a two-second reveal of one step is not worth the catalog's harshest sight price. Coiled
+  Spring no longer charges a whole heart for a sprint burst (it is 6% of the hunt, like Root
+  Memory's blinks). Second Skin gained a second of grace, so it is no longer Blood Pact with less
+  upside and the same price. Patient Hunter now pays a step of torch instead of drag's hangover,
+  which a player who never drags never felt. `CardCatalogTests` pins all four.
+- **The terminal hints only what the floor can do.** `ConsoleRenderer.DescribeHints` lists the
+  verbs with charges left, so the practice floor (no charges) and a Mute floor no longer
+  advertise a key that does nothing.
+
+What changed in the previous pass (pause, tutorial, rerolls and the fourth wave):
+
 - **ESC pauses instead of quitting.** Both frontends keep the floor frozen (no `Tick`) and draw a
   pause card with `CONTINUE` and `QUIT RUN`; quitting returns to the title rather than closing the
   window, and Escape still cancels an aim or closes a room card. The console restarts its clock on
@@ -63,8 +95,9 @@ What changed in this pass:
   it with the draft), the window binds `R` on the draft card, and the console prints the price.
 - **Fourteen new cards and a super-rare tier.** `CardTier.SuperRare` exists for exactly one card,
   House Favour (the promised casino, now priced at a step of torch); **Ashen Bloom** is the
-  requested idea — a catch lights every bloom within 1 step for 2 seconds (a rule in
-  `RecomputeVisibility`, not a drawing effect), and each further copy adds a step of reach. The
+  requested idea — a catch lights every bloom on the floor for 2 seconds, each flower on its own
+  tile only (a rule in `RecomputeVisibility`, not a drawing effect), and each further copy lights a
+  step around every flower. The
   rest of the wave (`kindling`, `fleet-footed`, `coiled-spring`, `patient-hunter`, `second-skin`,
   `nightglass`, `grave-grace`, `moths-bargain`, `wardens-patience`, `root-memory`, `sated-hollow`,
   `thorn-debt`, `lucky-find`) are the same give-and-take the catalog already trades in.
@@ -1308,7 +1341,7 @@ Run these from the repository root (the folder containing `MazeGame.sln`):
 
 ```bash
 dotnet build                      # must report 0 Warning(s), 0 Error(s)
-dotnet test                       # currently 868/868 passing
+dotnet test                       # currently 877/877 passing
 dotnet run --project tools/AssetForge -- --check   # atlases and themes are healthy
 dotnet run --project src/MazeGame.UI              # Raylib window
 dotnet run --project src/MazeGame.UI -- --console # terminal fallback
@@ -1322,8 +1355,9 @@ If `dotnet` is not on `PATH` (this is the case on the setup machine):
 ~/.dotnet/dotnet run --project src/MazeGame.UI
 ```
 
-Controls: on the title, W/S or the arrows select (`DESCEND`, `TUTORIAL`, `LEAVE`) and Enter/Space
-confirms; the tutorial turns its pages with Enter and leaves with Esc. In play, WASD or arrow keys
+Controls: on the title, W/S or the arrows select (`DESCEND`, `TUTORIAL`, `CARDS`, `LEAVE`) and
+Enter/Space confirms; the tutorial turns its pages with Enter, starts the practice floor with P and
+leaves with Esc; and `C` on the title (or `L` in a pause) opens the catalog. In play, WASD or arrow keys
 move, **hold Shift to sprint** (window only; the console has no sprint yet), and the five powerups
 are Space (Blink), V (Veil), T (Drag), L (Lantern) and F (Shove). At a gate, A/D selects a condition
 and Enter takes it. **E opens a safe room's card** while standing in one (A/D choose, Enter takes,
