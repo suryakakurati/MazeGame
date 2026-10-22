@@ -59,6 +59,26 @@ public sealed class GameStateSafeRoomTests
     }
 
     [Fact]
+    public void TheHunt_NeverWandersIntoTheRoom()
+    {
+        // The room is a sanctuary, not a shortcut: no route to the player needs to cross it, so
+        // the hunt pays a prohibitive price to enter. Without that price a hunter that lost the
+        // player could drift in through the one door and camp the room's only way out.
+        var state = BuildGame(enemyStepSeconds: 0.5, startingHearts: 12);
+
+        Assert.True(WalkTo(state, state.SafeRoom!.Door));
+
+        for (var tick = 0; tick < 40; tick++)
+        {
+            state.Tick(0.5);
+
+            Assert.All(
+                state.Enemies,
+                hunter => Assert.False(state.SafeRoom.Contains(hunter.Cell)));
+        }
+    }
+
+    [Fact]
     public void InsideTheRoom_SealsDoNotCrack()
     {
         var state = BuildGame(enemyStepSeconds: 0.5);
@@ -201,7 +221,9 @@ public sealed class GameStateSafeRoomTests
     private static GameState BuildGame(
         double playerStepSeconds = 0,
         double enemyStepSeconds = 1.0,
-        int visionRadius = 5)
+        int visionRadius = 5,
+        IReadOnlyList<DescentCondition>? conditions = null,
+        int startingHearts = 3)
     {
         var random = new SeededRandom(4);
         var maze = new MazeGenerator(random).Generate(new MazeOptions(7, 7, 4)
@@ -226,14 +248,62 @@ public sealed class GameStateSafeRoomTests
                 VisionRadius = visionRadius,
                 EnemyAuraRadius = 0,
                 EnemyAuraDistance = 0,
-                StartingHearts = 3,
-                MaxHearts = 3,
+                Conditions = conditions ?? Array.Empty<DescentCondition>(),
+                StartingHearts = startingHearts,
+                MaxHearts = startingHearts,
                 Seed = null,
             },
             maze,
             new DijkstraPathfinder(),
             new FixedRandom(0),
             room);
+    }
+
+    [Fact]
+    public void TheEntrance_IsLitBeforeYouStepThroughIt()
+    {
+        // A room is one door in a block of rock. On a floor with no torch it used to be
+        // invisible until the player happened to step on it, which is a find nobody can find.
+        var state = BuildGame(visionRadius: 0);
+        var door = state.SafeRoom!.Door;
+        var path = new DijkstraPathfinder().FindPath(state.Maze, state.Player, door, _ => 1);
+
+        Assert.True(path.Count >= 4, "the test maze needs a corridor to approach the door through");
+
+        // Three steps away: close enough for the seam to show, far enough that it is still a find.
+        Assert.True(WalkTo(state, path[^4]));
+
+        Assert.False(state.SafeRoom.Contains(state.Player));
+        Assert.True(state.IsSafeRoomDoorInSight);
+        Assert.True(state.IsVisible(door));
+        Assert.True(state.IsVisible(state.SafeRoom.Doorway));
+    }
+
+    [Fact]
+    public void WalkingInsideTheRoom_DoesNotWindTheListenerHunt()
+    {
+        // The Listener wounds the hunt on every player step. Inside the safe room that promise
+        // (nothing outside moves) has to win, or the room is only safe while standing still.
+        var state = BuildGame(
+            conditions: [DescentCondition.Listener],
+            startingHearts: 12);
+
+        // Stand at the door outside the room, then let any post-catch stun clear. The Listener
+        // does not move hunters on a tick, so this cannot wind the hunt.
+        Assert.True(WalkTo(state, state.SafeRoom!.Door));
+        state.Tick(3.0);
+        Assert.False(state.IsEnemyStunned);
+
+        var hunter = state.Enemies[0].Cell;
+        state.DrainEvents();
+
+        var neighbour = FirstRoomNeighbour(state, state.Player);
+
+        Assert.True(state.TryMove(DirectionToward(state.Player, neighbour)));
+        Assert.True(state.IsInSafeRoom);
+
+        Assert.Equal(hunter, state.Enemies[0].Cell);
+        Assert.DoesNotContain(GameEvent.KillerStep, state.DrainEvents());
     }
 
     /// <summary>Walks the player to <paramref name="target"/> one step at a time.</summary>

@@ -20,7 +20,7 @@ namespace MazeGame.Core.Game;
 /// </remarks>
 public sealed class Draft
 {
-    private readonly Card[] _offers;
+    private Card[] _offers;
     private Card? _taken;
     private bool _wasSkipped;
 
@@ -81,6 +81,36 @@ public sealed class Draft
         }
 
         _wasSkipped = true;
+        return true;
+    }
+
+    /// <summary>
+    /// Replaces the offers with a fresh draw, which is what a reroll bought with hearts does.
+    /// </summary>
+    /// <param name="offers">The new cards on the table, in display order.</param>
+    /// <returns><see langword="false"/> when the draft is already resolved; it is unchanged then.</returns>
+    /// <remarks>
+    /// Internal like the two resolution methods: only <see cref="Campaign"/> may charge for a
+    /// reroll, and a frontend that could replace the table itself could reroll for free.
+    /// </remarks>
+    internal bool TryReplace(IReadOnlyList<Card> offers)
+    {
+        ArgumentNullException.ThrowIfNull(offers);
+
+        if (IsResolved)
+        {
+            return false;
+        }
+
+        var replacement = new Card[offers.Count];
+
+        for (var index = 0; index < offers.Count; index++)
+        {
+            replacement[index] = offers[index]
+                ?? throw new ArgumentException("The offer list contains null.", nameof(offers));
+        }
+
+        _offers = replacement;
         return true;
     }
 

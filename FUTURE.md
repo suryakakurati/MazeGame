@@ -1218,8 +1218,8 @@ than a menu. Charges refill when a floor starts; there is no shared budget to ho
 | **SPACE** | **Blink** | Step through the wall you face and land one cell beyond it. | The wall stays open: you have made a shortcut the hunters can use too. | 2 |
 | **V** | **Veil** | Stand still for half a second to go unseen for 3 s; hunters keep walking to where they last saw you. | Your lantern dims one step and any step breaks it. | 3 |
 | **T** | **Drag** | The hunt runs at 40% for 3 s while you move normally. | When it ends, hunters are 10% faster for 5 s. | 1 |
-| **L** | **Lantern** | Throw your light up to four cells; for 5 s you see from where it lands and the hunters walk toward it. | Your own cell is dark until you walk onto the lantern or the 5 s end. | 1 |
-| **F** | **Shove** | Shove the hunter in the cell you face two cells back and stun it for 2 s. | It is loud: every other hunter targets your cell for 3 s. | 1 |
+| **L** | **Lantern** | Throw your light up to five cells; for 8 s you see from where it lands and the hunters walk toward it. | Your own cell is dark until you walk onto the lantern or the 8 s end. | 1 |
+| **F** | **Shove** | Shove any adjacent hunter two cells away and stun it for 2 s. | It is loud: every other hunter targets your cell for 3 s. | 1 |
 
 - **Blink is the traversal verb.** It turns a dead end into a door and leaves the door open. That
   is a spatial decision with a permanent consequence, not a combat trick.

@@ -169,7 +169,9 @@ public sealed class GameFactory
             config.Rows,
             config.Columns,
             floor.Number,
-            roomRandom);
+            roomRandom,
+            modifiers.RoomChancePercent,
+            floor.ForceRoom);
 
         var generator = new BraidedMazeGenerator(
             new DeadEndBraider(new MazeGenerator(random), random, config.DeadEndBraidPercent),

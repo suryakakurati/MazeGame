@@ -196,10 +196,10 @@ public sealed class CampaignDraftTests
 
         var card = campaign.Draft!.Offers.Single(offer => offer.Id == "second-wind");
         Assert.True(campaign.TakeCard(card));
-        Assert.Equal(1, campaign.PendingHeals);
+        Assert.Equal(2, campaign.PendingHeals);
 
         Assert.True(campaign.TryAdvanceFloor());
-        Assert.Equal(3, campaign.Hearts);
+        Assert.Equal(4, campaign.Hearts);
     }
 
     [Fact]
@@ -229,8 +229,8 @@ public sealed class CampaignDraftTests
         Assert.True(campaign.Floor.TryMove(Direction.West));
         Assert.True(campaign.IsFloorCleared);
 
-        // Holding the card is worth a heart on every clear: 3 wounded hearts become 4.
-        Assert.Equal(4, campaign.HeartsOnNextFloor);
+        // Holding the card is worth two hearts on every clear: 3 wounded hearts become 5.
+        Assert.Equal(5, campaign.HeartsOnNextFloor);
     }
 
     [Fact]
@@ -301,6 +301,87 @@ public sealed class CampaignDraftTests
 
         Assert.Equal(CampaignStatus.Won, campaign.Status);
         Assert.Equal(campaign.FloorCount - 1, campaign.Modifiers.Cards.Count);
+    }
+
+    [Fact]
+    public void Reroll_ReplacesTheTableAndChargesOneMoreHeartEachTime()
+    {
+        var campaign = CampaignOf();
+        ClearFloor(campaign);
+        var first = campaign.Draft!.Offers.Select(card => card.Id).ToArray();
+
+        Assert.Equal(1, campaign.DraftRerollCost);
+        Assert.True(campaign.TryRerollDraft());
+
+        Assert.Equal(3, campaign.Hearts);
+        Assert.Equal(1, campaign.DraftRerolls);
+        Assert.Equal(2, campaign.DraftRerollCost);
+        Assert.NotEqual(first, campaign.Draft!.Offers.Select(card => card.Id).ToArray());
+        Assert.False(campaign.Draft.IsResolved);
+
+        Assert.True(campaign.TryRerollDraft());
+
+        Assert.Equal(1, campaign.Hearts);
+        Assert.Equal(2, campaign.DraftRerolls);
+        Assert.Equal(3, campaign.DraftRerollCost);
+    }
+
+    [Fact]
+    public void Reroll_WillNotSpendTheLastHeart()
+    {
+        var campaign = CampaignOf();
+        WoundTo(campaign, hearts: 2);
+        ClearFloor(campaign);
+
+        Assert.True(campaign.CanRerollDraft);
+        Assert.True(campaign.TryRerollDraft());
+        Assert.Equal(1, campaign.Hearts);
+
+        // The second reroll would cost two hearts, which is more than the run can pay and still
+        // be alive for the floor below.
+        Assert.False(campaign.CanRerollDraft);
+        Assert.False(campaign.TryRerollDraft());
+        Assert.Equal(1, campaign.Hearts);
+        Assert.Equal(1, campaign.DraftRerolls);
+    }
+
+    [Fact]
+    public void RerollPrice_StartsAgainAtOneOnTheNextFloor()
+    {
+        var campaign = CampaignOf();
+        ClearFloor(campaign);
+        Assert.True(campaign.TryRerollDraft());
+        Assert.Equal(2, campaign.DraftRerollCost);
+
+        Assert.True(campaign.SkipDraft());
+        Assert.True(campaign.TryAdvanceFloor());
+
+        ClearFloor(campaign);
+
+        Assert.Equal(0, campaign.DraftRerolls);
+        Assert.Equal(1, campaign.DraftRerollCost);
+    }
+
+    [Fact]
+    public void Reroll_AfterTheDraftIsResolved_IsRefused()
+    {
+        var campaign = CampaignOf();
+        ClearFloor(campaign);
+        Assert.True(campaign.TakeCard(campaign.Draft!.Offers[0]));
+
+        Assert.False(campaign.CanRerollDraft);
+        Assert.False(campaign.TryRerollDraft());
+        Assert.Equal(4, campaign.Hearts);
+    }
+
+    [Fact]
+    public void Reroll_WithNoOpenDraft_IsRefused()
+    {
+        var campaign = CampaignOf();
+
+        Assert.False(campaign.CanRerollDraft);
+        Assert.False(campaign.TryRerollDraft());
+        Assert.Equal(0, campaign.DraftRerolls);
     }
 
     /// <summary>

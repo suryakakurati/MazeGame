@@ -143,11 +143,11 @@ public sealed class GameStatePowerupTests
     [Fact]
     public void Lantern_ReturnsAfterItsTimeRunsOut()
     {
-        var state = CorridorGame(length: 7);
+        var state = CorridorGame(length: 9);
         Assert.True(state.TryMove(Direction.East));
         Assert.True(state.TryThrowLantern());
 
-        state.Tick(5.0);
+        state.Tick(8.0);
 
         Assert.False(state.IsLanternActive);
         Assert.Null(state.LanternCell);
@@ -182,6 +182,58 @@ public sealed class GameStatePowerupTests
         // The stun is a real window: half a second later it has not moved again.
         state.Tick(0.5);
         Assert.Equal(state.Maze.GetCell(0, 3), state.Enemy);
+    }
+
+    [Fact]
+    public void Shove_WorksWithoutFacingTheHunter()
+    {
+        var state = ShoveLevel();
+        Assert.True(state.TryMove(Direction.East));
+        state.Tick(1.0);
+
+        // Turn away: a press into the north wall only changes facing, it does not move.
+        Assert.False(state.TryMove(Direction.North));
+
+        Assert.True(state.TryShove());
+        Assert.Equal(state.Maze.GetCell(0, 3), state.Enemy);
+    }
+
+    [Fact]
+    public void Lantern_ReachesFiveCellsAhead()
+    {
+        // From (0,1) the throw crosses five cells and lands on (0,6). The old range stopped one
+        // cell shorter, which made a room-wide throw impossible.
+        var state = CorridorGame(length: 9);
+        Assert.True(state.TryMove(Direction.East));
+        Assert.True(state.TryThrowLantern());
+
+        Assert.Equal(state.Maze.GetCell(0, 6), state.LanternCell);
+    }
+
+    [Fact]
+    public void Lantern_BurnsForEightSeconds()
+    {
+        var state = CorridorGame(length: 9);
+        Assert.True(state.TryMove(Direction.East));
+        Assert.True(state.TryThrowLantern());
+
+        state.Tick(7.9);
+        Assert.True(state.IsLanternActive);
+
+        state.Tick(0.2);
+        Assert.False(state.IsLanternActive);
+    }
+
+    [Fact]
+    public void Lantern_StopsShortOfAHunterInsteadOfBeingRefused()
+    {
+        // Player (0,1), hunter at (0,6): the throw stops on (0,5) rather than refusing the whole
+        // charge because the furthest reachable cell is occupied.
+        var state = CorridorGame(length: 7);
+        Assert.True(state.TryMove(Direction.East));
+        Assert.True(state.TryThrowLantern());
+
+        Assert.Equal(state.Maze.GetCell(0, 5), state.LanternCell);
     }
 
     [Fact]

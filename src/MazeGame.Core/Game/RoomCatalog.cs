@@ -34,6 +34,16 @@ public static class RoomCatalog
     /// </remarks>
     public const int GambleWinPercent = 45;
 
+    /// <summary>
+    /// Gets the odds a House Favour's promised table pays for its one play.
+    /// </summary>
+    /// <remarks>
+    /// 66% on a double is 1.32× per heart, a real edge the card buys for exactly one bet. The
+    /// promise makes that floor's room a casino and skips the spawn roll, so the edge is paid for
+    /// in the card's own drawback rather than in extra visits.
+    /// </remarks>
+    public const int FavouredGambleWinPercent = 66;
+
     private const int SeedStride = 7919;
 
     private const int SeedSalt = 0x5200;
@@ -43,13 +53,20 @@ public static class RoomCatalog
     /// <summary>Rolls the casino's single gamble for a floor.</summary>
     /// <param name="runSeed">The run's seed, so a replay stakes the same way.</param>
     /// <param name="floorNumber">The floor the room is on.</param>
+    /// <param name="winPercent">
+    /// The table's odds in whole percent. It defaults to the house's usual price and is raised
+    /// only for the floor a House Favour promised.
+    /// </param>
     /// <returns><see langword="true"/> when the stake doubles.</returns>
-    public static bool GambleWins(int runSeed, int floorNumber)
+    public static bool GambleWins(
+        int runSeed,
+        int floorNumber,
+        int winPercent = GambleWinPercent)
     {
         var random = new SeededRandom(
             unchecked((runSeed * 397) ^ (floorNumber * SeedStride) ^ GambleSalt));
 
-        return random.NextInt(100) < GambleWinPercent;
+        return random.NextInt(100) < Math.Clamp(winPercent, 0, 100);
     }
 
     /// <summary>Picks the room this floor's safe room holds.</summary>
@@ -124,11 +141,12 @@ public static class RoomCatalog
 
     /// <summary>Gets the card's prose: what the room offers, in one or two short lines.</summary>
     /// <param name="kind">The room.</param>
+    /// <param name="winPercent">The odds this floor's table pays, for the casino's prose.</param>
     /// <returns>The prose.</returns>
-    public static string Prompt(RoomKind kind) => kind switch
+    public static string Prompt(RoomKind kind, int winPercent = GambleWinPercent) => kind switch
     {
         RoomKind.Cartographer => "Charts of this floor, lit until you leave it.",
-        RoomKind.LongTable => "Stake hearts. Win at 45%, lose at 55%.",
+        RoomKind.LongTable => $"Stake hearts. Win at {winPercent}%, lose at {100 - winPercent}%.",
         RoomKind.Stall => "Three cards, one heart each.",
         RoomKind.Confessional => "Surrender a card and a heart, and be lighter.",
         RoomKind.Toll => "A heart buys the next floor one hunter fewer.",

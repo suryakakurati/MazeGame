@@ -46,6 +46,12 @@ public static class DraftFactory
 
     private const int RareWeight = 1;
 
+    /// <summary>
+    /// The weight a super-rare card draws at. It never rises with depth, so it stays the rarest
+    /// card in the pool on the last floor just as it was on the first.
+    /// </summary>
+    private const int SuperRareWeight = 1;
+
     private const int FloorSeedStride = 7919;
 
     /// <summary>
@@ -269,6 +275,10 @@ public static class DraftFactory
         CardTier.Common => floorNumber >= 15 ? 3 : floorNumber >= 10 ? 4 : floorNumber >= 5 ? 5 : CommonWeight,
         CardTier.Uncommon => UncommonWeight + 1,
         CardTier.Rare => floorNumber >= 15 ? 4 : floorNumber >= 10 ? 3 : floorNumber >= 5 ? 2 : RareWeight,
+
+        // The promised casino is the rarest draw at every depth: its weight never climbs the way
+        // the rare tier's does.
+        CardTier.SuperRare => SuperRareWeight,
         _ => 0,
     };
 

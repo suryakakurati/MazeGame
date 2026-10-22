@@ -78,7 +78,7 @@ public sealed class RunModifiersTests
         var card = Card("second-wind");
         var modifiers = RunModifiers.None.With(card);
 
-        Assert.Equal(1, card.Effect.HealNow);
+        Assert.Equal(2, card.Effect.HealNow);
         Assert.Equal(2, modifiers.Apply(Floor()).VisionRadius);
 
         // The heal is a one-shot spent on the next floor, not a per-clear effect.
@@ -121,7 +121,7 @@ public sealed class RunModifiersTests
         var applied = modifiers.Apply(Floor());
 
         Assert.Equal(4, applied.KeyCount);
-        Assert.Equal(1, modifiers.HealOnFloorClear);
+        Assert.Equal(2, modifiers.HealOnFloorClear);
     }
 
     [Fact]
@@ -132,6 +132,39 @@ public sealed class RunModifiersTests
         Assert.Equal(1, card.Effect.NextDraftOfferBonus);
         Assert.Equal(-1, card.Effect.FollowingDraftOfferBonus);
         Assert.Equal(Floor(), RunModifiers.None.With(card).Apply(Floor()));
+    }
+
+    [Fact]
+    public void ThresholdSense_RaisesTheRoomChanceAndDimsTheTorch()
+    {
+        var modifiers = RunModifiers.None.With(Card("threshold-sense"));
+        var applied = modifiers.Apply(Floor());
+
+        Assert.Equal(10, modifiers.RoomChancePercent);
+        Assert.Equal(2, applied.VisionRadius);
+    }
+
+    [Fact]
+    public void Latchkey_RaisesTheRoomChanceAndSpeedsTheKillerUp()
+    {
+        var modifiers = RunModifiers.None.With(Card("latchkey"));
+        var applied = modifiers.Apply(Floor());
+
+        Assert.Equal(10, modifiers.RoomChancePercent);
+        Assert.Equal(0.6 * 0.92, applied.EnemyStepSeconds, precision: 9);
+    }
+
+    [Fact]
+    public void HouseFavour_PromisesACasinoAndDimsTheTorch()
+    {
+        var modifiers = RunModifiers.None.With(Card("house-favour"));
+        var applied = modifiers.Apply(Floor());
+
+        Assert.True(modifiers.GuaranteedCasino);
+        Assert.Equal(2, applied.VisionRadius);
+
+        // The promise is one floor, so the run's lasting totals do not claim it.
+        Assert.DoesNotContain("CASINO", modifiers.Describe());
     }
 
     [Fact]
@@ -192,7 +225,7 @@ public sealed class RunModifiersTests
     {
         var applied = RunModifiers.None.With(Card("wide-light")).Apply(Floor());
 
-        Assert.Equal(6, applied.LanternRange);
+        Assert.Equal(7, applied.LanternRange);
         Assert.Equal(PowerupCharges.Default.Veil - 1, applied.Powerups.Veil);
     }
 
@@ -201,7 +234,7 @@ public sealed class RunModifiersTests
     {
         var applied = RunModifiers.None.With(Card("glass-cannon")).Apply(Floor());
 
-        Assert.Equal(0.11 * 0.60, applied.PlayerStepSeconds, precision: 9);
+        Assert.Equal(0.11 * 0.80, applied.PlayerStepSeconds, precision: 9);
         Assert.Equal(2, applied.CatchCost);
     }
 
@@ -242,7 +275,7 @@ public sealed class RunModifiersTests
     {
         var applied = RunModifiers.None.With(Card("light-feet")).Apply(Floor() with { StartingHearts = 2 });
 
-        Assert.Equal(0.11 * 0.65, applied.PlayerStepSeconds, precision: 9);
+        Assert.Equal(0.11 * 0.825, applied.PlayerStepSeconds, precision: 9);
 
         // The slot is taken from the ceiling, never from a heart the player is already holding:
         // the clamp is what keeps a card from throwing a wound at the player.
@@ -255,8 +288,8 @@ public sealed class RunModifiersTests
     {
         var applied = RunModifiers.None.With(Card("momentum")).Apply(Floor());
 
-        Assert.Equal(0.06, applied.MomentumRampPerStep, precision: 9);
-        Assert.Equal(0.35, applied.MomentumMaxBonus, precision: 9);
+        Assert.Equal(0.03, applied.MomentumRampPerStep, precision: 9);
+        Assert.Equal(0.175, applied.MomentumMaxBonus, precision: 9);
         Assert.Equal(0.15, applied.TurnPenaltyScale, precision: 9);
         Assert.Equal(2.0, applied.TurnPenaltySeconds, precision: 9);
     }
@@ -289,7 +322,7 @@ public sealed class RunModifiersTests
 
         // 35% faster and 25% slower still leave the player faster, which is the honest result of
         // holding both: the speed card has to be strong enough to be worth its heart cost.
-        Assert.Equal(0.11 * 0.65 * 1.25, applied.PlayerStepSeconds, precision: 9);
+        Assert.Equal(0.11 * 0.825 * 1.25, applied.PlayerStepSeconds, precision: 9);
     }
 
     [Fact]

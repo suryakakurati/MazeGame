@@ -558,6 +558,25 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         var pulse = 0.6 + (0.4 * Math.Sin(Raylib.GetTime() * 1.7));
         var floor = new Color(RoomFloor.R, RoomFloor.G, RoomFloor.B, (byte)(state.IsInSafeRoom ? 238 : 208));
 
+        // The entrance is the room's one tell. A warm threshold on the door cell, drawn whenever
+        // the player has seen it, so a door in the rock is a find rather than an invisible seam
+        // the player walks past until they happen to step on it.
+        var door = room.Door;
+
+        if (Known(state, door) && OnScreen(door))
+        {
+            var doorX = CanvasX(door.Column);
+            var doorY = CanvasY(door.Row);
+            var threshold = new Color(RoomFloor.R, RoomFloor.G, RoomFloor.B, (byte)(90 + (70 * pulse)));
+            var gold = new Color(RoomFrame.R, RoomFrame.G, RoomFrame.B, (byte)(120 + (110 * pulse)));
+
+            Raylib.DrawRectangle(doorX + 3, doorY + 3, Cell - 6, Cell - 6, threshold);
+            Raylib.DrawRectangle(doorX + 3, doorY + 3, Cell - 6, 1, gold);
+            Raylib.DrawRectangle(doorX + 3, doorY + Cell - 4, Cell - 6, 1, gold);
+            Raylib.DrawRectangle(doorX + 3, doorY + 3, 1, Cell - 6, gold);
+            Raylib.DrawRectangle(doorX + Cell - 4, doorY + 3, 1, Cell - 6, gold);
+        }
+
         foreach (var cell in room.Cells)
         {
             if (!Known(state, cell) || !OnScreen(cell))
@@ -668,11 +687,25 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         var time = Raylib.GetTime();
         var frame = (int)(time * 3.0) % 3;
 
+        // The bloom glow a card grants after a catch: a warm halo behind every bloom the rules
+        // have just revealed, pulsing so it reads as a glow rather than as a bright tile.
+        var glowing = state.IsBloomGlowActive;
+        var halo = 0.55 + (0.45 * Math.Sin(time * 7.0));
+
         foreach (var key in state.Keys)
         {
             if (!Known(state, key) || !OnScreen(key))
             {
                 continue;
+            }
+
+            if (glowing)
+            {
+                var keyX = CanvasX(key.Column) + (PixelLayout.CellSize / 2);
+                var keyY = CanvasY(key.Row) + (PixelLayout.CellSize / 2);
+
+                Raylib.DrawCircle(keyX, keyY, 7.0f, new Color(255, 232, 158, 70 + (int)(90 * halo)));
+                Raylib.DrawCircle(keyX, keyY, 4.5f, new Color(255, 246, 205, 110 + (int)(90 * halo)));
             }
 
             atlas.Draw($"key-{(frame + (key.Column + key.Row)) % 3}", CanvasX(key.Column), CanvasY(key.Row));

@@ -3,11 +3,11 @@
 Single source of truth for the state of the project. Update this file at the end of
 every work session (see the handoff protocol in `HANDOFF.md`).
 
-Last updated: 2026-10-21 (fifth pass: blooms, the Echo and the herbarium)
+Last updated: 2026-10-22 (seventh pass: pause, tutorial, rerolls, a deeper hunt and a fourth card wave)
 
 ## Current Status
 
-The solution builds with zero warnings, `dotnet test` is green (834 tests), and the game runs
+The solution builds with zero warnings, `dotnet test` is green (868 tests), and the game runs
 **in a Raylib window** as a **twenty-floor campaign with a card draft between floors, five
 powerups and timed steps**: the title leads to a floor intro card, then a seeded maze (15x15 at
 the top, 25x25 at the bottom) drawn as a bioluminescent cave — fog of war, braided dead ends,
@@ -22,10 +22,15 @@ so the player starts well ahead but has to draft speed to stay ahead. One buffer
 1.2 s stamina bar). The explorer **snaps to its tile** (one press, one tile, so the grid is
 countable while running) and the killer **slides** between its cells. Clearing an arch opens a **draft of three cards — take one or skip for a heart** — and
 the twentieth arch wins the run. The terminal view offered by `--console` (and used automatically when
-no window can be opened) plays the same campaign in ASCII. The catalog holds **twenty-three
-cards**: the four movement cards, the four powerup cards and a second wave that changes a catch,
-a key pickup, a powerup's duration or a revival, with a guaranteed rare on every fifth floor and
-rarer draws late in the run. The HUD shows the five powerup charges as a row of keyed slots. The **sprite compiler is complete to its Phase 5 exit**: every
+no window can be opened) plays the same campaign in ASCII. The catalog holds **thirty-nine
+cards**: the four movement cards, the four powerup cards, a second wave that changes a catch,
+a key pickup, a powerup's duration or a revival, three room cards that raise the secret-room
+roll or buy one promised casino, and a fourth wave of fourteen trades led by Ashen Bloom, the
+bloom-glow reveal a catch grants. Rarity is printed on every card's face and **House Favour is
+the catalog's only super-rare**; a draw guarantees a rare on every fifth floor and rarer cards
+grow likelier late in the run. **Safe rooms roll ten percent** after the teaching floor, and the entrance lights up
+within three steps. **Hunters only track the player inside their aura**, and every healing card now
+restores two hearts. The HUD shows the five powerup charges as a row of keyed slots. The **sprite compiler is complete to its Phase 5 exit**: every
 committed atlas under `src/MazeGame.UI/Content/Generated` holds the full tileset (floor variants,
 wall, four thin wall faces, 16 edge and 47 blob tiles) and the whole cast, checked by `--check`.
 **The floor is drawn from those atlases**: a 16 px-per-cell virtual canvas, blitted to the
@@ -40,7 +45,67 @@ and meters, a Schroeder reverb and an intensity mix that follows the nearest hun
 opened through
 Raylib's stream callback; with no device the game is silent rather than broken.
 
-What changed in this pass (the five-verb kit and the descent gates):
+What changed in this pass:
+
+- **ESC pauses instead of quitting.** Both frontends keep the floor frozen (no `Tick`) and draw a
+  pause card with `CONTINUE` and `QUIT RUN`; quitting returns to the title rather than closing the
+  window, and Escape still cancels an aim or closes a room card. The console restarts its clock on
+  resume, so the pause is not handed to the hunters as walking time.
+- **The hunt deepens every five floors.** `GameConfig.ForFloor` adds one heart to `CatchCost` for
+  every five floors below the first, so a catch costs 1/2/3/4 across floors 1–5, 6–10, 11–15 and
+  16–20; a card's own surcharge is added over it, and the floor's cost is never below one.
+- **The casino has a wheel.** The pixel room card draws twelve pockets in the house's two colours,
+  a gold rim and a ball running the other way, all on `GetTime()`, so it turns while the card is
+  open and slows once the stake is resolved.
+- **Rerolls are bought with hearts.** `Campaign.DraftRerollCost`/`DraftRerolls`/`TryRerollDraft`
+  draw a fresh table from the run seed and the reroll number: one heart, then two, then three, and
+  the last heart is never a price. The ladder resets on the next floor (`TryAdvanceFloor` clears
+  it with the draft), the window binds `R` on the draft card, and the console prints the price.
+- **Fourteen new cards and a super-rare tier.** `CardTier.SuperRare` exists for exactly one card,
+  House Favour (the promised casino, now priced at a step of torch); **Ashen Bloom** is the
+  requested idea — a catch lights every bloom within 1 step for 2 seconds (a rule in
+  `RecomputeVisibility`, not a drawing effect), and each further copy adds a step of reach. The
+  rest of the wave (`kindling`, `fleet-footed`, `coiled-spring`, `patient-hunter`, `second-skin`,
+  `nightglass`, `grave-grace`, `moths-bargain`, `wardens-patience`, `root-memory`, `sated-hollow`,
+  `thorn-debt`, `lucky-find`) are the same give-and-take the catalog already trades in.
+- **The title screen offers a Tutorial.** `Tutorial`/`TutorialStep` in Core hold twelve pages —
+  walking and sprint, blooms, the arch, the hunters, hearts and the deeper catch, then every
+  ability (Blink, Veil, Drag, Lantern, Shove), safe rooms, the draft with its reroll, and the
+  pause menu — each with the exact keys. The window draws them as a paged card with page dots;
+  the terminal prints them a page at a time. Both read the same list, so the two frontends cannot
+  teach different keys.
+
+What changed in the previous pass (the ten-item polish list):
+
+- **The secret room's door is findable.** `GameState` reveals the door and doorway within
+  `SafeRoomClueDistance` (3) steps even on a floor with no torch; `IsSafeRoomDoorInSight` drives a
+  pulsing threshold on the door cell and a `THE ROOM IS NEAR` footer hint.
+- **Player speed cards were halved.** Glass Cannon is 20% faster (was 40%), Light Feet is 17.5%
+  (was 35%), and Momentum ramps to 17.5% (was 35%); their prices are unchanged. Every heal card
+  (Blood Pact, Second Wind, Trophy Hunter) now restores two hearts, because skipping a draft is
+  already worth one.
+- **The Listener no longer ticks inside the safe room.** Walking in a room step by step used to
+  wind the hunt; the room's promise (nothing outside moves) now wins.
+- **Hunters no longer enter the safe room.** A room cell costs 500 steps to route through, and a
+  wandering hunter skips it, so the nine cells are a sanctuary rather than a corridor. The door
+  cell outside is still ordinary floor and can be camped, but entering the room itself is safe.
+- **The shop previews its cards.** A Stall option carries the card's face text, drawn under the
+  selected row in the window and printed under the option in the console.
+- **Shove reads all four neighbours.** The faced direction is a preference, not a requirement,
+  and the hunter is pushed directly away from the player.
+- **The lantern is a real tool.** It burns for 8 s (was 5) and throws 5 cells (was 4), and the
+  throw stops short of a hunter instead of being refused when the furthest cell is occupied.
+- **Hunters only pathfind inside their aura.** Outside `HunterPerceptionSteps` (6) a hunter walks
+  to the cell it last saw the player on, then wanders; `IsPlayerSensed` is the flag. The aura is
+  now a two-way rule.
+- **Rooms roll ten percent.** `SecretRoomCarver.RoomChancePercent` is 10 after the teaching floor;
+  Threshold Sense and Latchkey each add 10 points, capped at certainty.
+- **House Favour** (now super-rare) guarantees a casino room on the next floor, which also forces
+  the room past the roll, and pays 66% on its first stake. That one bet spends the card; afterwards
+  the table reads 45% again. It costs a step of torch for the rest of the run, and the shop does
+  not stock it on the last floor.
+
+What changed in the previous pass (the five-verb kit and the descent gates):
 
 - **The old barrier/wisp kit is retired from the player's hands.** `PowerupKind` and
   `PowerupCharges` carry five verbs with per-floor charges — Blink (2), Veil (3), Drag (1),
@@ -1243,7 +1308,7 @@ Run these from the repository root (the folder containing `MazeGame.sln`):
 
 ```bash
 dotnet build                      # must report 0 Warning(s), 0 Error(s)
-dotnet test                       # currently 834/834 passing
+dotnet test                       # currently 868/868 passing
 dotnet run --project tools/AssetForge -- --check   # atlases and themes are healthy
 dotnet run --project src/MazeGame.UI              # Raylib window
 dotnet run --project src/MazeGame.UI -- --console # terminal fallback
@@ -1257,9 +1322,11 @@ If `dotnet` is not on `PATH` (this is the case on the setup machine):
 ~/.dotnet/dotnet run --project src/MazeGame.UI
 ```
 
-Controls: on the title, W/S or the arrows select and Enter/Space confirms. In play, WASD or arrow
-keys move, **hold Shift to sprint** (window only; the console has no sprint yet), and the five
-powerups are Space (Blink), V (Veil), T (Drag), L (Lantern) and F (Shove). At a gate, A/D selects a
-condition and Enter takes it. **E opens a safe room's card** while standing in one (A/D choose,
-Enter takes, Esc leaves). Q or Esc quits; after a run, R or Enter descends again. The same keys
-work in the window and in the terminal.
+Controls: on the title, W/S or the arrows select (`DESCEND`, `TUTORIAL`, `LEAVE`) and Enter/Space
+confirms; the tutorial turns its pages with Enter and leaves with Esc. In play, WASD or arrow keys
+move, **hold Shift to sprint** (window only; the console has no sprint yet), and the five powerups
+are Space (Blink), V (Veil), T (Drag), L (Lantern) and F (Shove). At a gate, A/D selects a condition
+and Enter takes it. **E opens a safe room's card** while standing in one (A/D choose, Enter takes,
+Esc leaves). **Esc pauses a floor** (continue, or quit the run back to the title); on the draft, A/D
+choose, Enter takes, S skips for a heart and **R rerolls for hearts**. Q on the title quits; after a
+run, R or Enter descends again. The same keys work in the window and in the terminal.

@@ -189,8 +189,9 @@ public sealed class SecretRoomTests
     }
 
     /// <summary>
-    /// A twenty-floor run now meets about ten rooms instead of about four: the guaranteed first
-    /// floor plus roughly one every other floor after it.
+    /// A twenty-floor run meets the guaranteed first floor plus about one room for every ten
+    /// floors after it: roughly three rooms. Rooms are a find, and the room cards are how a run
+    /// that wants more of them invests in the rate.
     /// </summary>
     [Fact]
     public void ARun_MeetsRoomsThroughoutTheDescent()
@@ -211,7 +212,42 @@ public sealed class SecretRoomTests
 
         var average = total / (double)runs;
 
-        Assert.InRange(average, 8.0, 13.0);
+        Assert.InRange(average, 2.0, 4.5);
+    }
+
+    /// <summary>
+    /// A room card raises the chance by ten points a copy, and the total can reach a certainty
+    /// without ever going past it.
+    /// </summary>
+    [Fact]
+    public void TheRoomChance_IsRaisedByCardsAndCappedAtCertainty()
+    {
+        Assert.Equal(
+            SecretRoomCarver.RoomChancePercent + 10,
+            SecretRoomCarver.ChancePercent(20, 10));
+        Assert.Equal(100, SecretRoomCarver.ChancePercent(20, 95));
+        Assert.Equal(100, SecretRoomCarver.ChancePercent(20, 1000));
+    }
+
+    /// <summary>
+    /// A forced room is carved whatever the dice say: a card that promises one cannot be broken by
+    /// the ten percent roll.
+    /// </summary>
+    [Fact]
+    public void AForcedRoom_SkipsTheRollAndFindsASite()
+    {
+        for (var seed = 0; seed < 40; seed++)
+        {
+            Assert.True(SecretRoomCarver.Rolls(20, new SeededRandom(seed), bonusPercent: 0, forceRoom: true));
+            Assert.NotNull(SecretRoomCarver.Plan(
+                null,
+                15,
+                15,
+                20,
+                new SeededRandom(seed),
+                bonusPercent: 0,
+                forceRoom: true));
+        }
     }
 
     [Fact]
@@ -219,8 +255,8 @@ public sealed class SecretRoomTests
     {
         Assert.Equal(0, SecretRoomCarver.ChancePercent(0));
         Assert.Equal(100, SecretRoomCarver.ChancePercent(1));
-        Assert.Equal(50, SecretRoomCarver.ChancePercent(20));
-        Assert.Equal(50, SecretRoomCarver.ChancePercent(140));
+        Assert.Equal(10, SecretRoomCarver.ChancePercent(20));
+        Assert.Equal(10, SecretRoomCarver.ChancePercent(140));
         Assert.False(SecretRoomCarver.Rolls(0, new SeededRandom(1)));
     }
 

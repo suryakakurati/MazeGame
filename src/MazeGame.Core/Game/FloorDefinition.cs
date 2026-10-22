@@ -159,6 +159,16 @@ public sealed record FloorDefinition
     /// <summary>Gets how far a catch throws the killer, or null to inherit the run's distance.</summary>
     public int? RespawnDistance { get; init; }
 
+    /// <summary>
+    /// Gets a value indicating whether this floor must hold a secret room whatever the roll says.
+    /// </summary>
+    /// <remarks>
+    /// Set by the campaign for the one floor a room card promised, because a promise that depends
+    /// on the ten percent roll would be a promise the dice could break. Shipped floor data leaves
+    /// it false, so only a card can force a room.
+    /// </remarks>
+    public bool ForceRoom { get; init; }
+
     /// <summary>Gets the grace period after a catch, in seconds, or null to inherit.</summary>
     public double? InvulnerabilitySeconds { get; init; }
 

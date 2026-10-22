@@ -40,9 +40,9 @@ internal static class ConsoleFrontend
         ArgumentNullException.ThrowIfNull(createCampaign);
 
         // The title needs a keypress to leave, which a redirected run can never provide.
-        if (!Console.IsInputRedirected)
+        if (!Console.IsInputRedirected && !ShowTitleMenu())
         {
-            DrawTitle();
+            return;
         }
 
         while (true)
@@ -285,18 +285,9 @@ internal static class ConsoleFrontend
             return false;
         }
 
-        Console.WriteLine("DRAFT — pick one:");
-
-        for (var index = 0; index < draft.Offers.Count; index++)
-        {
-            var card = draft.Offers[index];
-            Console.WriteLine($"  [{index + 1}] {card.Name} ({card.Tier}): {card.FaceText}");
-        }
-
-        Console.WriteLine("  [S] skip: heal one heart");
-
         if (Console.IsInputRedirected)
         {
+            PrintDraft(campaign);
             campaign.SkipDraft();
             Console.WriteLine("  (no input: skipped for a heart)");
             return false;
@@ -304,6 +295,9 @@ internal static class ConsoleFrontend
 
         while (true)
         {
+            // Redrawn after a reroll so the log always shows the table that is actually on offer.
+            PrintDraft(campaign);
+
             var key = Console.ReadKey(intercept: true).Key;
 
             if (key is ConsoleKey.Q or ConsoleKey.Escape)
@@ -318,6 +312,22 @@ internal static class ConsoleFrontend
                 return false;
             }
 
+            if (key == ConsoleKey.R)
+            {
+                if (campaign.TryRerollDraft())
+                {
+                    Console.WriteLine(
+                        $"  rerolled for {campaign.Hearts} heart(s) left - the price is now " +
+                        $"{campaign.DraftRerollCost} next time.");
+                }
+                else
+                {
+                    Console.WriteLine("  not enough hearts to reroll: the last heart is never a price.");
+                }
+
+                continue;
+            }
+
             var index = key - ConsoleKey.D1;
             if (index >= 0 && index < draft.Offers.Count && campaign.TakeCard(draft.Offers[index]))
             {
@@ -325,6 +335,32 @@ internal static class ConsoleFrontend
                 return false;
             }
         }
+    }
+
+    /// <summary>Prints the current draft's table and the reroll price.</summary>
+    /// <param name="campaign">The run whose draft is open.</param>
+    private static void PrintDraft(Campaign campaign)
+    {
+        var draft = campaign.Draft;
+        if (draft is null)
+        {
+            return;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("DRAFT — pick one:");
+
+        for (var index = 0; index < draft.Offers.Count; index++)
+        {
+            var card = draft.Offers[index];
+            Console.WriteLine($"  [{index + 1}] {card.Name} ({card.Tier}): {card.FaceText}");
+        }
+
+        Console.WriteLine("  [S] skip: heal one heart");
+        Console.WriteLine(
+            campaign.CanRerollDraft
+                ? $"  [R] reroll: spend {campaign.DraftRerollCost} heart(s)"
+                : $"  [R] reroll: needs {campaign.DraftRerollCost} heart(s), not enough left");
     }
 
     /// <summary>
@@ -408,6 +444,16 @@ internal static class ConsoleFrontend
             var option = room.Options[index];
             var note = option.Note is { } text ? $" ({text})" : string.Empty;
             Console.WriteLine($"  [{index + 1}] {option.Label}{note}");
+
+            // A card for sale prints its face under the price, so buying it does not depend on
+            // remembering what the name did.
+            if (option.Preview is { Length: > 0 } preview)
+            {
+                foreach (var line in Wrap(preview, 58))
+                {
+                    Console.WriteLine($"      {line}");
+                }
+            }
         }
     }
 
@@ -446,7 +492,26 @@ internal static class ConsoleFrontend
             // KeyAvailable throws when input is redirected, so a piped run simply watches.
             if (!Console.IsInputRedirected && Console.KeyAvailable)
             {
-                var command = MapKey(Console.ReadKey(intercept: true).Key, state.IsAiming);
+                var pressed = Console.ReadKey(intercept: true).Key;
+
+                // Escape pauses instead of ending the run. While aiming it still cancels the aim,
+                // so the map key is asked first and only a non-aiming Escape pauses.
+                if (pressed == ConsoleKey.Escape && !state.IsAiming)
+                {
+                    if (PauseMenu())
+                    {
+                        Console.WriteLine("  the run is abandoned.");
+                        return;
+                    }
+
+                    // The pause lasted real seconds while the floor stood still: the clock has to
+                    // start again, or the next tick would hand the hunters the whole pause as
+                    // walking time and catch the player the moment they resumed.
+                    clock.Restart();
+                    continue;
+                }
+
+                var command = MapKey(pressed, state.IsAiming);
 
                 if (command == GameCommand.Interact)
                 {
@@ -484,7 +549,36 @@ internal static class ConsoleFrontend
     }
 
     /// <summary>
-    /// Draws the terminal title screen and waits for a key, so the two frontends open the same way.
+    /// Draws the terminal title screen and reads the menu, so the two frontends open the same way.
+    /// </summary>
+    /// <returns><see langword="true"/> to descend; <see langword="false"/> to leave.</returns>
+    private static bool ShowTitleMenu()
+    {
+        while (true)
+        {
+            DrawTitle();
+
+            var key = Console.ReadKey(intercept: true).Key;
+
+            switch (key)
+            {
+                case ConsoleKey.D:
+                case ConsoleKey.Enter:
+                    return true;
+
+                case ConsoleKey.T:
+                    PrintTutorial();
+                    break;
+
+                case ConsoleKey.Q:
+                case ConsoleKey.Escape:
+                    return false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Draws the terminal title screen: the wordmark and the three menu entries.
     /// </summary>
     private static void DrawTitle()
     {
@@ -502,8 +596,100 @@ internal static class ConsoleFrontend
         Console.WriteLine();
         Console.WriteLine("   pick the blooms. open the arch. do not be caught.");
         Console.WriteLine();
-        Console.WriteLine("   press any key to descend...");
-        Console.ReadKey(intercept: true);
+        Console.WriteLine("   [D] descend    [T] tutorial    [Q] leave");
+    }
+
+    /// <summary>
+    /// Reads the guided tutorial one page at a time, exactly as the window does.
+    /// </summary>
+    /// <remarks>
+    /// The text comes from <see cref="Tutorial"/> in Core, so the terminal cannot teach a key the
+    /// window does not bind. Escape leaves early; the last page returns to the title.
+    /// </remarks>
+    private static void PrintTutorial()
+    {
+        for (var index = 0; index < Tutorial.PageCount; index++)
+        {
+            var page = Tutorial.Page(index);
+
+            if (!Console.IsOutputRedirected)
+            {
+                Console.Clear();
+            }
+
+            Console.WriteLine();
+            Console.WriteLine(new string('=', 64));
+            Console.WriteLine($"  TUTORIAL — {page.Caption}  ({index + 1}/{Tutorial.PageCount})");
+            Console.WriteLine(new string('-', 64));
+            Console.WriteLine();
+            Console.WriteLine($"  {page.Title}");
+            Console.WriteLine();
+
+            foreach (var line in page.Lines)
+            {
+                foreach (var row in Wrap(line, 58))
+                {
+                    Console.WriteLine($"    {row}");
+                }
+
+                Console.WriteLine();
+            }
+
+            if (page.Keys.Length > 0)
+            {
+                Console.WriteLine($"  {page.Keys}");
+                Console.WriteLine();
+            }
+
+            Console.WriteLine(new string('=', 64));
+            Console.WriteLine("  ENTER: next    ESC: back to the title");
+
+            while (true)
+            {
+                var key = Console.ReadKey(intercept: true).Key;
+
+                if (key == ConsoleKey.Escape)
+                {
+                    return;
+                }
+
+                if (key is ConsoleKey.Enter or ConsoleKey.Spacebar)
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Shows the pause menu and waits for the player's choice.
+    /// </summary>
+    /// <returns><see langword="true"/> when the run should be abandoned.</returns>
+    /// <remarks>
+    /// The floor is not ticked while this reads, which is what makes it a pause rather than a
+    /// menu drawn over a hunt that keeps moving. Escape resumes, matching the window.
+    /// </remarks>
+    private static bool PauseMenu()
+    {
+        Console.WriteLine();
+        Console.WriteLine("PAUSED — the dark waits");
+        Console.WriteLine("  [C] continue    [Q] quit run");
+
+        while (true)
+        {
+            var key = Console.ReadKey(intercept: true).Key;
+
+            if (key is ConsoleKey.C or ConsoleKey.Escape)
+            {
+                Console.WriteLine("  you walk on.");
+                return false;
+            }
+
+            if (key == ConsoleKey.Q)
+            {
+                return true;
+            }
+        }
     }
 
     /// <summary>
@@ -534,7 +720,8 @@ internal static class ConsoleFrontend
 
     /// <summary>
     /// Translates one key press into a command. Escape means "cancel" while aiming and "quit"
-    /// otherwise, B aims a barrier, R aims a wisp, and Enter only places while aiming.
+    /// otherwise (the caller turns a non-aiming Escape into the pause menu first), Enter only
+    /// places while aiming, and Q always leaves the run.
     /// </summary>
     private static GameCommand? MapKey(ConsoleKey key, bool aiming) => key switch
     {

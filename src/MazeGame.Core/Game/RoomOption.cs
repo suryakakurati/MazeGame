@@ -13,7 +13,11 @@ namespace MazeGame.Core.Game;
 /// <param name="Id">The stable id the campaign resolves.</param>
 /// <param name="Label">The line drawn on the card, in capitals.</param>
 /// <param name="Note">The price or odds under the label, or null for none.</param>
-public sealed record RoomOption(string Id, string Label, string? Note = null)
+/// <param name="Preview">
+/// The card's face text, shown when the option is a card for sale. Players are not expected to
+/// memorise the catalog, so the shop states what each card does before it takes a heart for it.
+/// </param>
+public sealed record RoomOption(string Id, string Label, string? Note = null, string? Preview = null)
 {
     /// <summary>Gets the option that closes the card without spending anything.</summary>
     public static RoomOption Leave { get; } = new("leave", "LEAVE", null);

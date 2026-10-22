@@ -22,9 +22,35 @@ dotnet test      # expect: all tests pass
 
 If they are not green, fixing that is the first task, not the new feature.
 
-## Project state at handoff (2026-10-21)
+## Project state at handoff (2026-10-22)
 
-**The latest pass (five powerup verbs and descent conditions) is in:** the player's tools are
+**The latest pass (pause, tutorial, rerolls and a fourth card wave) is in:** Escape now opens a
+pause card (`Screen.Paused`, `PixelCards.Pause`, `ConsoleFrontend.PauseMenu`) with `CONTINUE` and
+`QUIT RUN` instead of ending the run; the console restarts its `Stopwatch` on resume so a pause is
+not charged to the hunters. `GameConfig.ForFloor` adds one heart to `CatchCost` for every five
+floors below the first, so a catch costs 1/2/3/4 across the run. The casino's room card draws a
+turning roulette wheel from primitives (`PixelCards.DrawRoulette`, driven by `GetTime()`). The draft
+can be rerolled for hearts (`Campaign.DraftRerollCost` 1 then 2 then 3, `TryRerollDraft`, with
+`TryAdvanceFloor`/`TryReincarnate` clearing the ladder) and the last heart is never a price. The
+catalog is **thirty-nine cards**: `CardTier.SuperRare` exists for House Favour alone, and the fourth
+wave adds fourteen trades led by **Ashen Bloom** — a catch lights every bloom within 1 step for 2
+seconds through `GameConfig.BloomGlowRadius`/`BloomGlowSeconds`, `GameState.IsBloomGlowActive` and
+`RecomputeVisibility`, with each copy adding a step of reach. The title's second entry opens a
+**guided Tutorial** (`Tutorial`, `TutorialStep` in Core, `PixelCards.DrawTutorial` in the window,
+`ConsoleFrontend.PrintTutorial` in the terminal): twelve pages covering the floor, the hunters,
+hearts, every ability and the pause menu. **The suite is 868 tests, all green.**
+
+**The pass before that (the ten-item polish list) is in:** rooms roll ten percent after floor 1 and
+their door is lit within three steps (`GameState.IsSafeRoomDoorInSight`); Threshold Sense and
+Latchkey add ten points to that roll; House Favour forces a casino on the next floor and pays 66%
+on its first bet; player speed cards were halved and every heal card restores two hearts; the
+Listener no longer ticks inside a safe room; a hunter also refuses to enter the room at all
+(`CostOfEntering` prices its floor out of every route, and a wander skips it); the Stall previews
+its cards (`RoomOption.Preview`); Shove reads all four neighbours; the lantern burns 8 s at range 5
+and stops short of a hunter; and hunters only know the player inside a six-step aura
+(`GameState.IsPlayerSensed`), wandering otherwise. **The suite is 853 tests, all green.**
+
+**The pass before that (five powerup verbs and descent conditions) is in:** the player's tools are
 Blink (Space), Veil (V), Drag (T), Lantern (L) and Shove (F), each with per-floor charges that
 refill when a floor is built (`PowerupKind`, `PowerupCharges`, `GameState.TryBlink` and friends,
 `GameCommands`). They replaced barriers and wisps, which survive as floor rules and tests but no
@@ -35,12 +61,10 @@ resolves it, and `TryAdvanceFloor` refuses to descend until it is; the eight rul
 check; Eclipse, Listener, Pack, Hunted, Mute and Drift are rule flags. The four cards built on
 barriers/wisps were rewritten around charge deltas (`CardEffect`/`RunModifiers`), and The Gilded
 Cage, The Foundry and The Moth Garden became powerup gimmicks. **The card system was then
-overhauled**: the catalog is twenty-three cards, with ten rule-backed additions (free first catch,
+overhauled**: the catalog is twenty-six cards, with ten rule-backed additions (free first catch,
 revival, two-heart catches, magnetic keys, blink refunds, longer veil/drag/lantern,
 extra hearts for vision), floor-banded draft weights and a guaranteed rare every fifth floor. The
-HUD now shows the five powerup charges as keyed slots (`RaylibLayout.HudHeight` is 76). The suite is
-**748 tests**, all green, including `GameStatePowerupTests`, `GameStateConditionTests`,
-`CampaignGateTests` and `GameStateCardRuleTests`.
+HUD now shows the five powerup charges as keyed slots (`RaylibLayout.HudHeight` is 76).
 
 **The pass before that (the score on the death screen, and a growing maze) is in:** a lost run now
 ends on `PixelCards.Caught(font, floorNumber, floorCount, floorName)`, which prints "YOU MADE IT TO /

@@ -45,6 +45,15 @@ public sealed class Campaign
     /// <summary>Mixed into the mirror's replacement, so it is not the shop's first card.</summary>
     private const int MirrorSalt = 0x33A1;
 
+    /// <summary>
+    /// Mixed into a rerolled draft, so a reroll is a new draw rather than the same three cards
+    /// with one swapped.
+    /// </summary>
+    private const int RerollSalt = 0x72A5;
+
+    /// <summary>How many hearts the first reroll of a draft costs.</summary>
+    private const int RerollBaseCost = 1;
+
     private readonly IReadOnlyList<FloorDefinition> _floors;
     private readonly Func<FloorDefinition, int, RunModifiers, IReadOnlyList<DescentCondition>, GameState> _createFloor;
     private readonly int _runSeed;
@@ -70,6 +79,10 @@ public sealed class Campaign
     private int _nextDraftBonus;
     private int _followingDraftBonus;
 
+    // How many rerolls this floor's draft has already had. It resets with the draft, so the price
+    // starts at one heart again on the next floor.
+    private int _draftRerolls;
+
     // The safe room: the card on screen, whether this floor's room has been used, and the cards a
     // shop is selling (fixed at the moment the card is opened, so a purchase cannot reroll them).
     private RoomOffer? _room;
@@ -79,6 +92,12 @@ public sealed class Campaign
     // Promises a room made about the floors ahead.
     private int _huntersOffNextFloor;
     private int? _seedBloomsOnFloor;
+
+    // The one floor a House Favour promised a casino on, and whether its favoured table has
+    // already been played. The promise outlives the floor's own room state: the room is drawn
+    // when it is opened, not when the floor is built.
+    private int? _casinoFloor;
+    private bool _casinoGambleUsed;
 
     // The Turn is once per run, and the draft's rarity follows the deepest floor ever reached so a
     // rewind cannot hand out late-run rares on an early floor.
@@ -321,6 +340,73 @@ public sealed class Campaign
     }
 
     /// <summary>
+    /// Gets how many hearts the next reroll of the open draft costs.
+    /// </summary>
+    /// <remarks>
+    /// The first reroll costs one heart, the second two, and so on: the price is the reroll's
+    /// ordinal, not a fraction of the run's health. It resets with every floor's draft, so a run
+    /// that rerolls once per floor never pays more than a heart.
+    /// </remarks>
+    public int DraftRerollCost => RerollBaseCost + _draftRerolls;
+
+    /// <summary>Gets how many rerolls the open draft has had.</summary>
+    public int DraftRerolls => _draftRerolls;
+
+    /// <summary>
+    /// Gets a value indicating whether a reroll can be paid for right now.
+    /// </summary>
+    /// <remarks>
+    /// The last heart is never a price: a reroll cannot turn a choice between floors into the end
+    /// of the run.
+    /// </remarks>
+    public bool CanRerollDraft =>
+        Draft is { IsResolved: false, Offers.Count: > 0 } &&
+        _floor.Hearts - DraftRerollCost >= 1;
+
+    /// <summary>
+    /// Spends hearts to replace the open draft's offers with a fresh seeded draw.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when the table changed; <see langword="false"/> when there is no
+    /// open draft, it is resolved, or the run cannot pay without spending its last heart.
+    /// </returns>
+    /// <remarks>
+    /// The draw is seeded from the run, the floor and the reroll number, so a replay reproduces
+    /// the same sequence of tables. Nothing about the run changes except the offers and the hearts
+    /// that bought them.
+    /// </remarks>
+    public bool TryRerollDraft()
+    {
+        var draft = Draft;
+
+        if (draft is null || draft.IsResolved || draft.Offers.Count == 0)
+        {
+            return false;
+        }
+
+        var cost = DraftRerollCost;
+
+        if (!_floor.TrySpendHearts(cost))
+        {
+            return false;
+        }
+
+        _draftRerolls++;
+
+        var draftsRemaining = _floors.Count - _floorIndex - 2;
+        var offers = DraftFactory.Offers(
+            _runSeed,
+            FloorNumber,
+            _modifiers.Cards,
+            draft.Offers.Count,
+            draftsRemaining,
+            effectiveFloor: _deepestFloor,
+            salt: unchecked(RerollSalt ^ (_draftRerolls * 7919)));
+
+        return draft.TryReplace(offers);
+    }
+
+    /// <summary>
     /// Gets a value indicating whether the player is standing in this floor's safe room.
     /// </summary>
     /// <remarks>
@@ -346,6 +432,19 @@ public sealed class Campaign
     public RoomOffer? Room => _room;
 
     /// <summary>
+    /// Gets the percentage chance this floor's casino table pays on a stake.
+    /// </summary>
+    /// <remarks>
+    /// The house's usual 45% applies everywhere except the single floor a House Favour promised,
+    /// where the first gamble pays 66%. The card is spent by making that bet, win or lose, so the
+    /// second visit reads the ordinary price again.
+    /// </remarks>
+    public int CasinoWinPercent =>
+        _casinoFloor == FloorNumber && !_casinoGambleUsed
+            ? RoomCatalog.FavouredGambleWinPercent
+            : RoomCatalog.GambleWinPercent;
+
+    /// <summary>
     /// Opens the safe room's card.
     /// </summary>
     /// <returns><see langword="true"/> when the card is now open; false when the player is not in a
@@ -362,7 +461,13 @@ public sealed class Campaign
             return false;
         }
 
-        _room ??= CreateRoom(RoomCatalog.Pick(_runSeed, FloorNumber));
+        // A House Favour replaces the floor's draw rather than adding a second room: the floor it
+        // promised holds the Long Table and nothing else.
+        var kind = _casinoFloor == FloorNumber
+            ? RoomKind.LongTable
+            : RoomCatalog.Pick(_runSeed, FloorNumber);
+
+        _room ??= CreateRoom(kind);
         return true;
     }
 
@@ -599,7 +704,11 @@ public sealed class Campaign
 
         _floorIndex++;
         _deepestFloor = Math.Max(_deepestFloor, next.Number);
+
+        // The reroll ladder belongs to the draft it was paid against, so it dies with it: the
+        // next draft starts at one heart again.
         _draft = null;
+        _draftRerolls = 0;
         _conditionOffer = null;
         _carryHearts = 0;
         _room = null;
@@ -651,6 +760,7 @@ public sealed class Campaign
         _bloomsBanked += _floor.KeysCollected;
         _floorIndex = target;
         _draft = null;
+        _draftRerolls = 0;
         _conditionOffer = null;
         _carryHearts = 0;
         _room = null;
@@ -726,12 +836,14 @@ public sealed class Campaign
                 // would otherwise be offered a list longer than the window.
                 var most = Math.Min(_floor.Hearts - 1, RoomCatalog.MaxStake);
 
+                var winPercent = CasinoWinPercent;
+
                 for (var stake = 1; stake <= most; stake++)
                 {
                     options.Add(new RoomOption(
                         $"stake-{stake}",
                         $"STAKE {stake}",
-                        "45% DOUBLE"));
+                        $"{winPercent}% DOUBLE"));
                 }
 
                 break;
@@ -743,7 +855,7 @@ public sealed class Campaign
                     break;
                 }
 
-                _shopCards = DraftFactory.Offers(
+                var shop = DraftFactory.Offers(
                     _runSeed,
                     FloorNumber,
                     _modifiers.Cards,
@@ -752,12 +864,34 @@ public sealed class Campaign
                     effectiveFloor: _deepestFloor,
                     salt: ShopSalt);
 
+                // A casino promise with no floor below it would be a torch penalty and nothing
+                // else, so the last floor's stall does not stock it.
+                if (_floorIndex + 1 >= _floors.Count)
+                {
+                    var sellable = new List<Card>(shop.Count);
+
+                    foreach (var card in shop)
+                    {
+                        if (!card.Effect.GuaranteedCasino)
+                        {
+                            sellable.Add(card);
+                        }
+                    }
+
+                    shop = sellable;
+                }
+
+                _shopCards = shop;
+
                 for (var index = 0; index < _shopCards.Count; index++)
                 {
+                    var card = _shopCards[index];
+
                     options.Add(new RoomOption(
                         $"buy-{index}",
-                        _shopCards[index].Name.ToUpperInvariant(),
-                        "ONE HEART"));
+                        card.Name.ToUpperInvariant(),
+                        $"ONE HEART - {card.Tier}",
+                        card.FaceText));
                 }
 
                 break;
@@ -823,7 +957,7 @@ public sealed class Campaign
         return new RoomOffer(
             kind,
             RoomCatalog.Name(kind),
-            RoomCatalog.Prompt(kind),
+            RoomCatalog.Prompt(kind, CasinoWinPercent),
             RoomCatalog.Price(kind),
             options);
     }
@@ -844,14 +978,20 @@ public sealed class Campaign
             _floor.TrySpendHeart();
         }
 
-        if (RoomCatalog.GambleWins(_runSeed, FloorNumber))
+        var winPercent = CasinoWinPercent;
+
+        if (RoomCatalog.GambleWins(_runSeed, FloorNumber, winPercent))
         {
             var winnings = stake * 2;
             _floor.AddHearts(winnings);
+            _casinoGambleUsed |= _casinoFloor == FloorNumber;
             offer.RecordOutcome($"WON {winnings} HEARTS");
             return;
         }
 
+        // The favoured table is a single play: once this floor's gamble is made, a later visit
+        // (or a rewind back to it) reads the house's usual 45%, not the card's 66%.
+        _casinoGambleUsed |= _casinoFloor == FloorNumber;
         offer.RecordOutcome($"LOST {stake}");
     }
 
@@ -970,6 +1110,13 @@ public sealed class Campaign
         _carryHearts += card.Effect.HealNow;
         _nextDraftBonus += card.Effect.NextDraftOfferBonus;
         _followingDraftBonus += card.Effect.FollowingDraftOfferBonus;
+
+        // A casino promise needs a floor to land on. A stall on the last floor cannot offer the
+        // card (see CreateRoom), so this only protects a direct resolution from inventing one.
+        if (card.Effect.GuaranteedCasino && _floorIndex + 1 < _floors.Count)
+        {
+            _casinoFloor = _floors[_floorIndex + 1].Number;
+        }
     }
 
     /// <summary>Returns <paramref name="cards"/> without the entry at <paramref name="index"/>.</summary>
@@ -1027,6 +1174,12 @@ public sealed class Campaign
         {
             hearts++;
             _seedBloomsOnFloor = null;
+        }
+
+        // A promised casino needs a room to stand in, so the roll is skipped for that one floor.
+        if (_casinoFloor == floor.Number)
+        {
+            definition = definition with { ForceRoom = true };
         }
 
         return _createFloor(definition, hearts, _modifiers, _conditions)

@@ -253,7 +253,29 @@ public sealed record GameConfig
     /// Gets how many hearts a single catch costs. Defaults to 1. Must be at least 1, so a catch is
     /// always a real cost; a free catch is expressed by <see cref="FirstCatchFree"/> instead.
     /// </summary>
+    /// <remarks>
+    /// <see cref="ForFloor"/> adds one heart to this for every five floors of the descent, so the
+    /// hunt bites harder the deeper the run goes. Cards such as Glass Cannon add to the same
+    /// number through <see cref="RunModifiers"/>.
+    /// </remarks>
     public int CatchCost { get; init; } = 1;
+
+    /// <summary>
+    /// Gets the radius, in steps, that the floor's blooms glow for after a catch. Defaults to
+    /// zero, which leaves them dark; a card is what lights them.
+    /// </summary>
+    /// <remarks>
+    /// The glow is a rule, not a drawing effect: <see cref="GameState.IsVisible"/> includes the
+    /// blooms inside this radius for <see cref="BloomGlowSeconds"/>, so a renderer cannot reveal
+    /// them on its own and a test can read the reveal without a window.
+    /// </remarks>
+    public int BloomGlowRadius { get; init; }
+
+    /// <summary>
+    /// Gets how long a bloom glow lasts after a catch, in seconds. Defaults to 2. Ignored when
+    /// <see cref="BloomGlowRadius"/> is zero. Must be finite and not negative.
+    /// </summary>
+    public double BloomGlowSeconds { get; init; } = 2.0;
 
     /// <summary>Gets how long a completed veil lasts. Defaults to 3 seconds.</summary>
     public double VeilDurationSeconds { get; init; } = 3.0;
@@ -264,8 +286,8 @@ public sealed record GameConfig
     /// <summary>Gets how long the hunt is faster after Drag ends. Defaults to 5 seconds.</summary>
     public double DragPenaltySeconds { get; init; } = 5.0;
 
-    /// <summary>Gets how far, in cells, a lantern may be thrown. Defaults to 4.</summary>
-    public int LanternRange { get; init; } = 4;
+    /// <summary>Gets how far, in cells, a lantern may be thrown. Defaults to 5.</summary>
+    public int LanternRange { get; init; } = 5;
 
     /// <summary>
     /// Gets how many hunters stalk the floor. Defaults to 1. Must be at least 1, and the maze must
@@ -490,6 +512,23 @@ public sealed record GameConfig
         if (CatchCost < 1)
         {
             throw new ArgumentOutOfRangeException(nameof(CatchCost), CatchCost, "A catch must cost at least one heart.");
+        }
+
+        if (BloomGlowRadius < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(BloomGlowRadius),
+                BloomGlowRadius,
+                "A bloom glow cannot have a negative radius.");
+        }
+
+        // Written as "not greater than or equal to zero" so NaN is rejected as well as negatives.
+        if (!(BloomGlowSeconds >= 0) || double.IsInfinity(BloomGlowSeconds))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(BloomGlowSeconds),
+                BloomGlowSeconds,
+                "A bloom glow must last a finite, non-negative number of seconds.");
         }
 
         if (FloorNumber < 0 || FloorNumber > FloorCatalog.ShippedFloorCount)
@@ -865,6 +904,10 @@ public sealed record GameConfig
             PlayerStepSeconds = floor.PlayerStepSeconds,
             StartingHearts = hearts,
 
+            // The hunt deepens with the descent: floors 1-5 cost one heart, 6-10 two, 11-15
+            // three and 16-20 four. A card's own surcharge is added over this by RunModifiers.
+            CatchCost = CatchCost + ((floor.Number - 1) / 5),
+
             // The design's own slot count, before the run's cards. <c>RunModifiers.Apply</c>
             // widens it for the cards and never lets it fall below the hearts carried in, which
             // is what keeps a healed run's footer honest now that hearts have no ceiling.
@@ -904,6 +947,8 @@ public sealed record GameConfig
             SealedBarrierCost = SealedBarrierCost,
             LureStunSeconds = LureStunSeconds,
             LureVisionPenalty = LureVisionPenalty,
+            BloomGlowRadius = BloomGlowRadius,
+            BloomGlowSeconds = BloomGlowSeconds,
             SprintMultiplier = SprintMultiplier,
             SprintStaminaSeconds = SprintStaminaSeconds,
             MomentumRampPerStep = MomentumRampPerStep,

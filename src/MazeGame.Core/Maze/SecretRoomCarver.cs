@@ -31,38 +31,50 @@ public static class SecretRoomCarver
     /// </remarks>
     public const int TeachingFloors = 1;
 
-    /// <summary>Gets the chance every floor after the teaching floor rolls, in whole percent.</summary>
+    /// <summary>Gets the base chance every floor after the teaching floor rolls, in whole percent.</summary>
     /// <remarks>
-    /// Half of the floors hold a room, which is about ten in a twenty-floor run. The old curve
-    /// was one percent per floor, so floor 17 rolled a room one time in six and a run could reach
-    /// the bottom having met the mechanic only once; a room the player never walks into is a
-    /// whole system that might as well not exist.
+    /// Ten percent per floor is the baseline, and room cards add to it: a single Threshold Sense or
+    /// Latchkey doubles the rate for the rest of the run. Keeping the floor's own roll low makes a
+    /// room a find rather than a fixed schedule, while the cards let a run that wants rooms invest
+    /// in them.
     /// </remarks>
-    public const int RoomChancePercent = 50;
+    public const int RoomChancePercent = 10;
 
     /// <summary>Gets the percentage chance a floor has of holding a room.</summary>
     /// <param name="floorNumber">The floor's number in the run.</param>
-    /// <returns>The chance in whole percent: 100 on the first floor, 50 on every floor after it.</returns>
-    public static int ChancePercent(int floorNumber) =>
+    /// <param name="bonusPercent">
+    /// The cards' contribution, in percentage points. The total is capped at a certainty.
+    /// </param>
+    /// <returns>
+    /// The chance in whole percent: 100 on the first floor, the base rate plus the cards on every
+    /// floor after it.
+    /// </returns>
+    public static int ChancePercent(int floorNumber, int bonusPercent = 0) =>
         floorNumber <= 0 ? 0 :
         floorNumber <= TeachingFloors ? 100 :
-        RoomChancePercent;
+        Math.Clamp(RoomChancePercent + bonusPercent, 0, 100);
 
     /// <summary>
     /// Rolls whether <paramref name="floorNumber"/> holds a room at all.
     /// </summary>
     /// <param name="floorNumber">The floor's number, which decides its chance.</param>
     /// <param name="random">The room's own stream.</param>
-    /// <returns><see langword="true"/> when this floor rolled a room.</returns>
+    /// <param name="bonusPercent">The cards' contribution, in percentage points.</param>
+    /// <param name="forceRoom">
+    /// When true the roll is skipped and the floor holds a room: a room card or a promise made by
+    /// a previous floor needs the room to exist whatever the dice say.
+    /// </param>
+    /// <returns><see langword="true"/> when this floor holds a room.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="random"/> is null.</exception>
     /// <remarks>
     /// Kept separate from <see cref="Plan"/> so the chance curve can be tested and shown on its
     /// own: the Cartographer's card is exactly this number for the floors below.
     /// </remarks>
-    public static bool Rolls(int floorNumber, IRandom random)
+    public static bool Rolls(int floorNumber, IRandom random, int bonusPercent = 0, bool forceRoom = false)
     {
         ArgumentNullException.ThrowIfNull(random);
-        return random.NextInt(100) < ChancePercent(floorNumber);
+
+        return forceRoom || random.NextInt(100) < ChancePercent(floorNumber, bonusPercent);
     }
 
     /// <summary>
@@ -76,6 +88,8 @@ public static class SecretRoomCarver
     /// The room's own stream. Passing the floor's maze stream here would shift the maze whenever a
     /// room was rolled, which is exactly what the separate salt exists to prevent.
     /// </param>
+    /// <param name="bonusPercent">The cards' contribution to the chance, in percentage points.</param>
+    /// <param name="forceRoom">When true the roll is skipped and a site is always looked for.</param>
     /// <returns>
     /// The site to carve, or <see langword="null"/> when the roll missed or the floor is too small
     /// to hold a room inside its border.
@@ -89,7 +103,9 @@ public static class SecretRoomCarver
         int rows,
         int columns,
         int floorNumber,
-        IRandom random)
+        IRandom random,
+        int bonusPercent = 0,
+        bool forceRoom = false)
     {
         ArgumentNullException.ThrowIfNull(random);
 
@@ -117,7 +133,7 @@ public static class SecretRoomCarver
             return null;
         }
 
-        if (!Rolls(floorNumber, random))
+        if (!Rolls(floorNumber, random, bonusPercent, forceRoom))
         {
             return null;
         }

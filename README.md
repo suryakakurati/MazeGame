@@ -15,7 +15,8 @@ graph/pathfinding libraries are used.
 > steps**. Each floor is a braided maze **drawn from the compiled pixel-art atlases** on a virtual
 > canvas at an integer scale, with fog of war, a per-cell lantern lightmap and a killer that carries
 > its own light: pick the blooms, open the arch, and descend.
-> **You start with three hearts**: a catch costs one, throws the killer to a distant dead end and
+> **You start with three hearts**: a catch costs one on floors 1–5 and one more for every five
+> floors below, throws the killer to a distant dead end and
 > stuns it, and **hearts carry between floors and have no ceiling**, so healing past three is real
 > progress; only running out ends the run. Walking
 > is a cadence (a constant 0.26 s per cell; enemies start at 1.20 s and ramp to 0.22 s, so the
@@ -31,17 +32,26 @@ graph/pathfinding libraries are used.
 > Shove — whose charges are shown as five slots in the HUD, and at floors 8 and 14 the run stops at
 > a gate to take one of two **descent conditions** that bends the rest of the descent. Each floor
 > has an intro card, a floor-cleared card, **a draft of three cards between floors — take one or
-> skip for a heart** — from a catalog of twenty-three, including four movement cards, four powerup
-> cards and ten second-wave cards that change catches, blooms, durations and revivals, and a run
-> summary (834 unit tests; the sprite compiler has produced 2,264 validated pixel-art tiles across
+> skip for a heart** — from a catalog of thirty-nine, including four movement cards, four powerup
+> cards, ten second-wave cards that change catches, blooms, durations and revivals, three room
+> cards that raise the secret-room roll or buy one promised casino, and a fourth wave led by
+> **Ashen Bloom** (a catch lights every bloom near you for two seconds, and each copy reaches a
+> step further). Rarity is on every card's face, and **House Favour** is the catalog's one
+> **super-rare**: the card that promises a casino. The shop shows every card's face before it takes a
+> heart, and a reroll buys a fresh table for hearts (1, then 2, and so on, per floor).
+> **The title screen also offers a Tutorial**: twelve pages that walk through walking, the blooms,
+> the arch, the hunters, hearts and every ability, key by key, before the first descent. ESC now
+> opens a **pause menu** (continue or quit the run) instead of abandoning it.
+> A run summary follows (868 unit tests; the sprite compiler has produced 2,264 validated pixel-art tiles across
 > twenty themes, and the game draws the floor from them).
 > **Late floors have a rule, not just a dial**: floor 14 keeps one hunter asleep until you come
 > close, 18 carries you between two thread gates, 19's lantern burns down a step every forty
 > seconds (each bloom restores it) and 20's arch needs five continuous seconds of standing.
 > **A floor can hide a safe room** — a 3x3 chamber with one door, drawn in warm cream stone no floor
 > uses so it reads through the fog. The first floor always has one, so the mechanic is taught rather
-> than hoped for; every floor after it rolls a fifty percent chance, and a run averages about ten.
-> Standing inside pauses the hunt while
+> than hoped for; every floor after it rolls a ten percent chance, and a run averages about three,
+> with room cards raising the rate. Its entrance is lit within three steps, so a door in the rock is
+> a find rather than a guess. Standing inside pauses the hunt, and the hunt will not follow you in, while
 > the room sells a hearts-and-cards trade for one visit. Cards may now stack up to three copies, and the
 > Confessional and the Mirror are the only ways to take one back.
 > **It is a story as well as a descent.** The keys were always flowers, so they are called
@@ -110,34 +120,42 @@ The first restore downloads the Raylib native library for your platform (see
 
 | Key | Action |
 | --- | --- |
-| W / S or arrows (title) | Select `DESCEND` or `LEAVE` |
+| W / S or arrows (title) | Select `DESCEND`, `TUTORIAL` or `LEAVE` |
 | Enter or Space (title) | Confirm the highlighted entry |
+| Esc (tutorial) | Back to the title |
+| Enter / A / D / arrows (tutorial) | Turn the page |
 | W A S D / arrow keys | Walk: a tap is one tile, a hold keeps walking at the cadence |
 | Shift (hold) | Sprint, while the stamina bar lasts |
 | Space | Blink through the wall you face (the breach stays open) |
 | V | Veil: stand still for half a second to go unseen for 3 seconds |
 | T | Drag: slow the hunt to 40% for 3 seconds |
-| L | Lantern: throw your light up to 4 cells ahead |
-| F | Shove: push the hunter in front of you two cells back |
+| L | Lantern: throw your light up to 5 cells ahead for 8 seconds |
+| F | Shove: push any adjacent hunter two cells away, whichever way you face |
 | E (in a safe room) | Open the room's card; A/D choose, Enter takes, Esc leaves |
 | A / D, arrows (draft) | Move between the cards |
 | Enter, Space or 1–4 (draft) | Take the highlighted card |
 | S (draft) | Skip: take a heart instead |
+| R (draft) | Reroll the table: 1 heart, then 2, then 3, resetting each floor |
+| Esc (in a floor) | Pause: continue, or quit the run back to the title |
 | R or Enter (after a run) | Descend again, on a new maze |
-| Q or Esc | Quit |
+| Q (title) | Quit |
 
 ## How to play
 
-The game opens on a title screen over the cave: `BIOLUMINESCENT / DEPTHS`, with `DESCEND` and
-`LEAVE`. Starting a run (or pressing R after a run ends) builds a brand-new campaign: floor 1,
+The game opens on a title screen over the cave: `BIOLUMINESCENT / DEPTHS`, with `DESCEND`,
+`TUTORIAL` and `LEAVE`. The tutorial is a guided read rather than a simulation: one idea per page,
+the exact keys for it, and a page count so the player knows how much explaining is left. Starting a
+run (or pressing R after a run ends) builds a brand-new campaign: floor 1,
 three hearts, every budget full. A floor intro card names the floor (The Shallows, Rootbound,
 Drowned Halls) before play begins.
 
 A run is twenty floors. Clearing a floor's arch shows a floor-cleared card; Enter opens the
 **draft**: three cards, each naming its own price in the same sentence as its benefit ("Vision
 +2, but the killer's light reaches 3 steps further"). Take one with Enter or its number, or skip
-with S for one heart. Whatever you take applies to every floor from then on, and the draft screen
-shows the run's totals underneath the title. Rares grow more likely as you descend, and every
+with S for one heart, or press R to reroll the table for hearts: the first reroll on a floor costs
+one, the second two, and so on, and the ladder resets on the next floor. Whatever you take applies
+to every floor from then on, and the draft screen shows the run's totals underneath the title.
+Rares grow more likely as you descend, and every
 fifth floor's draft guarantees one, so the late run is where the build-defining cards live. Then
 the next floor begins with the hearts you have left. At floors 8 and 14 the run stops at a **gate**: two descent conditions, one taken for the
 rest of the run, so the late floors are not the same floor with more hunters. The twentieth arch
@@ -174,7 +192,8 @@ a quarter of it to come back. Sprint is for breaking line of sight, not for goin
 
 1. Collect all three blooms — the exit stays `LOCKED` until the last one is picked up.
 2. Reach the exit. You start with three hearts, shown beside the control hints at the bottom:
-   a catch costs one heart, throws the killer to a far dead end, stuns it for 1.5 seconds and
+   a catch costs one heart on floors 1–5 and one more for every five floors below, throws the
+   killer to a far dead end, stuns it for 1.5 seconds and
    gives you 1.5 seconds of grace, and **keeps your keys and barriers**. Hearts have no ceiling:
    an Echo, a room or a card can push you past three, so only the catch that empties the last
    heart ends the run. The screen washes red when you lose a heart, and the last heart pulses.
@@ -182,10 +201,10 @@ a quarter of it to come back. Sprint is for breaking line of sight, not for goin
    left. **Space** blinks through the wall you face and leaves the breach open, so you make a
    shortcut the hunters can use too. **V** veils you after half a second of standing still, for
    three seconds of being unseen, but any step breaks it. **T** drags the hunt down to 40% for
-   three seconds, then leaves it 10% faster for five. **L** throws your light up to four cells
-   ahead and the hunters walk toward it while your own cell goes dark. **F** shoves the hunter
-   in front of you two cells back and stuns it, and every other hunter is given its next step
-   at once for the noise.
+   three seconds, then leaves it 10% faster for five. **L** throws your light up to five cells
+   ahead for eight seconds and the hunters walk toward it while your own cell goes dark. **F**
+   shoves any hunter next to you two cells away, whichever way you face, and stuns it; every
+   other hunter is given its next step at once for the noise.
 4. A powerup is spent only when it succeeds, so blinking into rock or shoving empty air costs
    nothing. Using the right verb at the right moment is the skill; hoarding charges just wastes
    them, because every floor refills the kit.
@@ -270,7 +289,10 @@ that is what guarantees the player can never wall the killer in, and why a seal 
 the route ends in a tear-down rather than a stuck game.
 
 The same search also picks the killer's *target*: the player, or an active wisp, whichever route
-is cheaper. One algorithm, two jobs.
+is cheaper. One algorithm, two jobs. A hunter only knows the player's exact cell inside its aura
+(six steps); outside it the route goes to the cell it last saw them on, and once it arrives with
+the player gone it wanders one open step at a time instead of walking a perfect path through
+rock it cannot see through. `GameState.IsPlayerSensed` is the flag; the aura is a two-way rule.
 
 Dijkstra runs on a hand-written binary min-heap: each cell is extracted once in order
 of increasing distance, and neighbours are relaxed through cell walls only, so a path
@@ -302,11 +324,12 @@ teaches one verb at a time (Blink on floor 1, Veil on floor 2, Drag on floor 4, 
   keep walking to the last cell they saw; any step, or being caught, breaks it.
 - **Drag** scales the hunters' clock to 40% for 3 s, then to 110% for 5 s. Both the individual
   and Pack clocks read the same multiplier, so they cannot disagree about what time it is.
-- **Lantern** throws the light source up to four cells down a corridor. While it burns, the
-  player's own cell is dark and `LightOrigin` is the lantern, so the hunters follow the light
-  rather than the player.
-- **Shove** moves the hunter two cells back (stopping at a wall, rock or another hunter) and
-  stuns it for 2 s; every other hunter immediately gets its next step for the noise.
+- **Lantern** throws the light source up to five cells down a corridor and burns for 8 s. While
+  it burns, the player's own cell is dark and `LightOrigin` is the lantern, so the hunters follow
+  the light rather than the player. The throw stops short of a hunter rather than landing on one.
+- **Shove** moves any adjacent hunter two cells away from the player (stopping at a wall, rock or
+  another hunter) and stuns it for 2 s; every other hunter immediately gets its next step for the
+  noise. Facing is a preference, not a requirement.
 
 Barriers and wisps still exist as floor rules and are still tested, but the player no longer
 places them. They are left in place for a future floor that pre-builds a seal, not offered as

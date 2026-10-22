@@ -9,16 +9,22 @@ namespace MazeGame.Core.Game;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Twenty-three cards from the planned catalog are shipped here: the ones whose trade is
+/// Thirty-nine cards from the planned catalog are shipped here: the ones whose trade is
 /// expressible with the rules the game already has. The movement cards (Light Feet, Momentum,
 /// Sprint Lungs, Hollow Bones) arrived with timed player steps, the four powerup cards (Blink
-/// Step, Long Veil, Lantern Oil, Quick Hands) with the five-verb kit, and the second wave (from
+/// Step, Long Veil, Lantern Oil, Quick Hands) with the five-verb kit, the second wave (from
 /// Featherfall to Slow Pursuit) with the rule hooks that let a card change a catch, a pickup or a
-/// powerup's duration. No card trades on a verb the player cannot use, and no card is a pure
-/// upgrade.
+/// powerup's duration, and the third wave (Threshold Sense, Latchkey and House Favour) with the
+/// secret-room roll and the one promised casino. The fourth wave (Ashen Bloom to Lucky Find) adds
+/// the bloom-glow reveal a catch grants and thirteen more trades around the rules the game already
+/// has. No card trades on a verb the player cannot use, and no card is a pure upgrade.
 /// </para>
 /// <para>
-/// Eight cards are stackable (<see cref="Card.MaxCopies"/> above one): the numeric ones whose
+/// <see cref="CardTier.SuperRare"/> exists for one card: House Favour, the promised casino. The
+/// draft draws it once in a run's lifetime at most, and its face says so.
+/// </para>
+/// <para>
+/// Fifteen cards are stackable (<see cref="Card.MaxCopies"/> above one): the numeric ones whose
 /// downside compounds the same way its upside does, so a second copy is a sharper version of the
 /// same bargain rather than a free upgrade. That is what keeps the draft's eligible pool alive to
 /// the nineteenth offer of a run.
@@ -31,7 +37,7 @@ namespace MazeGame.Core.Game;
 public static class CardCatalog
 {
     /// <summary>Gets how many cards the shipped catalog holds.</summary>
-    public const int ShippedCount = 23;
+    public const int ShippedCount = 39;
 
     private static readonly Card[] Cards =
     [
@@ -66,16 +72,16 @@ public static class CardCatalog
             Name = "Blood Pact",
             Tier = CardTier.Uncommon,
             MaxCopies = 2,
-            FaceText = "Heal one heart now, but the killer gives you 12% less time between steps.",
-            Effect = new CardEffect { HealNow = 1, MaxHearts = 1, EnemyStepScale = 0.88 },
+            FaceText = "Heal two hearts now, but the killer gives you 12% less time between steps.",
+            Effect = new CardEffect { HealNow = 2, MaxHearts = 1, EnemyStepScale = 0.88 },
         },
         new()
         {
             Id = "second-wind",
             Name = "Second Wind",
             Tier = CardTier.Common,
-            FaceText = "Heal one heart now, but your torch loses a step for the rest of the run.",
-            Effect = new CardEffect { HealNow = 1, VisionRadius = -1 },
+            FaceText = "Heal two hearts now, but your torch loses a step for the rest of the run.",
+            Effect = new CardEffect { HealNow = 2, VisionRadius = -1 },
         },
         new()
         {
@@ -156,8 +162,8 @@ public static class CardCatalog
             Name = "Glass Cannon",
             Tier = CardTier.Rare,
             MaxCopies = 2,
-            FaceText = "You move 40% faster, but every catch costs two hearts instead of one.",
-            Effect = new CardEffect { PlayerStepScale = 0.60, CatchCost = 1 },
+            FaceText = "You move 20% faster, but every catch costs two hearts instead of one.",
+            Effect = new CardEffect { PlayerStepScale = 0.80, CatchCost = 1 },
         },
         new()
         {
@@ -181,8 +187,8 @@ public static class CardCatalog
             Id = "trophy-hunter",
             Name = "Trophy Hunter",
             Tier = CardTier.Rare,
-            FaceText = "Heal a heart on every floor clear, but every floor from now on asks for one more bloom.",
-            Effect = new CardEffect { HealOnFloorClear = 1, KeyCount = 1 },
+            FaceText = "Heal two hearts on every floor clear, but every floor from now on asks for one more bloom.",
+            Effect = new CardEffect { HealOnFloorClear = 2, KeyCount = 1 },
         },
         new()
         {
@@ -190,8 +196,8 @@ public static class CardCatalog
             Name = "Light Feet",
             Tier = CardTier.Common,
             MaxCopies = 3,
-            FaceText = "You walk 35% faster, but the killer gives you 8% less time between steps.",
-            Effect = new CardEffect { PlayerStepScale = 0.65, MaxHearts = -1, EnemyStepScale = 0.92 },
+            FaceText = "You walk nearly 18 percent faster, but the killer gives you 8% less time between steps.",
+            Effect = new CardEffect { PlayerStepScale = 0.825, MaxHearts = -1, EnemyStepScale = 0.92 },
         },
         new()
         {
@@ -199,11 +205,11 @@ public static class CardCatalog
             Name = "Momentum",
             Tier = CardTier.Uncommon,
             MaxCopies = 2,
-            FaceText = "Each straight step makes you faster, up to 35%, but a turn slows you by 15% for 2 seconds.",
+            FaceText = "Each straight step makes you faster, up to nearly 18 percent, but a turn slows you by 15% for 2 seconds.",
             Effect = new CardEffect
             {
-                MomentumRampPerStep = 0.06,
-                MomentumMaxBonus = 0.35,
+                MomentumRampPerStep = 0.03,
+                MomentumMaxBonus = 0.175,
                 TurnPenaltyScale = 0.15,
                 TurnPenaltySeconds = 2.0,
             },
@@ -224,6 +230,141 @@ public static class CardCatalog
             MaxCopies = 2,
             FaceText = "After a hit you are safe for 3 seconds instead of a second and a half, but every step you take is 25% slower.",
             Effect = new CardEffect { InvulnerabilitySeconds = 1.5, PlayerStepScale = 1.25 },
+        },
+        new()
+        {
+            Id = "threshold-sense",
+            Name = "Threshold Sense",
+            Tier = CardTier.Common,
+            FaceText = "Rooms are 10% more likely on every floor, but your torch loses a step.",
+            Effect = new CardEffect { RoomChancePercent = 10, VisionRadius = -1 },
+        },
+        new()
+        {
+            Id = "latchkey",
+            Name = "Latchkey",
+            Tier = CardTier.Uncommon,
+            FaceText = "Rooms are 10% more likely on every floor, but the killer moves 8% faster.",
+            Effect = new CardEffect { RoomChancePercent = 10, EnemyStepScale = 0.92 },
+        },
+        new()
+        {
+            Id = "house-favour",
+            Name = "House Favour",
+            Tier = CardTier.SuperRare,
+            FaceText = "The next floor holds a casino room paying 66% once, but your torch loses a step for the rest of the run.",
+            Effect = new CardEffect { GuaranteedCasino = true, VisionRadius = -1 },
+        },
+        new()
+        {
+            Id = "ashen-bloom",
+            Name = "Ashen Bloom",
+            Tier = CardTier.Common,
+            MaxCopies = 3,
+            FaceText = "When hunters catch you, blooms within 1 step glow for 2 seconds, but the killer's light reaches 2 steps further.",
+            Effect = new CardEffect { BloomGlowRadius = 1, EnemyAuraDistance = 2 },
+        },
+        new()
+        {
+            Id = "kindling",
+            Name = "Kindling",
+            Tier = CardTier.Common,
+            MaxCopies = 2,
+            FaceText = "Your lantern's throw reaches 2 cells further, but every step you take is 10% slower.",
+            Effect = new CardEffect { LanternRange = 2, PlayerStepScale = 1.10 },
+        },
+        new()
+        {
+            Id = "fleet-footed",
+            Name = "Fleet Footed",
+            Tier = CardTier.Common,
+            MaxCopies = 2,
+            FaceText = "You move 12% faster, but every floor from now on asks for one more bloom.",
+            Effect = new CardEffect { PlayerStepScale = 0.88, KeyCount = 1 },
+        },
+        new()
+        {
+            Id = "coiled-spring",
+            Name = "Coiled Spring",
+            Tier = CardTier.Uncommon,
+            FaceText = "Your sprint lasts 60% longer, but every catch costs one more heart.",
+            Effect = new CardEffect { SprintStaminaScale = 1.6, CatchCost = 1 },
+        },
+        new()
+        {
+            Id = "patient-hunter",
+            Name = "Patient Hunter",
+            Tier = CardTier.Uncommon,
+            MaxCopies = 2,
+            FaceText = "Hunters move 10% slower, but drag's hangover lasts 3 seconds longer.",
+            Effect = new CardEffect { EnemyStepScale = 1.10, DragPenaltySeconds = 3 },
+        },
+        new()
+        {
+            Id = "second-skin",
+            Name = "Second Skin",
+            Tier = CardTier.Uncommon,
+            FaceText = "Heal 2 hearts now, but the killer gives you 10% less time between steps.",
+            Effect = new CardEffect { HealNow = 2, EnemyStepScale = 0.90 },
+        },
+        new()
+        {
+            Id = "nightglass",
+            Name = "Nightglass",
+            Tier = CardTier.Rare,
+            FaceText = "Your torch reaches 2 steps further, but every catch costs one more heart.",
+            Effect = new CardEffect { VisionRadius = 2, CatchCost = 1 },
+        },
+        new()
+        {
+            Id = "grave-grace",
+            Name = "Grave Grace",
+            Tier = CardTier.Uncommon,
+            FaceText = "The grace after a catch lasts 2 seconds longer, but the killer's light reaches 2 steps further.",
+            Effect = new CardEffect { InvulnerabilitySeconds = 2, EnemyAuraDistance = 2 },
+        },
+        new()
+        {
+            Id = "moths-bargain",
+            Name = "Moth's Bargain",
+            Tier = CardTier.Common,
+            MaxCopies = 2,
+            FaceText = "One more veil each floor, but you carry one fewer shove.",
+            Effect = new CardEffect { VeilCharges = 1, ShoveCharges = -1 },
+        },
+        new()
+        {
+            Id = "wardens-patience",
+            Name = "Warden's Patience",
+            Tier = CardTier.Rare,
+            FaceText = "The first catch each floor costs no heart, but every step you take is 15% slower.",
+            Effect = new CardEffect { FirstCatchFree = true, PlayerStepScale = 1.15 },
+        },
+        new()
+        {
+            Id = "root-memory",
+            Name = "Root Memory",
+            Tier = CardTier.Uncommon,
+            MaxCopies = 2,
+            FaceText = "You can blink 2 more times each floor, but the killer moves 6% faster.",
+            Effect = new CardEffect { BlinkCharges = 2, EnemyStepScale = 0.94 },
+        },
+        new()
+        {
+            Id = "sated-hollow",
+            Name = "Sated Hollow",
+            Tier = CardTier.Rare,
+            MaxCopies = 2,
+            FaceText = "Heal 2 hearts every time a floor is cleared, but your torch loses one step.",
+            Effect = new CardEffect { HealOnFloorClear = 2, VisionRadius = -1 },
+        },
+        new()
+        {
+            Id = "thorn-debt",
+            Name = "Thorn Debt",
+            Tier = CardTier.Uncommon,
+            FaceText = "Every bloom you pick gives back a blink, but every catch costs one more heart.",
+            Effect = new CardEffect { BlinkRefundOnKey = true, CatchCost = 1 },
         },
         new()
         {

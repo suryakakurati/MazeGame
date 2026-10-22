@@ -1412,14 +1412,17 @@ public sealed partial class RaylibRenderer : IRenderer
             // Inside a safe room the footer says what the room is: the pause is the one rule the
             // player has to be told about, because nothing moving is exactly when it is unclear.
             _ => state.IsInSafeRoom
-                ? "SAFE ROOM   E: LOOK   WASD: WALK   ESC: QUIT"
-                : "WASD: MOVE   SHIFT: RUN   SPACE: BLINK   V: VEIL   T: SLOW   L: LIGHT   F: SHOVE   ESC: QUIT",
+                ? "SAFE ROOM   E: LOOK   WASD: WALK   ESC: PAUSE"
+                : state.IsSafeRoomDoorInSight
+                    ? "THE ROOM IS NEAR   WASD: MOVE   SHIFT: RUN   SPACE: BLINK   V: VEIL   T: SLOW   L: LIGHT   F: SHOVE"
+                    : "WASD: MOVE   SHIFT: RUN   SPACE: BLINK   V: VEIL   T: SLOW   L: LIGHT   F: SHOVE   ESC: PAUSE",
         };
         var color = state.AimMode switch
         {
             PlacementMode.Barrier => CursorColor,
             PlacementMode.Lure => GlowCyan,
-            _ => state.IsInSafeRoom ? GlowGreen : HintText,
+            _ => state.IsInSafeRoom ? GlowGreen :
+                 state.IsSafeRoomDoorInSight ? GlowGreen : HintText,
         };
 
         // The hints are centred in what the hearts and the hunter pips leave, not in the whole

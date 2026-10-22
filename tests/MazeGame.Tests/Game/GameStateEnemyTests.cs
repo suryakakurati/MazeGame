@@ -1,6 +1,7 @@
 using System;
 using MazeGame.Core.Game;
 using MazeGame.Core.Maze;
+using MazeGame.Core.Pathfinding;
 using MazeGame.Tests.TestDoubles;
 
 namespace MazeGame.Tests.Game;
@@ -158,6 +159,50 @@ public sealed class GameStateEnemyTests
 
         state.Tick(1.0);
         Assert.Equal(GameStatus.Caught, state.Status);
+    }
+
+    [Fact]
+    public void Senses_ReachThePlayerOnlyInsideTheAura()
+    {
+        // A long L: the hunter is eleven steps from the player, well outside the six-step aura.
+        var maze = new Grid(7, 7);
+
+        for (var column = 0; column < 6; column++)
+        {
+            maze.RemoveWall(6, column, Direction.East);
+        }
+
+        for (var row = 0; row < 6; row++)
+        {
+            maze.RemoveWall(row, 0, Direction.South);
+        }
+
+        var far = new GameState(
+            new GameConfig
+            {
+                Rows = 7,
+                Columns = 7,
+                KeyCount = 1,
+                EnemyStepSeconds = 1.0,
+                StartingHearts = 3,
+                MaxHearts = 3,
+                Seed = null,
+            },
+            maze,
+            new DijkstraPathfinder(),
+            new FixedRandom(0));
+
+        Assert.Equal(maze.GetCell(0, 0), far.Player);
+        far.Tick(0.1);
+        Assert.False(far.IsPlayerSensed);
+
+        // The same rule inside the aura: a corridor six cells long starts the hunter five steps
+        // away, so it knows where the player is from the first frame.
+        var near = TestLevels.CorridorGame();
+
+        near.Tick(0.1);
+
+        Assert.True(near.IsPlayerSensed);
     }
 
     [Fact]

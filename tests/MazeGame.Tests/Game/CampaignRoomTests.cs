@@ -168,6 +168,39 @@ public sealed class CampaignRoomTests
     }
 
     [Fact]
+    public void TheCasino_TakesTheStakeOnALoss()
+    {
+        // The test above follows whichever outcome its seed rolls, so it can spend a whole pass on
+        // the winning side. This one chooses a seed that loses on purpose: the deduction is the
+        // half of the table that costs the player something, and it is easy to get wrong by
+        // refunding the stake after the roll.
+        var losing = -1;
+
+        for (var seed = 0; seed < 40000 && losing < 0; seed++)
+        {
+            if (RoomCatalog.Pick(seed, FloorNumbers[0]) == RoomKind.LongTable &&
+                !RoomCatalog.GambleWins(seed, FloorNumbers[0]))
+            {
+                losing = seed;
+            }
+        }
+
+        Assert.True(losing >= 0, "no seed lost a stake on the casino floor");
+
+        var campaign = BuildCampaign(losing);
+
+        EnterRoom(campaign);
+        Assert.True(campaign.OpenRoom());
+
+        var heartsBefore = campaign.Hearts;
+
+        Assert.True(campaign.ResolveRoom(Option(campaign, "stake-2")));
+
+        Assert.Equal(heartsBefore - 2, campaign.Hearts);
+        Assert.Equal("LOST 2", campaign.Room!.Outcome);
+    }
+
+    [Fact]
     public void TheCasino_CannotBeRerolled()
     {
         var campaign = BuildCampaign(SeedFor(RoomKind.LongTable, 0), hearts: 3);
@@ -378,6 +411,102 @@ public sealed class CampaignRoomTests
     }
 
     [Fact]
+    public void TheStall_ShowsEveryCardsFaceBeforeTakingAHeart()
+    {
+        var campaign = BuildCampaign(SeedFor(RoomKind.Stall, 0), hearts: 3);
+
+        EnterRoom(campaign);
+        Assert.True(campaign.OpenRoom());
+
+        var buys = campaign.Room!.Options
+            .Where(option => option.Id.StartsWith("buy-", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.NotEmpty(buys);
+
+        foreach (var option in buys)
+        {
+            Assert.NotNull(option.Preview);
+            Assert.Contains(" but ", option.Preview!, StringComparison.Ordinal);
+            Assert.Contains(CardCatalog.All, card => card.FaceText == option.Preview);
+        }
+    }
+
+    [Fact]
+    public void HouseFavour_PromisesACasinoOnTheNextFloorAndPays66Once()
+    {
+        Campaign? campaign = null;
+        Card? promise = null;
+
+        for (var seed = 0; seed < 2000 && campaign is null; seed++)
+        {
+            var candidate = BuildCampaign(seed, floors: 3, onlyForcedRooms: true);
+            ClearFloor(candidate);
+
+            var offer = candidate.Draft!.Offers
+                .FirstOrDefault(card => string.Equals(card.Id, "house-favour", StringComparison.Ordinal));
+
+            if (offer is not null)
+            {
+                campaign = candidate;
+                promise = offer;
+            }
+        }
+
+        Assert.NotNull(campaign);
+        Assert.NotNull(promise);
+
+        Assert.True(campaign!.TakeCard(promise!));
+        Assert.True(campaign.TryAdvanceFloor());
+
+        // The promise wins over the ten percent roll; without it this builder would have made a
+        // roomless floor.
+        Assert.NotNull(campaign.Floor.SafeRoom);
+
+        EnterRoom(campaign);
+        Assert.True(campaign.OpenRoom());
+
+        Assert.Equal(RoomKind.LongTable, campaign.Room!.Kind);
+        Assert.Equal(66, campaign.CasinoWinPercent);
+        Assert.Contains("66%", campaign.Room.Prompt, StringComparison.Ordinal);
+
+        var stakes = campaign.Room.Options
+            .Where(option => option.Id.StartsWith("stake-", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.NotEmpty(stakes);
+        Assert.All(stakes, stake => Assert.Contains("66% DOUBLE", stake.Note!, StringComparison.Ordinal));
+
+        // The favoured table is one play: afterwards the house is back to 45%.
+        Assert.True(campaign.ResolveRoom(stakes[0]));
+        Assert.Equal(45, campaign.CasinoWinPercent);
+    }
+
+    [Fact]
+    public void TheFavouredTablePaysAboutSixtySixPercent()
+    {
+        const int trials = 10000;
+        var normal = 0;
+        var favoured = 0;
+
+        for (var seed = 0; seed < trials; seed++)
+        {
+            if (RoomCatalog.GambleWins(seed, 5))
+            {
+                normal++;
+            }
+
+            if (RoomCatalog.GambleWins(seed, 5, RoomCatalog.FavouredGambleWinPercent))
+            {
+                favoured++;
+            }
+        }
+
+        Assert.InRange(normal, 4300, 4700);
+        Assert.InRange(favoured, 6400, 6800);
+    }
+
+    [Fact]
     public void EveryRoomKind_IsReachable_OnAFloorItBelongsTo()
     {
         var seen = new HashSet<RoomKind>();
@@ -422,13 +551,18 @@ public sealed class CampaignRoomTests
         }
     }
 
-    /// <summary>Builds a campaign whose every floor holds a real carved room.</summary>
+    /// <summary>Builds a campaign whose floors hold a real carved room.</summary>
+    /// <param name="onlyForcedRooms">
+    /// When true, floors only get their room if the definition carries <see cref="FloorDefinition.ForceRoom"/>;
+    /// used to prove that a card's promise is what put the room there.
+    /// </param>
     private static Campaign BuildCampaign(
         int seed,
         int? hearts = null,
         int floors = 2,
         int maxHearts = 3,
-        int? topFloorMaxHearts = null)
+        int? topFloorMaxHearts = null,
+        bool onlyForcedRooms = false)
     {
         var topHearts = topFloorMaxHearts ?? maxHearts;
 
@@ -452,14 +586,18 @@ public sealed class CampaignRoomTests
             definitions,
             (floor, startingHearts, _, _) =>
             {
+                var hasRoom = !onlyForcedRooms || floor.ForceRoom;
                 var random = new SeededRandom(4);
                 var maze = new MazeGenerator(random).Generate(new MazeOptions(7, 7, 4)
                 {
-                    ReservedCells = SecretRoomCarver.ReservedCells(RoomSite),
+                    ReservedCells = hasRoom ? SecretRoomCarver.ReservedCells(RoomSite) : null,
                 });
-                var room = SecretRoomCarver.TryCarve(maze, RoomSite, random);
+                var room = hasRoom ? SecretRoomCarver.TryCarve(maze, RoomSite, random) : null;
 
-                Assert.NotNull(room);
+                if (hasRoom)
+                {
+                    Assert.NotNull(room);
+                }
 
                 return new GameState(
                     new GameConfig

@@ -48,6 +48,7 @@ public sealed class RunModifiers
         double turnPenaltySeconds,
         int maxHearts,
         int keyCount,
+        int bloomGlowRadius,
         int lureCount,
         double? lureSeconds,
         double lureStunSeconds,
@@ -66,7 +67,9 @@ public sealed class RunModifiers
         double dragSeconds,
         double dragPenaltySeconds,
         int lanternRange,
-        int healOnFloorClear)
+        int healOnFloorClear,
+        int roomChancePercent,
+        bool guaranteedCasino)
     {
         _cards = cards;
         VisionRadius = visionRadius;
@@ -83,6 +86,7 @@ public sealed class RunModifiers
         TurnPenaltySeconds = turnPenaltySeconds;
         MaxHearts = maxHearts;
         KeyCount = keyCount;
+        BloomGlowRadius = bloomGlowRadius;
         LureCount = lureCount;
         LureSeconds = lureSeconds;
         LureStunSeconds = lureStunSeconds;
@@ -102,6 +106,8 @@ public sealed class RunModifiers
         DragPenaltySeconds = dragPenaltySeconds;
         LanternRange = lanternRange;
         HealOnFloorClear = healOnFloorClear;
+        RoomChancePercent = roomChancePercent;
+        GuaranteedCasino = guaranteedCasino;
     }
 
     /// <summary>Gets the run before any card has been taken.</summary>
@@ -121,6 +127,7 @@ public sealed class RunModifiers
         turnPenaltySeconds: 0,
         maxHearts: 0,
         keyCount: 0,
+        bloomGlowRadius: 0,
         lureCount: 0,
         lureSeconds: null,
         lureStunSeconds: 0,
@@ -139,7 +146,9 @@ public sealed class RunModifiers
         dragSeconds: 0,
         dragPenaltySeconds: 0,
         lanternRange: 0,
-        healOnFloorClear: 0);
+        healOnFloorClear: 0,
+        roomChancePercent: 0,
+        guaranteedCasino: false);
 
     /// <summary>Gets the cards held, in the order they were taken.</summary>
     public IReadOnlyList<Card> Cards => _cards;
@@ -185,6 +194,9 @@ public sealed class RunModifiers
 
     /// <summary>Gets the change to each floor's key count.</summary>
     public int KeyCount { get; }
+
+    /// <summary>Gets the change to the radius blooms glow from after a catch.</summary>
+    public int BloomGlowRadius { get; }
 
     /// <summary>Gets the change to each floor's wisp count.</summary>
     public int LureCount { get; }
@@ -242,6 +254,12 @@ public sealed class RunModifiers
 
     /// <summary>Gets the hearts restored on every floor clear.</summary>
     public int HealOnFloorClear { get; }
+
+    /// <summary>Gets the change to the chance a floor holds a secret room, in percentage points.</summary>
+    public int RoomChancePercent { get; }
+
+    /// <summary>Gets a value indicating whether the next floor is promised a casino room.</summary>
+    public bool GuaranteedCasino { get; }
 
     /// <summary>
     /// Gets how many held cards change what the player can see. The draft's rate limit keeps this
@@ -323,6 +341,7 @@ public sealed class RunModifiers
             TurnPenaltySeconds + effect.TurnPenaltySeconds,
             MaxHearts + effect.MaxHearts,
             KeyCount + effect.KeyCount,
+            BloomGlowRadius + effect.BloomGlowRadius,
             LureCount + effect.LureCount,
             effect.LureSeconds ?? LureSeconds,
             LureStunSeconds + effect.LureStunSeconds,
@@ -341,7 +360,9 @@ public sealed class RunModifiers
             DragSeconds + effect.DragSeconds,
             DragPenaltySeconds + effect.DragPenaltySeconds,
             LanternRange + effect.LanternRange,
-            HealOnFloorClear + effect.HealOnFloorClear);
+            HealOnFloorClear + effect.HealOnFloorClear,
+            RoomChancePercent + effect.RoomChancePercent,
+            GuaranteedCasino || effect.GuaranteedCasino);
     }
 
     /// <summary>
@@ -383,6 +404,7 @@ public sealed class RunModifiers
             BarrierBudget = Math.Max(0, config.BarrierBudget + BarrierBudget),
             LureCount = Math.Max(0, config.LureCount + LureCount),
             KeyCount = Math.Max(0, config.KeyCount + KeyCount),
+            BloomGlowRadius = Math.Max(0, config.BloomGlowRadius + BloomGlowRadius),
             MaxHearts = Math.Max(config.StartingHearts, config.MaxHearts + MaxHearts),
             BarrierSealSeconds = sealSeconds,
             LureSeconds = lureSeconds,
@@ -438,8 +460,13 @@ public sealed class RunModifiers
         Append(text, "BARRIERS", BarrierBudget);
         Append(text, "WISPS", LureCount);
         Append(text, "BLOOMS", KeyCount);
+        Append(text, "BLOOM GLOW", BloomGlowRadius);
         Append(text, "HEARTS", MaxHearts);
         Append(text, "LANTERN RANGE", LanternRange);
+        Append(text, "ROOMS", RoomChancePercent);
+
+        // House Favour is deliberately absent: its promise is spent on one floor, so a line that
+        // outlived it would tell the player the next floor still holds a casino.
 
         if (CatchCost != 0)
         {

@@ -105,10 +105,21 @@ public sealed class GameFactoryTests
         // This is the replay contract: after the killer wins, asking the factory again must give
         // a game that starts from the beginning with every objective and budget restored.
         var state = Factory().Create();
+        var pathfinder = new DijkstraPathfinder();
 
-        for (var tick = 0; tick < 400 && state.Status == GameStatus.InProgress; tick++)
+        // A hunter only tracks the player inside its aura now, so standing still for 400 seconds
+        // is no longer a guaranteed death on a fifteen-by-fifteen floor. The test is about the
+        // replay contract, not the length of a chase, so the player walks at the hunter instead.
+        for (var attempt = 0; attempt < 1200 && state.Status == GameStatus.InProgress; attempt++)
         {
-            state.Tick(1.0);
+            var path = pathfinder.FindPath(state.Maze, state.Player, state.Enemy, _ => 1);
+
+            if (path.Count > 1)
+            {
+                state.TryMove(DirectionToward(state.Player, path[1]));
+            }
+
+            state.Tick(0.1);
         }
 
         Assert.Equal(GameStatus.Caught, state.Status);
@@ -146,6 +157,39 @@ public sealed class GameFactoryTests
         factory.Create();
 
         Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public void CreateFloor_WithARoomCard_TurnsAMissedRollIntoARoom()
+    {
+        // Find a shipped floor whose ten percent roll misses, then raise the chance to a certainty
+        // with a card. The room must exist on the second build whatever the dice said.
+        var factory = Factory();
+        FloorDefinition? roomless = null;
+
+        for (var number = 2; number <= FloorCatalog.ShippedFloorCount && roomless is null; number++)
+        {
+            var candidate = FloorCatalog.ByNumber(number);
+
+            if (factory.CreateFloor(candidate, 3, RunModifiers.None).SafeRoom is null)
+            {
+                roomless = candidate;
+            }
+        }
+
+        var floor = Assert.IsType<FloorDefinition>(roomless);
+        var roomCard = new Card
+        {
+            Id = "test-room-card",
+            Name = "Test Room Card",
+            Tier = CardTier.Common,
+            FaceText = "Rooms are certain, but this card exists only for the test.",
+            Effect = new CardEffect { RoomChancePercent = 100 },
+        };
+
+        var boosted = factory.CreateFloor(floor, 3, RunModifiers.None.With(roomCard));
+
+        Assert.NotNull(boosted.SafeRoom);
     }
 
     [Fact]
@@ -289,6 +333,22 @@ public sealed class GameFactoryTests
         Assert.Equal(3, first.Hearts);
         Assert.Equal(3, second.Hearts);
         Assert.NotSame(first.Floor, second.Floor);
+    }
+
+    /// <summary>Returns the cardinal direction from one neighbouring cell towards another.</summary>
+    private static Direction DirectionToward(Cell from, Cell to)
+    {
+        if (to.Row < from.Row)
+        {
+            return Direction.North;
+        }
+
+        if (to.Row > from.Row)
+        {
+            return Direction.South;
+        }
+
+        return to.Column > from.Column ? Direction.East : Direction.West;
     }
 
     /// <summary>

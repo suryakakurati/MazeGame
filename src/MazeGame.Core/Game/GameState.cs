@@ -50,7 +50,12 @@ public sealed class GameState
     private const double VeilChannelSeconds = 0.6;
 
     /// <summary>How long a thrown lantern burns before it returns.</summary>
-    private const double LanternSeconds = 5.0;
+    /// <remarks>
+    /// Eight seconds rather than five: the throw is the kit's only way to move the light ahead of
+    /// the player, and a window shorter than a sprint across a room made it a flicker rather than
+    /// a tool. The lantern is still consumed by walking onto it, reaching it, or the clock.
+    /// </remarks>
+    private const double LanternSeconds = 8.0;
 
     /// <summary>How often Regrowth seals a dead end.</summary>
     private const double RegrowthIntervalSeconds = 18.0;
@@ -88,6 +93,27 @@ public sealed class GameState
 
     /// <summary>How many steps of cave a glowing wisp lights up around itself.</summary>
     private const int LureGlowRadius = 1;
+
+    /// <summary>
+    /// How far a hunter can know the player's exact cell, in steps.
+    /// </summary>
+    /// <remarks>
+    /// The same six steps the shipped aura uses, so what the player can see of the hunter is what
+    /// the hunter can see of the player. Beyond it a hunter returns to where it last saw the
+    /// player and then wanders; it does not run a perfect shortest path to someone it cannot
+    /// sense through solid rock. Cards that widen the aura widen this with it.
+    /// </remarks>
+    private const int HunterPerceptionSteps = 6;
+
+    /// <summary>
+    /// How close the player must come before a secret room's entrance is lit for them.
+    /// </summary>
+    /// <remarks>
+    /// A room is a single doorway in a 3x3 block of rock, which on a dark floor was effectively
+    /// invisible until stepped through. Three steps is close enough that a player exploring the
+    /// corridor can see the seam, and far enough that it is still a find rather than a map marker.
+    /// </remarks>
+    private const int SafeRoomClueDistance = 3;
 
     /// <summary>
     /// How far the Echo's own light spills around it. Its pool is drawn a ring further out than
@@ -162,6 +188,10 @@ public sealed class GameState
 
     // The Cartographer's map, in seconds left. Zero means the torch is the only light.
     private double _mapRevealSecondsLeft;
+
+    // The bloom glow a card grants after a catch, in seconds left. Zero on every floor without
+    // the card and after the glow has faded.
+    private double _bloomGlowSecondsLeft;
 
     // Floor-rule state. Every one of these is inert unless the floor's rule reads it, which is
     // what keeps the rule tests' feel identical on a floor without one.
@@ -805,6 +835,17 @@ public sealed class GameState
     public bool IsInSafeRoom => _safeRoom is not null && _safeRoom.Contains(_player);
 
     /// <summary>
+    /// Gets a value indicating whether the safe room's entrance is lit for the player right now.
+    /// </summary>
+    /// <remarks>
+    /// The entrance is revealed within <see cref="SafeRoomClueDistance"/> steps, even on a floor
+    /// with no torch, so a door in the rock is a find rather than a guess. A renderer uses this to
+    /// draw the threshold; the rule itself only decides that the door is visible.
+    /// </remarks>
+    public bool IsSafeRoomDoorInSight =>
+        _safeRoom is { } room && _visible.Contains(room.Door);
+
+    /// <summary>
     /// Gets the cell the floor's Echo stands on, or <see langword="null"/> when the floor has
     /// none.
     /// </summary>
@@ -1079,6 +1120,19 @@ public sealed class GameState
     public int MaxHearts => _maxHearts;
 
     /// <summary>
+    /// Gets a value indicating whether the blooms are still glowing from the last catch.
+    /// </summary>
+    /// <remarks>
+    /// The glow is granted by a card and lasts <see cref="GameConfig.BloomGlowSeconds"/>; while it
+    /// holds, every bloom within <see cref="GameConfig.BloomGlowRadius"/> steps is visible, so the
+    /// renderer only has to brighten a flower the rules have already revealed.
+    /// </remarks>
+    public bool IsBloomGlowActive => _bloomGlowSecondsLeft > 0;
+
+    /// <summary>Gets how long the blooms will keep glowing, in seconds.</summary>
+    public double BloomGlowSecondsRemaining => _bloomGlowSecondsLeft;
+
+    /// <summary>
     /// Gets a value indicating whether the whole floor's map is revealed right now.
     /// </summary>
     /// <remarks>
@@ -1116,14 +1170,32 @@ public sealed class GameState
     /// Internal because only <see cref="Campaign"/> prices anything in hearts: a safe room may never
     /// be the thing that kills the player, so the last heart is not a currency.
     /// </remarks>
-    internal bool TrySpendHeart()
+    internal bool TrySpendHeart() => TrySpendHearts(1);
+
+    /// <summary>
+    /// Spends <paramref name="count"/> hearts on the run's behalf, refusing to take the last one.
+    /// </summary>
+    /// <param name="count">How many hearts the choice costs. Must be at least one.</param>
+    /// <returns><see langword="true"/> when every heart was spent.</returns>
+    /// <remarks>
+    /// The whole price is refused when the run cannot cover it: a reroll that spent two of three
+    /// hearts and then failed would be a charge for nothing.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="count"/> is
+    /// zero or negative.</exception>
+    internal bool TrySpendHearts(int count)
     {
-        if (_hearts <= 1)
+        if (count < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), count, "A price is at least one heart.");
+        }
+
+        if (_hearts - count < 1)
         {
             return false;
         }
 
-        _hearts--;
+        _hearts -= count;
         return true;
     }
 
@@ -1431,6 +1503,30 @@ public sealed class GameState
     public void SetSprinting(bool sprinting) => _sprintRequested = sprinting;
 
     /// <summary>
+    /// Gets a value indicating whether any hunter currently knows the player's exact cell.
+    /// </summary>
+    /// <remarks>
+    /// A hunter only knows where the player is inside the aura; outside it, it runs to the cell
+    /// it last saw them on and then searches. The property is the rule the route uses, exposed so
+    /// a HUD or a test can read it without guessing from movement.
+    /// </remarks>
+    public bool IsPlayerSensed
+    {
+        get
+        {
+            foreach (var hunter in _hunters)
+            {
+                if (hunter.KnownPlayer is { } known && SameCell(known, _player))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Gets the cells that are visible only because the killer is lighting them.
     /// </summary>
     /// <remarks>
@@ -1601,7 +1697,11 @@ public sealed class GameState
 
         // The Listener turns the hunt into a turn-based exchange: every player step is the only
         // thing that winds the hunters forward. Sprinting is loud enough to be worth two.
-        if (HasCondition(DescentCondition.Listener))
+        //
+        // Walking inside the safe room is exempt. The room's promise is that nothing outside it
+        // moves while the player is in it, and a turn-based hunt that ticks on room steps broke
+        // exactly that promise while looking like the room was safe.
+        if (HasCondition(DescentCondition.Listener) && !IsInSafeRoom)
         {
             CreditListenerStep(sprinting);
         }
@@ -1926,14 +2026,14 @@ public sealed class GameState
     }
 
     /// <summary>
-    /// Throws the lantern up to four cells ahead and lets the hunters follow it.
+    /// Throws the lantern up to five cells ahead and lets the hunters follow it.
     /// </summary>
     /// <returns><see langword="true"/> when the lantern left the player's hand.</returns>
     /// <remarks>
     /// While it burns, <see cref="LightOrigin"/> is the lantern and the player's own cell is dark.
     /// Walking onto it, waiting it out, or a hunter reaching it ends the effect. The throw stops at
-    /// the first wall and refuses a cell a hunter already stands on, so a charge is never wasted on
-    /// a lantern that is consumed immediately.
+    /// the first wall and just short of a hunter, so a charge is never wasted on a lantern that is
+    /// consumed immediately. A hunter standing next to the player blocks the throw entirely.
     /// </remarks>
     public bool TryThrowLantern()
     {
@@ -1962,10 +2062,20 @@ public sealed class GameState
                 break;
             }
 
-            cell = _maze.GetCell(row, column);
+            var next = _maze.GetCell(row, column);
+
+            // A hunter in the way blocks the throw at the cell before it. Landing on the hunter
+            // would consume the lantern instantly on a longer throw, which is not a tool the
+            // player paid a charge for.
+            if (HunterAt(next) is not null)
+            {
+                break;
+            }
+
+            cell = next;
         }
 
-        if (cell == _player || HunterAt(cell) is not null)
+        if (cell == _player)
         {
             return false;
         }
@@ -1980,12 +2090,24 @@ public sealed class GameState
     }
 
     /// <summary>
-    /// Shoves the hunter in the cell the player faces two cells back and stuns it.
+    /// Shoves any adjacent hunter two cells back and stuns it.
     /// </summary>
     /// <returns><see langword="true"/> when a hunter was moved.</returns>
     /// <remarks>
+    /// <para>
+    /// The shove reads the player's four neighbours rather than only the cell they face. Requiring
+    /// a turn first made the verb unusable in the moment it exists for: a hunter arrives from the
+    /// side, and the player has to spend a step — often into the hunter — to face it.
+    /// </para>
+    /// <para>
+    /// The hunter is pushed directly away from the player, whichever side it came from. The
+    /// facing direction is preferred when two hunters are adjacent, so a deliberate shove still
+    /// picks the one the player is looking at.
+    /// </para>
+    /// <para>
     /// The shove is loud: every other hunter is given its next step immediately. That is the price
     /// of the only melee answer in the kit, and it keeps a shove from being a free reset.
+    /// </para>
     /// </remarks>
     public bool TryShove()
     {
@@ -1995,20 +2117,13 @@ public sealed class GameState
             return false;
         }
 
-        var (rowDelta, columnDelta) = _facing.Delta();
-
-        if (_maze.HasWall(_player.Row, _player.Column, _facing))
+        if (!TryFindAdjacentHunter(out var hunter, out var pushDirection))
         {
             return false;
         }
 
-        var target = _maze.GetCell(_player.Row + rowDelta, _player.Column + columnDelta);
-        var hunter = HunterAt(target);
-
-        if (hunter is null)
-        {
-            return false;
-        }
+        var (rowDelta, columnDelta) = pushDirection.Delta();
+        var target = hunter.Cell;
 
         _powerupsRemaining = _powerupsRemaining.Adjust(PowerupKind.Shove, -1);
 
@@ -2017,7 +2132,7 @@ public sealed class GameState
 
         for (var pushed = 0; pushed < ShovePushCells; pushed++)
         {
-            if (_maze.HasWall(landing.Row, landing.Column, _facing))
+            if (_maze.HasWall(landing.Row, landing.Column, pushDirection))
             {
                 break;
             }
@@ -2061,6 +2176,73 @@ public sealed class GameState
         InvalidateEnemyRoute();
         RecomputeVisibility();
         Raise(GameEvent.Shoved);
+        return true;
+    }
+
+    /// <summary>
+    /// Finds a hunter standing next to the player and the direction that pushes it away.
+    /// </summary>
+    /// <param name="hunter">The hunter that will be shoved.</param>
+    /// <param name="pushDirection">The direction from the player towards that hunter.</param>
+    /// <returns><see langword="true"/> when a neighbouring hunter was found.</returns>
+    /// <remarks>
+    /// The faced direction wins a tie, so the verb still answers the player's intent when they did
+    /// turn. The remaining directions are scanned in a fixed order so a shove is reproducible.
+    /// </remarks>
+    private bool TryFindAdjacentHunter(out Hunter hunter, out Direction pushDirection)
+    {
+        // The faced direction first: it is the only one the player expressed a preference for.
+        if (TryHunterInDirection(_facing, out hunter))
+        {
+            pushDirection = _facing;
+            return true;
+        }
+
+        foreach (var direction in NeighbourDirections)
+        {
+            if (direction == _facing || !TryHunterInDirection(direction, out hunter))
+            {
+                continue;
+            }
+
+            pushDirection = direction;
+            return true;
+        }
+
+        hunter = null!;
+        pushDirection = Direction.North;
+        return false;
+    }
+
+    /// <summary>Returns whether a hunter stands one open step from the player.</summary>
+    /// <param name="direction">The direction to look in.</param>
+    /// <param name="hunter">The hunter there, when one was found.</param>
+    /// <returns><see langword="true"/> when the cell holds a hunter.</returns>
+    private bool TryHunterInDirection(Direction direction, out Hunter hunter)
+    {
+        hunter = null!;
+
+        if (_maze.HasWall(_player.Row, _player.Column, direction))
+        {
+            return false;
+        }
+
+        var (rowDelta, columnDelta) = direction.Delta();
+        var row = _player.Row + rowDelta;
+        var column = _player.Column + columnDelta;
+
+        if (row < 0 || row >= _maze.Rows || column < 0 || column >= _maze.Columns ||
+            _maze.IsSolid(row, column))
+        {
+            return false;
+        }
+
+        if (HunterAt(_maze.GetCell(row, column)) is not { } found)
+        {
+            return false;
+        }
+
+        hunter = found;
         return true;
     }
 
@@ -2630,6 +2812,16 @@ public sealed class GameState
             }
         }
 
+        if (_bloomGlowSecondsLeft > 0)
+        {
+            _bloomGlowSecondsLeft = Math.Max(0, _bloomGlowSecondsLeft - deltaSeconds);
+
+            if (_bloomGlowSecondsLeft <= 0)
+            {
+                RecomputeVisibility();
+            }
+        }
+
         if (_threadGateCooldown > 0)
         {
             _threadGateCooldown = Math.Max(0, _threadGateCooldown - deltaSeconds);
@@ -2968,6 +3160,19 @@ public sealed class GameState
     }
 
     /// <summary>
+    /// Starts the card-granted bloom glow, if this floor has one.
+    /// </summary>
+    private void StartBloomGlow()
+    {
+        if (_config.BloomGlowRadius <= 0 || !(_config.BloomGlowSeconds > 0))
+        {
+            return;
+        }
+
+        _bloomGlowSecondsLeft = _config.BloomGlowSeconds;
+    }
+
+    /// <summary>
     /// Spends one heart on a catch and resets the chase, or ends the run when that was the last
     /// heart.
     /// </summary>
@@ -3004,6 +3209,10 @@ public sealed class GameState
         else
         {
             _hearts -= _config.CatchCost;
+
+            // Damage wakes the flowers: a card makes every bloom within its reach glow for a
+            // moment, so a mistake still tells the player where the nearest one is.
+            StartBloomGlow();
 
             // Bloom turns the fatal catch into a heart, once per floor. The chase still resets
             // below, so it is a fresh attempt rather than a reprieve in place.
@@ -3173,6 +3382,12 @@ public sealed class GameState
     /// </summary>
     /// <remarks>
     /// <para>
+    /// A hunter only knows the player's exact cell inside the aura. Outside it, it walks to the
+    /// last cell it saw the player on and then wanders a step at a time. Before this, every hunter
+    /// ran a perfect shortest path from any distance, which made the aura an ornament: the player
+    /// could see nothing, and the hunt still came straight to them through the rock.
+    /// </para>
+    /// <para>
     /// The target is chosen by the same Dijkstra search that does the walking: the killer runs
     /// to the player, and to the wisp as well when one is glowing, and follows whichever route
     /// is genuinely cheaper by the current costs. That is why a wisp thrown into a side branch
@@ -3186,16 +3401,27 @@ public sealed class GameState
     /// </remarks>
     private IReadOnlyList<Cell> EnemyRouteToTarget(Hunter hunter)
     {
-        if (hunter.Route is not null)
+        RefreshHunterSenses(hunter);
+
+        // A route with steps left is still valid; an exhausted one is rebuilt, which is how a
+        // wandering hunter keeps moving instead of stopping at the end of its last step.
+        if (hunter.Route is not null && hunter.NextStep < hunter.Route.Count)
         {
+            return hunter.Route;
+        }
+
+        // Nothing to chase: no lantern, and the player is outside the aura and not remembered.
+        if (_lantern is null && hunter.KnownPlayer is null)
+        {
+            hunter.Route = WanderRoute(hunter);
+            hunter.NextStep = 1;
             return hunter.Route;
         }
 
         // While the lantern burns, it is the target: the hunters see the light, not the player.
         // A veil freezes the target at the cell they last saw, so the player can step away while
         // the hunt searches the room they left.
-        var destination = _lantern
-            ?? (IsVeiled ? hunter.KnownPlayer ?? _player : _player);
+        var destination = _lantern ?? hunter.KnownPlayer ?? _player;
 
         var toPlayer = _pathfinder.FindPath(_maze, hunter.Cell, destination, cell => CostOfEnteringFor(hunter, cell));
         hunter.Route = toPlayer;
@@ -3215,6 +3441,115 @@ public sealed class GameState
 
         hunter.NextStep = 1;
         return hunter.Route;
+    }
+
+    /// <summary>
+    /// Updates what <paramref name="hunter"/> knows about the player's cell.
+    /// </summary>
+    /// <param name="hunter">The hunter whose senses are being read.</param>
+    /// <remarks>
+    /// <para>
+    /// The hunter sees the player within <see cref="HunterPerceptionSteps"/>, or within the floor's
+    /// own aura when a card has widened it. A veil is the exception: it is exactly the window in
+    /// which the player is not observed, so it freezes the remembered cell instead of refreshing
+    /// it.
+    /// </para>
+    /// <para>
+    /// When a hunter reaches the cell it last saw the player on and the player is not there, the
+    /// memory is cleared and it falls back to wandering.
+    /// </para>
+    /// </remarks>
+    private void RefreshHunterSenses(Hunter hunter)
+    {
+        if (IsVeiled)
+        {
+            return;
+        }
+
+        var radius = Math.Max(HunterPerceptionSteps, _config.EnemyAuraDistance);
+        var inAura = DistancesFrom(_maze, hunter.Cell, radius).ContainsKey(_player);
+
+        if (inAura)
+        {
+            if (hunter.KnownPlayer is not { } known || !SameCell(known, _player))
+            {
+                hunter.KnownPlayer = _player;
+                hunter.Route = null;
+                hunter.NextStep = 0;
+            }
+
+            return;
+        }
+
+        if (hunter.KnownPlayer is { } remembered && SameCell(hunter.Cell, remembered))
+        {
+            hunter.KnownPlayer = null;
+            hunter.Route = null;
+            hunter.NextStep = 0;
+        }
+    }
+
+    /// <summary>
+    /// Chooses one random open step for a hunter that has lost the player.
+    /// </summary>
+    /// <param name="hunter">The hunter searching.</param>
+    /// <returns>A two-cell route from its cell to the chosen neighbour, or its cell alone.</returns>
+    /// <remarks>
+    /// A wander is one step at a time rather than a patrol path: it keeps the floor moving without
+    /// handing an out-of-sight hunter a map of the player's route. The step is drawn from the
+    /// injected <see cref="IRandom"/>, so a seeded run searches the same way twice.
+    /// </remarks>
+    private IReadOnlyList<Cell> WanderRoute(Hunter hunter)
+    {
+        var open = new List<Cell>(NeighbourDirections.Length);
+        var forward = new List<Cell>(NeighbourDirections.Length);
+
+        foreach (var direction in NeighbourDirections)
+        {
+            if (_maze.HasWall(hunter.Cell.Row, hunter.Cell.Column, direction))
+            {
+                continue;
+            }
+
+            var (rowDelta, columnDelta) = direction.Delta();
+            var row = hunter.Cell.Row + rowDelta;
+            var column = hunter.Cell.Column + columnDelta;
+
+            if (row < 0 || row >= _maze.Rows || column < 0 || column >= _maze.Columns ||
+                _maze.IsSolid(row, column))
+            {
+                continue;
+            }
+
+            var cell = _maze.GetCell(row, column);
+
+            // A wandering hunter must not wander into the safe room either: the room is a
+            // sanctuary, and a searcher that happens to drift through it breaks that.
+            if (HunterAt(cell) is not null ||
+                (_safeRoom is { } room && room.Contains(cell)))
+            {
+                continue;
+            }
+
+            open.Add(cell);
+
+            // Do not immediately walk back the way it came unless that is the only way out: an
+            // unbiased random walk sits at a junction forever, which reads as a broken hunter.
+            if (!SameCell(cell, hunter.From))
+            {
+                forward.Add(cell);
+            }
+        }
+
+        // A dead end has no forward option, so turning around is the step that is left.
+        var options = forward.Count > 0 ? forward : open;
+
+        if (options.Count == 0)
+        {
+            return [hunter.Cell];
+        }
+
+        return [hunter.Cell, options[_random.NextInt(options.Count)]];
     }
 
     /// <summary>
@@ -3286,6 +3621,14 @@ public sealed class GameState
                 _visible.Add(cell);
             }
         }
+        else if (_safeRoom is { } hiddenRoom &&
+                 DistancesFrom(_maze, _player, SafeRoomClueDistance).ContainsKey(hiddenRoom.Door))
+        {
+            // The entrance is the room's one tell: lit from a few steps away so the corridor ends
+            // in a seam the player can choose to follow, not in unbroken rock.
+            _visible.Add(hiddenRoom.Door);
+            _visible.Add(hiddenRoom.Doorway);
+        }
 
         // A burning wisp, an Eclipse or a veil can shrink the torch, so read the radius in force
         // rather than the floor's own number. The light comes from the lantern when it is thrown.
@@ -3311,6 +3654,20 @@ public sealed class GameState
         foreach (var cell in CellsWithin(origin, NearSightRadius))
         {
             _visible.Add(cell);
+        }
+
+        // A catch with the right card wakes the flowers: every bloom inside the glow's reach is
+        // visible for a couple of seconds, walls or no walls. It is a scent rather than sight, so
+        // the bloom is revealed without revealing the corridor around it.
+        if (_bloomGlowSecondsLeft > 0 && _config.BloomGlowRadius > 0)
+        {
+            foreach (var cell in DistancesFrom(_maze, _player, _config.BloomGlowRadius).Keys)
+            {
+                if (_keys.Contains(cell))
+                {
+                    _visible.Add(cell);
+                }
+            }
         }
 
         // A wisp is a beacon the player placed, so its own pool of light is visible even where
@@ -3467,6 +3824,16 @@ public sealed class GameState
     private const int HunterStackCost = 4;
 
     /// <summary>
+    /// How many normal steps a hunter will walk rather than set foot in the safe room.
+    /// </summary>
+    /// <remarks>
+    /// The room is a dead end behind one door, so no route to the player ever needs to cross it:
+    /// a large finite price keeps it out of every chase without making the cell genuinely
+    /// impassable (which would risk a route the pathfinder cannot build at all).
+    /// </remarks>
+    private const int SafeRoomEnterCost = 500;
+
+    /// <summary>
     /// The cost for <paramref name="hunter"/> to enter <paramref name="cell"/>: the normal price,
     /// plus a surcharge for a cell another hunter is standing on.
     /// </summary>
@@ -3493,6 +3860,11 @@ public sealed class GameState
     /// </remarks>
     private int CostOfEntering(Cell cell)
     {
+        if (_safeRoom is { } room && room.Contains(cell))
+        {
+            return SafeRoomEnterCost;
+        }
+
         if (_barrierSeals.ContainsKey(cell))
         {
             return _config.SealedBarrierCost;

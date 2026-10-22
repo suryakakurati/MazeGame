@@ -72,6 +72,13 @@ public sealed record CardEffect
     /// <summary>Gets the change to how many keys each floor from now on demands.</summary>
     public int KeyCount { get; init; }
 
+    /// <summary>
+    /// Gets the change to the radius, in steps, that blooms glow from after a hunter's catch.
+    /// Zero (the default) leaves the flowers dark; one copy lights the neighbouring cells for
+    /// two seconds, and every further copy widens the glow by another step.
+    /// </summary>
+    public int BloomGlowRadius { get; init; }
+
     /// <summary>Gets the change to the wisps available on each floor.</summary>
     public int LureCount { get; init; }
 
@@ -152,6 +159,18 @@ public sealed record CardEffect
     /// player something, rather than being a free extra choice.
     /// </summary>
     public int FollowingDraftOfferBonus { get; init; }
+
+    /// <summary>
+    /// Gets the change to the chance that a floor holds a secret room, in whole percentage points.
+    /// The base rate is ten percent, so a single copy of a room card doubles the run's rooms.
+    /// </summary>
+    public int RoomChancePercent { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the next floor is promised a casino room, and whether that
+    /// visit's table pays the favoured odds once before returning to the house's usual price.
+    /// </summary>
+    public bool GuaranteedCasino { get; init; }
 
     /// <summary>
     /// Gets a value indicating whether this effect changes what the player can see, directly or

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using MazeGame.Core.Game;
 using Raylib_cs;
 
@@ -82,8 +83,11 @@ public static class PixelCards
         var menuScale = Math.Clamp(width / 260, 2, 4);
         var menuY = Math.Max(ruleY + 58, (int)(height * 0.54f));
 
+        var rowStep = (menuScale * 10) + 14;
+
         DrawMenuItem(font, "DESCEND", centreX, menuY, selectedItem == 0, time, menuScale);
-        DrawMenuItem(font, "LEAVE", centreX, menuY + menuScale * 10 + 14, selectedItem == 1, time, menuScale);
+        DrawMenuItem(font, "TUTORIAL", centreX, menuY + rowStep, selectedItem == 1, time, menuScale);
+        DrawMenuItem(font, "LEAVE", centreX, menuY + (rowStep * 2), selectedItem == 2, time, menuScale);
 
         font.DrawCentered(
             "W/S OR ARROWS: SELECT   ENTER: CONFIRM   ESC: LEAVE",
@@ -177,9 +181,11 @@ public static class PixelCards
             DrawDraftCard(font, offers[index], index + 1, left, cardTop, cardWidth, cardHeight, index == selected, accent);
         }
 
+        // The reroll key gets its own line below, with its price on it: a prompt that named R
+        // here as well would be the width of the window, and the key would be the part cut off.
         var prompt = offers.Count == 1
-            ? "ENTER: TAKE   S: SKIP FOR A HEART"
-            : "A / D: CHOOSE   ENTER: TAKE   S: SKIP FOR A HEART";
+            ? "ENTER: TAKE   S: SKIP"
+            : "A / D: CHOOSE   ENTER: TAKE   S: SKIP";
         var promptScale = width >= 700 ? 2 : 1;
 
         font.DrawCentered(Fit(prompt, promptScale, width - 24), centreX, height - 56, promptScale, Text);
@@ -189,6 +195,22 @@ public static class PixelCards
             height - 30,
             1,
             Dim);
+
+        // The reroll price is part of the card: the first one costs a heart, and the second one
+        // costs two, so the player can see the ladder before pressing the key.
+        var rerollCost = campaign.DraftRerollCost;
+        var rerollColour = campaign.CanRerollDraft ? Glow : Fade(Dim, 0.55);
+        font.DrawCentered(
+            Fit(
+                campaign.CanRerollDraft
+                    ? FormattableString.Invariant($"R: REROLL FOR {rerollCost} {HeartWord(rerollCost).ToUpperInvariant()}")
+                    : "R: NOT ENOUGH HEARTS TO REROLL",
+                1,
+                width - 24),
+            centreX,
+            height - 16,
+            1,
+            rerollColour);
     }
 
     /// <summary>
@@ -301,8 +323,21 @@ public static class PixelCards
 
         font.DrawCentered(Fit(room.Price, 2, width - 48), centreX, y + 6, 2, Dim);
 
+        // The casino's wheel turns while the card is open: the table is the one room whose whole
+        // promise is a spin, so it is shown rather than described.
+        var wheelBottom = y + 44;
+
+        if (room.Kind == RoomKind.LongTable)
+        {
+            const int radius = 46;
+            DrawRoulette(centreX, y + 22 + radius, radius, Raylib.GetTime(), room.IsResolved);
+            wheelBottom = y + 22 + (radius * 2) + 12;
+        }
+
         var rowHeight = 46;
-        var listTop = Math.Max(y + 44, height / 2 - ((options.Count * rowHeight) / 2));
+        var listTop = Math.Max(
+            wheelBottom,
+            Math.Max(y + 44, height / 2 - ((options.Count * rowHeight) / 2)));
         var rowWidth = Math.Min(width - 96, 520);
         var left = centreX - (rowWidth / 2);
 
@@ -338,6 +373,37 @@ public static class PixelCards
             if (options[index].Note is { } note)
             {
                 font.DrawCentered(Fit(note, 1, rowWidth - 24), centreX, top + 24, 1, isSelected ? Glow : Dim);
+            }
+        }
+
+        // A shop's card face under the list. A name and a price is not enough to spend a heart on:
+        // the player has not memorised the catalog, and the draft's own cards are the reference.
+        if (selected >= 0 && options[selected].Preview is { Length: > 0 } preview)
+        {
+            var previewWidth = Math.Min(width - 72, 660);
+            var previewLines = Wrap(preview, 1, previewWidth);
+            var previewTop = listTop + (options.Count * rowHeight) + 6;
+            var maxLines = Math.Max(0, (height - 96 - previewTop) / (PixelFont.LineHeight + 3));
+
+            if (maxLines > 0)
+            {
+                font.DrawCentered("CARD PREVIEW", centreX, previewTop, 1, Dim);
+
+                var lineY = previewTop + PixelFont.LineHeight + 3;
+                var shown = Math.Min(previewLines.Count, maxLines);
+
+                for (var index = 0; index < shown; index++)
+                {
+                    var line = previewLines[index];
+
+                    if (index == shown - 1 && previewLines.Count > shown)
+                    {
+                        line = Fit($"{line.TrimEnd('.', ' ')}...", 1, previewWidth);
+                    }
+
+                    font.DrawCentered(line, centreX, lineY, 1, Text);
+                    lineY += PixelFont.LineHeight + 3;
+                }
             }
         }
 
@@ -786,6 +852,196 @@ public static class PixelCards
     }
 
     /// <summary>
+    /// Draws the pause menu over a frozen floor: continue, or leave the run.
+    /// </summary>
+    /// <param name="font">The loaded font.</param>
+    /// <param name="selectedItem">The highlighted entry (0 = continue, 1 = quit run).</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="font"/> is null.</exception>
+    /// <remarks>
+    /// The world is still drawn underneath, dimmed rather than replaced: the pause is a hold on
+    /// this floor, not another screen, so the player can see where they left off.
+    /// </remarks>
+    public static void Pause(PixelFont font, int selectedItem)
+    {
+        ArgumentNullException.ThrowIfNull(font);
+
+        var width = Raylib.GetScreenWidth();
+        var height = Raylib.GetScreenHeight();
+        var centreX = width / 2;
+        var panelWidth = Math.Min(width - 64, 420);
+        var panelHeight = 272;
+        var left = centreX - (panelWidth / 2);
+        var top = (height / 2) - (panelHeight / 2);
+        var time = Raylib.GetTime();
+
+        Raylib.DrawRectangle(0, 0, width, height, new Color(2, 7, 9, 196));
+        Raylib.DrawRectangle(left + 7, top + 7, panelWidth, panelHeight, new Color(0, 0, 0, 130));
+        Raylib.DrawRectangle(left, top, panelWidth, panelHeight, new Color(4, 11, 13, 250));
+        Frame(left, top, panelWidth, panelHeight, Fade(Glow, 0.55));
+        Frame(left + 4, top + 4, panelWidth - 8, panelHeight - 8, Fade(Glow, 0.18));
+        Raylib.DrawRectangle(left, top, panelWidth, 2, Fade(Glow, 0.9));
+
+        font.DrawCentered("PAUSED", centreX, top + 26, 3, Glow);
+        font.DrawCentered("THE DARK WAITS", centreX, top + 66, 1, Dim);
+
+        DrawMenuItem(font, "CONTINUE", centreX, top + 104, selectedItem == 0, time, 3);
+        DrawMenuItem(font, "QUIT RUN", centreX, top + 152, selectedItem == 1, time, 3);
+
+        Rule(centreX, top + panelHeight - 62, Glow);
+        font.DrawCentered(
+            Fit("W/S: SELECT   ENTER: CONFIRM   ESC: RESUME", 1, panelWidth - 24),
+            centreX,
+            top + panelHeight - 46,
+            1,
+            Text);
+    }
+
+    /// <summary>
+    /// Draws one page of the guided tutorial.
+    /// </summary>
+    /// <param name="font">The loaded font.</param>
+    /// <param name="pageIndex">The page to draw, clamped into the tutorial.</param>
+    /// <param name="accent">The accent colour for the page's rule and key line.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="font"/> is null.</exception>
+    /// <remarks>
+    /// The tutorial is a book, not a simulation: each page states one idea, then names the exact
+    /// key that does it. The dots at the foot are the page count, so a player always knows how
+    /// much explaining is left before they can descend.
+    /// </remarks>
+    public static void DrawTutorial(PixelFont font, int pageIndex, Color accent)
+    {
+        ArgumentNullException.ThrowIfNull(font);
+
+        var page = Tutorial.Page(pageIndex);
+        var pageNumber = Math.Clamp(pageIndex, 0, Tutorial.PageCount - 1);
+        var width = Raylib.GetScreenWidth();
+        var height = Raylib.GetScreenHeight();
+        var centreX = width / 2;
+
+        Begin(width, height);
+
+        font.DrawCentered(page.Caption, centreX, 32, 1, Glow);
+        Heading(font, page.Title, centreX, 52, width - 72, accent);
+        Rule(centreX, 94, accent);
+
+        var lineScale = width >= 680 ? 2 : 1;
+        var lineHeight = (PixelFont.LineHeight * lineScale) + 12;
+        var y = 118;
+
+        foreach (var line in page.Lines)
+        {
+            foreach (var row in Wrap(line, lineScale, width - 96))
+            {
+                font.DrawCentered(row, centreX, y, lineScale, Text);
+                y += lineHeight;
+            }
+
+            y += 10;
+        }
+
+        if (page.Keys.Length > 0)
+        {
+            var keysY = Math.Max(y + 8, height - 142);
+
+            Raylib.DrawRectangle(
+                centreX - Math.Min(width - 80, 340),
+                keysY - 10,
+                Math.Min(width - 80, 340) * 2,
+                2,
+                Fade(accent, 0.5));
+
+            foreach (var row in Wrap(page.Keys, 1, width - 80))
+            {
+                font.DrawCentered(row, centreX, keysY, 1, accent);
+                keysY += PixelFont.LineHeight + 4;
+            }
+        }
+
+        // The page dots: one small mark per page, the current one bright.
+        var dots = Tutorial.PageCount;
+        const int DotsGap = 10;
+        var dotsWidth = (dots * DotsGap) - (DotsGap - 4);
+        var dotX = centreX - (dotsWidth / 2);
+        var dotY = height - 84;
+
+        for (var index = 0; index < dots; index++)
+        {
+            Raylib.DrawRectangle(
+                dotX + (index * DotsGap),
+                dotY,
+                4,
+                4,
+                index == pageNumber ? accent : Fade(Dim, 0.45));
+        }
+
+        font.DrawCentered(
+            FormattableString.Invariant($"PAGE {pageNumber + 1} OF {Tutorial.PageCount}"),
+            centreX,
+            height - 66,
+            1,
+            Dim);
+
+        var promptScale = width >= 700 ? 2 : 1;
+        font.DrawCentered(
+            Fit("ENTER: NEXT   A / D: PAGE   ESC: BACK TO THE TITLE", promptScale, width - 24),
+            centreX,
+            height - 44,
+            promptScale,
+            Text);
+    }
+
+    /// <summary>
+    /// Draws the casino's roulette wheel, turning on the clock.
+    /// </summary>
+    /// <param name="centreX">The wheel's centre column.</param>
+    /// <param name="centreY">The wheel's centre row.</param>
+    /// <param name="radius">The wheel's outer radius in pixels.</param>
+    /// <param name="time">Current time in seconds, which drives the spin.</param>
+    /// <param name="resolved">Whether the card has been played, which slows the wheel to a stop.</param>
+    /// <remarks>
+    /// Twelve pockets in the house's two colours, a gold rim, and one pale ball running the other
+    /// way. It is drawn from primitives so it costs nothing to compile and cannot drift from the
+    /// card's palette.
+    /// </remarks>
+    private static void DrawRoulette(int centreX, int centreY, int radius, double time, bool resolved)
+    {
+        const int pockets = 12;
+        const float pocketWidth = 360f / pockets;
+        var spin = resolved ? time * 12.0 : time * 42.0;
+        var centre = new Vector2(centreX, centreY);
+
+        Raylib.DrawCircle(centreX, centreY, radius + 3, new Color(232, 198, 120, 235));
+
+        for (var index = 0; index < pockets; index++)
+        {
+            var start = (float)(spin + (index * pocketWidth));
+            var colour = (index % 2) == 0
+                ? new Color(18, 26, 32, 255)
+                : new Color(150, 52, 58, 255);
+
+            Raylib.DrawCircleSector(centre, radius, start, start + pocketWidth - 1.5f, 8, colour);
+        }
+
+        Raylib.DrawCircle(centreX, centreY, radius * 0.30f, new Color(232, 198, 120, 255));
+        Raylib.DrawCircle(centreX, centreY, (radius * 0.30f) - 2, new Color(24, 20, 16, 255));
+
+        // The ball runs against the wheel, as a ball does.
+        var ballAngle = -(time * (resolved ? 0.7 : 2.4));
+        var ballRadius = radius * 0.74f;
+        var ballX = centreX + (Math.Cos(ballAngle) * ballRadius);
+        var ballY = centreY + (Math.Sin(ballAngle) * ballRadius);
+
+        Raylib.DrawCircle((int)ballX, (int)ballY, 3.5f, new Color(250, 246, 226, 255));
+
+        // The pointer at the top: wound left, point, right, which is the way Raylib keeps it.
+        Raylib.DrawTriangle(
+            new Vector2(centreX - 7, centreY - radius - 9),
+            new Vector2(centreX, centreY - radius + 3),
+            new Vector2(centreX + 7, centreY - radius - 9),
+            new Color(250, 232, 178, 255));
+    }
+
+    /// <summary>
     /// Draws a heading at the largest integer scale that fits the card.
     /// </summary>
     /// <param name="font">The loaded font.</param>
@@ -1150,6 +1406,7 @@ public static class PixelCards
         CardTier.Common => "COMMON",
         CardTier.Uncommon => "UNCOMMON",
         CardTier.Rare => "RARE",
+        CardTier.SuperRare => "SUPER RARE",
         _ => "CURSE",
     };
 
@@ -1160,6 +1417,7 @@ public static class PixelCards
         CardTier.Common => Text,
         CardTier.Uncommon => new Color(140, 236, 168, 255),
         CardTier.Rare => new Color(248, 152, 224, 255),
+        CardTier.SuperRare => new Color(255, 214, 120, 255),
         _ => Danger,
     };
 

@@ -29,9 +29,18 @@ namespace MazeGame.UI.Frontends;
 internal static class RaylibFrontend
 {
     /// <summary>Menu entries on the title screen.</summary>
-    private const int MenuItemCount = 2;
+    private const int MenuItemCount = 3;
 
     private const int DescendItem = 0;
+
+    private const int TutorialItem = 1;
+
+    private const int LeaveItem = 2;
+
+    /// <summary>The pause menu's two entries.</summary>
+    private const int PauseContinueItem = 0;
+
+    private const int PauseQuitItem = 1;
 
     /// <summary>How long a floor intro card stays up before play begins.</summary>
     private const double IntroSeconds = 1.6;
@@ -129,6 +138,7 @@ internal static class RaylibFrontend
         var screen = Screen.Title;
         var selected = DescendItem;
         var introEndsAt = 0.0;
+        var tutorialPage = 0;
 
         // Walking is a tap or a hold, and the difference is what keeps one press worth one tile.
         // The rule itself is Core's, so it is tested without a window.
@@ -147,6 +157,45 @@ internal static class RaylibFrontend
                         case TitleChoice.Descend:
                             StartRun();
                             break;
+
+                        case TitleChoice.Tutorial:
+                            tutorialPage = 0;
+                            screen = Screen.Tutorial;
+                            break;
+                    }
+
+                    break;
+
+                case Screen.Tutorial:
+                    // A guided read, not a menu: each page is one idea, and the last one hands the
+                    // player back to the title so they can descend with the keys fresh.
+                    if (Pressed(KeyboardKey.Escape))
+                    {
+                        screen = Screen.Title;
+                        selected = TutorialItem;
+                    }
+                    else if (Pressed(KeyboardKey.A) || Pressed(KeyboardKey.Left) ||
+                             Pressed(KeyboardKey.W) || Pressed(KeyboardKey.Up))
+                    {
+                        tutorialPage = Math.Max(0, tutorialPage - 1);
+                    }
+                    else if (Pressed(KeyboardKey.D) || Pressed(KeyboardKey.Right) ||
+                             Pressed(KeyboardKey.S) || Pressed(KeyboardKey.Down))
+                    {
+                        tutorialPage = Math.Min(Tutorial.PageCount - 1, tutorialPage + 1);
+                    }
+                    else if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) ||
+                             Pressed(KeyboardKey.Space))
+                    {
+                        if (tutorialPage >= Tutorial.PageCount - 1)
+                        {
+                            screen = Screen.Title;
+                            selected = TutorialItem;
+                        }
+                        else
+                        {
+                            tutorialPage++;
+                        }
                     }
 
                     break;
@@ -161,6 +210,17 @@ internal static class RaylibFrontend
                     break;
 
                 case Screen.Play:
+                    // Escape is the pause key, not the quit key: the run only ends from a menu
+                    // the player chose. While aiming, Escape is still the aim's cancel.
+                    if (Pressed(KeyboardKey.Escape) && !campaign!.Floor.IsAiming)
+                    {
+                        screen = Screen.Paused;
+                        selected = PauseContinueItem;
+                        walk.Clear();
+                        campaign.Floor.SetSprinting(false);
+                        break;
+                    }
+
                     // Sprint is a hold, so it is sampled every frame; the state decides whether it
                     // is granted (stamina, aiming, a timed floor) rather than the input layer.
                     campaign!.Floor.SetSprinting(
@@ -207,6 +267,49 @@ internal static class RaylibFrontend
                     else if (campaign.IsFloorCleared)
                     {
                         screen = campaign.IsOnLastFloor ? Screen.RunComplete : Screen.FloorCleared;
+                    }
+
+                    break;
+
+                case Screen.Paused:
+                    // The floor is frozen because Tick is simply not called on this screen: a pause
+                    // that let the hunters keep walking would be a slower game, not a stop.
+                    if (Pressed(KeyboardKey.Escape))
+                    {
+                        screen = Screen.Play;
+                        selected = PauseContinueItem;
+                    }
+                    else if (Pressed(KeyboardKey.W) || Pressed(KeyboardKey.Up) ||
+                             Pressed(KeyboardKey.A) || Pressed(KeyboardKey.Left))
+                    {
+                        selected = PauseContinueItem;
+                    }
+                    else if (Pressed(KeyboardKey.S) || Pressed(KeyboardKey.Down) ||
+                             Pressed(KeyboardKey.D) || Pressed(KeyboardKey.Right))
+                    {
+                        selected = PauseQuitItem;
+                    }
+                    else if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) ||
+                             Pressed(KeyboardKey.Space))
+                    {
+                        if (selected == PauseQuitItem)
+                        {
+                            // Quitting the run returns to the title rather than closing the game:
+                            // the title's LEAVE is the only way out for good.
+                            campaign = null;
+                            audio?.StopMusic();
+
+                            // The window title named the floor the run was on; with no run, it
+                            // names the game again.
+                            Raylib.SetWindowTitle(RaylibLayout.Title);
+                            screen = Screen.Title;
+                            selected = DescendItem;
+                        }
+                        else
+                        {
+                            screen = Screen.Play;
+                            selected = PauseContinueItem;
+                        }
                     }
 
                     break;
@@ -266,6 +369,16 @@ internal static class RaylibFrontend
 
                 case Screen.Draft:
                     var previousSelection = selected;
+
+                    if (Pressed(KeyboardKey.R) && campaign!.CanRerollDraft)
+                    {
+                        // The price is Core's: the frontend only asks, and the campaign charges
+                        // the heart and draws the new table.
+                        campaign.TryRerollDraft();
+                        selected = 0;
+                        audio?.PlayCardHover();
+                        break;
+                    }
 
                     if (ReadDraftChoice(campaign!, ref selected, out var take, out var skip))
                     {
@@ -327,7 +440,7 @@ internal static class RaylibFrontend
                 selected = 0;
             }
 
-            DrawFrame(screen, selected, campaign, renderer, pixels);
+            DrawFrame(screen, selected, campaign, renderer, pixels, tutorialPage);
         }
 
         return screen == Screen.Title ? null : campaign;
@@ -368,13 +481,18 @@ internal static class RaylibFrontend
         int selected,
         Campaign? campaign,
         RaylibRenderer renderer,
-        PixelRenderer pixels)
+        PixelRenderer pixels,
+        int tutorialPage = 0)
     {
         Raylib.BeginDrawing();
 
         if (screen == Screen.Title)
         {
             RaylibRenderer.DrawTitle(pixels.Font, selected);
+        }
+        else if (screen == Screen.Tutorial)
+        {
+            PixelCards.DrawTutorial(pixels.Font, tutorialPage, RaylibRenderer.AccentFor("shallows"));
         }
         else
         {
@@ -434,6 +552,10 @@ internal static class RaylibFrontend
                         RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId));
                     break;
 
+                case Screen.Paused:
+                    PixelCards.Pause(pixels.Font, selected);
+                    break;
+
                 case Screen.RunComplete:
                     PixelCards.RunComplete(
                         pixels.Font,
@@ -472,7 +594,7 @@ internal static class RaylibFrontend
     {
         var aiming = state.IsAiming;
 
-        if (Pressed(KeyboardKey.Q) || (!aiming && Pressed(KeyboardKey.Escape)))
+        if (Pressed(KeyboardKey.Q))
         {
             command = GameCommand.Quit;
             return true;
@@ -890,7 +1012,12 @@ internal static class RaylibFrontend
 
         if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) || Pressed(KeyboardKey.Space))
         {
-            return selected == DescendItem ? TitleChoice.Descend : TitleChoice.Quit;
+            return selected switch
+            {
+                DescendItem => TitleChoice.Descend,
+                TutorialItem => TitleChoice.Tutorial,
+                _ => TitleChoice.Quit,
+            };
         }
 
         return TitleChoice.None;
@@ -911,6 +1038,12 @@ internal static class RaylibFrontend
     {
         /// <summary>The title menu.</summary>
         Title,
+
+        /// <summary>The guided tutorial, read before a run.</summary>
+        Tutorial,
+
+        /// <summary>A pause menu drawn over a frozen floor.</summary>
+        Paused,
 
         /// <summary>A floor card, before its first frame of play.</summary>
         FloorIntro,
@@ -948,6 +1081,9 @@ internal static class RaylibFrontend
 
         /// <summary>Start a run.</summary>
         Descend,
+
+        /// <summary>Open the guided tutorial.</summary>
+        Tutorial,
 
         /// <summary>Close the window.</summary>
         Quit,

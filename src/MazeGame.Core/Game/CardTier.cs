@@ -27,6 +27,12 @@ public enum CardTier
     Rare,
 
     /// <summary>
+    /// A once-in-a-descent trade, offered only in the deep floors. The promised casino is the
+    /// only card at this tier: a whole guaranteed room is worth more than any single stat.
+    /// </summary>
+    SuperRare,
+
+    /// <summary>
     /// A pure cost, never offered on its own — a curse is only ever the price attached to a rare.
     /// The catalog carries the tier so the pairing rule has something to recognise; this phase
     /// ships no pairings, so no curse is in the shipped catalog yet.

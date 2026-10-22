@@ -19,7 +19,7 @@ public sealed class CardCatalogTests
     public void Catalog_ShipsTheExpectedNumberOfCards()
     {
         Assert.Equal(CardCatalog.ShippedCount, CardCatalog.All.Count);
-        Assert.Equal(23, CardCatalog.ShippedCount);
+        Assert.Equal(39, CardCatalog.ShippedCount);
     }
 
     [Fact]
@@ -69,10 +69,11 @@ public sealed class CardCatalogTests
     }
 
     [Fact]
-    public void ExactlyEightNumericCardsStack()
+    public void ExactlyFifteenNumericCardsStack()
     {
-        // Stacking is the draft's answer to an exhausted pool, so the set is content: eight cards
-        // whose downside compounds exactly as their upside does. Anything else is single-copy.
+        // Stacking is the draft's answer to an exhausted pool, so the set is content: fifteen
+        // cards whose downside compounds exactly as their upside does. Anything else is
+        // single-copy.
         var expected = new HashSet<string>(StringComparer.Ordinal)
         {
             "wide-eyes",
@@ -83,6 +84,13 @@ public sealed class CardCatalogTests
             "light-feet",
             "momentum",
             "hollow-bones",
+            "ashen-bloom",
+            "kindling",
+            "fleet-footed",
+            "patient-hunter",
+            "moths-bargain",
+            "root-memory",
+            "sated-hollow",
         };
 
         var stackable = new List<string>();
@@ -113,6 +121,33 @@ public sealed class CardCatalogTests
                 Assert.Contains(" but ", card.FaceText, StringComparison.Ordinal);
             }
         }
+    }
+
+    [Fact]
+    public void EveryHealingCard_HealsTwoHearts()
+    {
+        // Skipping a draft heals one heart for free, so a card that heals one and carries a
+        // drawback was strictly worse than skipping. The healing cards pay two.
+        var healers = new List<Card>();
+
+        foreach (var card in CardCatalog.All)
+        {
+            if (card.Effect.HealNow != 0)
+            {
+                healers.Add(card);
+                Assert.Equal(2, card.Effect.HealNow);
+            }
+
+            // The repeating heal follows the same rule: one heart per clear was no better than a
+            // skipped draft, and the card still asks for an extra bloom every floor.
+            if (card.Effect.HealOnFloorClear != 0)
+            {
+                healers.Add(card);
+                Assert.Equal(2, card.Effect.HealOnFloorClear);
+            }
+        }
+
+        Assert.NotEmpty(healers);
     }
 
     [Fact]
@@ -206,10 +241,26 @@ public sealed class CardCatalogTests
                 effect.LanternRange != 0 ||
                 effect.HealNow != 0 ||
                 effect.HealOnFloorClear != 0 ||
+                effect.BloomGlowRadius != 0 ||
                 effect.NextDraftOfferBonus != 0 ||
-                effect.FollowingDraftOfferBonus != 0;
+                effect.FollowingDraftOfferBonus != 0 ||
+                effect.RoomChancePercent != 0 ||
+                effect.GuaranteedCasino;
 
             Assert.True(changesSomething, $"{card.Id} changes nothing");
+        }
+    }
+
+    [Fact]
+    public void ThePromisedCasino_IsTheOnlySuperRareCard()
+    {
+        // The guaranteed casino is the catalog's rarest tier, and nothing else is allowed to
+        // borrow that weight: a second super rare would make the promise ordinary.
+        foreach (var card in CardCatalog.All)
+        {
+            Assert.Equal(
+                string.Equals(card.Id, "house-favour", StringComparison.Ordinal),
+                card.Tier == CardTier.SuperRare);
         }
     }
 

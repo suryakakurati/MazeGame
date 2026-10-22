@@ -133,6 +133,19 @@ public sealed class GameStateHunterTests
     }
 
     [Fact]
+    public void ForFloor_MakesEveryCatchCostOneMoreHeartEveryFiveFloors()
+    {
+        var config = new GameConfig();
+
+        Assert.Equal(1, config.ForFloor(FloorCatalog.ByNumber(1), 3).CatchCost);
+        Assert.Equal(1, config.ForFloor(FloorCatalog.ByNumber(5), 3).CatchCost);
+        Assert.Equal(2, config.ForFloor(FloorCatalog.ByNumber(6), 3).CatchCost);
+        Assert.Equal(2, config.ForFloor(FloorCatalog.ByNumber(10), 3).CatchCost);
+        Assert.Equal(3, config.ForFloor(FloorCatalog.ByNumber(11), 3).CatchCost);
+        Assert.Equal(4, config.ForFloor(FloorCatalog.ByNumber(20), 3).CatchCost);
+    }
+
+    [Fact]
     public void Validate_WithNoHunters_Throws()
     {
         var config = new GameConfig { HunterCount = 0 };

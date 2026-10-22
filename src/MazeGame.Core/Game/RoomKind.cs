@@ -5,8 +5,8 @@ namespace MazeGame.Core.Game;
 /// </summary>
 /// <remarks>
 /// A room is an <i>event</i>, not a shop route: the first floor always holds one to teach the
-/// mechanic, and every floor after it rolls a fifty percent chance, so a twenty-floor run expects
-/// about ten of them. The kind is drawn when the card is opened, from the run's seed, so a
+/// mechanic, and every floor after it rolls a ten percent chance, so a twenty-floor run expects
+/// about three of them. Room cards raise that chance for a run that wants more. The kind is drawn when the card is opened, from the run's seed, so a
 /// replayed run visits the same rooms.
 /// </remarks>
 public enum RoomKind

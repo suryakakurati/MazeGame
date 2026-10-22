@@ -1782,3 +1782,126 @@ from the corridor before the detour is committed to. Because it is a landmark ra
 it stays on its cell after it is read, greyed out. A floor too small to hold one is allowed to have
 none — the property is "never on the critical path", not "always present" — but a test asserts all
 twenty shipped floors have one.
+
+## 2026-10-21 — Rooms roll at ten percent, and cards buy the rest (supersedes the fifty percent)
+
+**Decision:** `SecretRoomCarver.RoomChancePercent` is 10 after the guaranteed teaching floor, and
+`ChancePercent`/`Rolls`/`Plan` take a `bonusPercent` that the run's `RoomChancePercent` supplies.
+Threshold Sense and Latchkey each add ten points (non-stackable, so a run tops out at 30%). A
+`FloorDefinition.ForceRoom` flag skips the roll entirely, and only `Campaign` sets it, for the one
+floor a House Favour promised.
+
+**Reason:** Half the floors holding a room made the secret room part of the schedule rather than a
+find, and it left no design space for a card to change the rate. Ten percent is a real find; the two
+cards are the player's way to opt into more rooms, and a forced room is the only way a card can
+promise one without the dice being able to break the promise.
+
+**Consequences:** A twenty-floor run averages about three rooms instead of ten; the
+`ARun_MeetsRoomsThroughoutTheDescent` range was retuned, and a factory test finds a floor whose
+ten percent roll misses and proves a 100-point card turns it into a room. The side effect to watch
+is that the Cartographer/Stall/Confessional are rarer, which is why the room cards state their rate
+in the same sentence as their price.
+
+## 2026-10-21 — A hunter only knows the player inside its aura
+
+**Decision:** `GameState.RefreshHunterSenses` gives a hunter the player's exact cell only within
+`HunterPerceptionSteps` (6, or a wider floor/card aura). Outside it the hunter's route targets
+`KnownPlayer`, the cell it last saw them on; on arriving with the player gone it clears the memory
+and takes one random open step (`WanderRoute`), preferring not to double back. `IsPlayerSensed`
+exposes the rule. The lamp and a wisp remain deliberate, visible targets at any distance.
+
+**Reason:** Before this, every hunter ran a perfect shortest path to the player from any distance,
+so the aura was only a rendering flourish: the player could see nothing and the hunt still came
+straight through the rock. The user asked for the aura to be the contract, and a remembered cell
+plus a search is the smallest model that keeps hunters dangerous without letting them cheat.
+
+**Consequences:** `HunterPerceptionSteps` is a floor of six even when a floor's `EnemyAuraDistance`
+is lower, because several rule tests and the stalking floors set the aura to zero for visibility
+reasons; the shipped default is also six, so the two read as one number. Wander steps consume the
+injected random, so a seeded run searches the same way twice. A hunter that is out of sight now
+takes longer to arrive, which is the point; the campaign is a little more forgiving and needs a
+play-test before the next balance pass.
+
+## 2026-10-21 — Healing cards pay two hearts, and the speed cards were halved
+
+**Decision:** Every `HealNow` and `HealOnFloorClear` card restores 2 (Blood Pact, Second Wind,
+Trophy Hunter). Glass Cannon is 20% faster (was 40%), Light Feet 17.5% (was 35%) and Momentum's
+ramp/cap are 0.03/0.175 (was 0.06/0.35), with their prices unchanged.
+
+**Reason:** Skipping a draft already heals one heart for free, so a card that healed one and carried
+a drawback was strictly worse than not picking a card. On the other side, the three player speed
+cards were the strongest numbers in the catalog; halving the buff keeps the trade real without
+deleting the cards.
+
+**Consequences:** The faces say the new numbers (`nearly 18 percent`, because a decimal point in a
+face breaks the one-sentence test), and the RunModifiers/CampaignDraft tests pin the totals. A
+future tiering pass should look at Light Feet first: it is still a 17.5% speed gain for a heart slot.
+
+## 2026-10-21 — The shop shows the card's face, shove reads four neighbours, and the lantern is stronger
+
+**Decision:** `RoomOption` carries an optional `Preview`, and a Stall fills it with the card's
+`FaceText`; both frontends draw it under the selected row. `TryShove` checks the faced direction
+first and then the other three neighbours, pushing the hunter directly away from the player.
+`LanternSeconds` is 8 (was 5), the default `LanternRange` is 5 (was 4), and a throw stops short of a
+hunter instead of being refused when the furthest reachable cell is occupied. The Listener skips
+`CreditListenerStep` while `IsInSafeRoom`.
+
+**Reason:** A shop that asks for a heart for a name the player has not memorised is a hidden
+choice; the face is the honest version. Shove only working on the faced cell made the melee answer
+unusable when a hunter arrived from the side, which is when it exists. Five seconds and four cells
+made the lantern a flicker rather than a tool, and blocking the whole throw on a hunter at the end
+of the corridor wasted the charge. The Listener inside the safe room broke the room's one promise.
+
+**Consequences:** The room card layout gained a preview band under the list (wrapped at one pixel
+per glyph, capped to the space above the footer), and the console prints the same text indented.
+Shove still prefers the faced hunter when two are adjacent, so a deliberate aim is not lost. The
+lantern test that asserted a 5 s return now asserts 8 s, and the throw test pins the stop-short cell.
+
+## 2026-10-21 — A hunter will not enter the safe room
+
+**Decision:** `GameState.CostOfEntering` prices a room cell at 500 normal steps, and
+`WanderRoute` skips the room's nine cells. A hunter may still stand on the door cell outside the
+room, but never on the room's own floor.
+
+**Reason:** The room's promise is that nothing outside it moves while the player is inside, and
+that promise is empty if a hunter can already be standing in the doorway when the player walks in.
+A hallway-style test found exactly that: a searcher that had lost the player wandered through the
+one door and caught the player on the threshold. The room is a dead end behind a single door, so no
+route to the player ever needs to cross it; a large finite price keeps it out of every chase without
+making the cell genuinely impassable, which would risk a route the pathfinder cannot build.
+
+**Consequences:** The room's only door is the choke point the hunt can still use, so entering with a
+hunter on the threshold costs a heart rather than trapping the player. `TheHunt_NeverWandersIntoTheRoom`
+sweeps 20 s of chase around the door and asserts the rule; the Listener's safe-room test would fail
+without it, because the old wander could put a hunter on the doorway before the player stepped in.
+
+## 2026-10-22 — Escape pauses, the draft can be rerolled, catches deepen, and the flowers answer a catch
+
+**Decision:** Escape opens a pause card (`CONTINUE` / `QUIT RUN`) instead of leaving the run; only
+the title's `LEAVE` closes the window. `GameConfig.ForFloor` adds one heart to `CatchCost` for every
+five floors below the first. `Campaign.TryRerollDraft` buys a fresh seeded table for
+`1 + rerolls` hearts, never spending the last one, and the ladder dies with the draft. The title
+gains a `TUTORIAL` entry backed by Core's `Tutorial`/`TutorialStep`. `CardTier` gains `SuperRare`
+for `House Favour` alone. `Ashen Bloom` grants `BloomGlowRadius` 1 and the wave around it adds
+thirteen more trades. The casino's card draws a turning wheel.
+
+**Reason:** Escape was the game's quit key while it was also the player's "stop for a second" key,
+so one slip ended a run that could be half an hour old; a pause is the behaviour players already
+expect, and the run should only end from a menu the player chose. A flat one-heart catch made the
+late floors easier than the early ones once a build came online, so the price now climbs with the
+descent while cards (and their surcharges) stay the build lever. A draft of three is a choice only
+if it is sometimes the wrong three: hearts are already the run's currency and rerolling spends them
+on a second look rather than adding a new resource. Nothing in the game explained itself, and the
+key list was only in the README; a page-by-page guide in Core keeps both frontends teaching the
+same keys. The casino promise was the rarest trade in the catalog and read like a common card, and
+the requested flower reveal is a rule the player can plan around — a catch already costs a heart,
+so it should also tell them where the nearest bloom is.
+
+**Consequences:** The window freezes by simply not calling `Tick` on the pause screen; the console
+restarts its stopwatch on resume, or the pause would be charged to the hunters as walking time.
+`TryRerollDraft` draws with a salt mixed from the reroll ordinal, so a replay reproduces the ladder.
+The bloom glow is applied in `RecomputeVisibility`, which is why it reveals flowers through walls
+without revealing the corridor and why a renderer only has to brighten a bloom the rules already
+made visible; `Ashen Bloom` stacks to three copies, one step each. `Tutorial` is content, so it is
+covered by its own tests rather than by the rules' tests, and `CardCatalogTests` pins that
+`House Favour` is the only `SuperRare`.
