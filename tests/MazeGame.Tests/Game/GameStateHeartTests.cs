@@ -186,7 +186,7 @@ public sealed class GameStateHeartTests
     }
 
     [Fact]
-    public void Catch_KeepsKeysAndPlacedBarriers()
+    public void Catch_KeepsKeys()
     {
         var config = new GameConfig
         {
@@ -195,13 +195,10 @@ public sealed class GameStateHeartTests
             KeyCount = 1,
             StartingHearts = 3,
             MaxHearts = 3,
-            BarrierBudget = 2,
             EnemyStepSeconds = Step,
             Seed = null,
         };
         var state = new GameState(config, TestLevels.TwoRoutes(), new DijkstraPathfinder(), new FixedRandom(0));
-
-        Assert.True(TestLevels.PlaceBarrierAt(state, 1, 0));
 
         // The killer takes the short top route: (0,2), (0,1), then the player at (0,0).
         state.Tick(Step);
@@ -210,8 +207,6 @@ public sealed class GameStateHeartTests
 
         Assert.Equal(2, state.Hearts);
         Assert.Equal(1, state.KeysRemaining);
-        Assert.Equal(1, state.BarriersRemaining);
-        Assert.Contains(state.Maze.GetCell(1, 0), state.Barriers);
     }
 
     [Fact]
@@ -249,7 +244,6 @@ public sealed class GameStateHeartTests
             Rows = 1,
             Columns = length,
             KeyCount = keyCount,
-            BarrierBudget = 2,
             EnemyStepSeconds = Step,
             StartingHearts = startingHearts,
             MaxHearts = startingHearts,

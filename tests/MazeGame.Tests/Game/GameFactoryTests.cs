@@ -24,8 +24,6 @@ public sealed class GameFactoryTests
         Assert.Equal(15, state.Maze.Rows);
         Assert.Equal(15, state.Maze.Columns);
         Assert.Equal(3, state.KeysRemaining);
-        Assert.Equal(3, state.BarriersRemaining);
-        Assert.Equal(2, state.LuresRemaining);
         Assert.Equal(3, state.Hearts);
         Assert.Equal(3, state.MaxHearts);
         Assert.False(state.IsExitUnlocked);
@@ -130,11 +128,6 @@ public sealed class GameFactoryTests
         Assert.Equal(GameStatus.InProgress, replay.Status);
         Assert.Equal(3, replay.Hearts);
         Assert.Equal(3, replay.KeysRemaining);
-        Assert.Equal(3, replay.BarriersRemaining);
-        Assert.Equal(2, replay.LuresRemaining);
-        Assert.Empty(replay.Barriers);
-        Assert.Empty(replay.BarrierSeals);
-        Assert.Null(replay.Lure);
 
         // The old game must not be resurrected by starting a new one.
         Assert.Equal(GameStatus.Caught, state.Status);
@@ -269,19 +262,6 @@ public sealed class GameFactoryTests
         var state = Factory().CreateFloor(floor, startingHearts: floor.MaxHearts + 2, RunModifiers.None);
 
         Assert.Equal(floor.MaxHearts + 2, state.Hearts);
-        Assert.Equal(floor.MaxHearts + 2, state.MaxHearts);
-    }
-
-    [Fact]
-    public void CreateFloor_WhenACardRaisesTheCeiling_AcceptsHeartsAboveTheFloorsOwn()
-    {
-        var floor = FloorCatalog.ByNumber(1);
-        var bloodPact = RunModifiers.None.With(CardCatalog.ById("blood-pact")!);
-
-        var state = Factory().CreateFloor(floor, startingHearts: 4, bloodPact);
-
-        Assert.Equal(4, state.Hearts);
-        Assert.Equal(4, state.MaxHearts);
     }
 
     [Fact]
@@ -295,7 +275,6 @@ public sealed class GameFactoryTests
         // Floor 3 is faster than floor 1 on its own; the card's 12% multiplies that floor's own
         // pace instead of compounding on the pace of the floor before it.
         Assert.Equal(floor.EnemyStepSeconds * 0.88, state.Config.EnemyStepSeconds, precision: 9);
-        Assert.Equal(floor.MaxHearts + 1, state.MaxHearts);
     }
 
     [Fact]

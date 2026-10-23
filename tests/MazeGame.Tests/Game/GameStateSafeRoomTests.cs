@@ -79,23 +79,6 @@ public sealed class GameStateSafeRoomTests
     }
 
     [Fact]
-    public void InsideTheRoom_SealsDoNotCrack()
-    {
-        var state = BuildGame(enemyStepSeconds: 0.5);
-
-        // A barrier placed before entering: its seal is the floor's clock in miniature.
-        Assert.True(TestLevels.PlaceBarrierAt(state, 6, 6));
-        Assert.True(state.BarrierSeals.Count == 1);
-        var seal = state.BarrierSeals[state.Maze.GetCell(6, 6)];
-
-        Assert.True(WalkTo(state, state.SafeRoom!.Center));
-        state.Tick(10.0);
-
-        Assert.True(state.BarrierSeals.TryGetValue(state.Maze.GetCell(6, 6), out var remaining));
-        Assert.Equal(seal, remaining);
-    }
-
-    [Fact]
     public void InsideTheRoom_ThePlayerCanStillWalk()
     {
         var state = BuildGame();
@@ -241,8 +224,6 @@ public sealed class GameStateSafeRoomTests
                 Rows = 7,
                 Columns = 7,
                 KeyCount = 1,
-                BarrierBudget = 1,
-                BarrierSealSeconds = 30.0,
                 EnemyStepSeconds = enemyStepSeconds,
                 PlayerStepSeconds = playerStepSeconds,
                 VisionRadius = visionRadius,

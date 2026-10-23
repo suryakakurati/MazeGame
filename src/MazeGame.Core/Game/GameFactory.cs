@@ -90,6 +90,28 @@ public sealed class GameFactory
     public Campaign CreateCampaign() => new(FloorCatalog.Shipped, CreateFloor, _config.Seed);
 
     /// <summary>
+    /// Rebuilds a run from a saved snapshot, on the floor it was saved at.
+    /// </summary>
+    /// <param name="snapshot">The saved run.</param>
+    /// <returns>A campaign that is already playable on its saved floor.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="snapshot"/> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// Thrown when the snapshot is from another build, names a floor this catalog does not hold,
+    /// or names a card this build does not ship.
+    /// </exception>
+    /// <remarks>
+    /// A restore is the same pipeline as a first descent: the run's seed builds the floor, and the
+    /// saved cards are folded over the floor's own numbers. Nothing about a resumed floor is a
+    /// special case in the rules.
+    /// </remarks>
+    public Campaign RestoreCampaign(RunSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        return Campaign.Restore(FloorCatalog.Shipped, CreateFloor, snapshot);
+    }
+
+    /// <summary>
     /// Builds one floor of a run from its definition, the hearts the player brings and the cards
     /// they hold.
     /// </summary>

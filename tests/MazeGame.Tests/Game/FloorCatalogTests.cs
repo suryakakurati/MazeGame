@@ -101,8 +101,6 @@ public sealed class FloorCatalogTests
                 floor.EnemyStepSeconds.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
                 floor.PlayerStepSeconds.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
                 floor.VisionRadius,
-                floor.BarrierBudget,
-                floor.LureCount,
                 floor.ExtraLoops,
                 floor.DeadEndBraidPercent,
                 floor.EnemyAuraRadius,
@@ -122,8 +120,6 @@ public sealed class FloorCatalogTests
         foreach (var floor in FloorCatalog.Shipped)
         {
             if (floor.VisionRadius is not null ||
-                floor.BarrierBudget is not null ||
-                floor.LureCount is not null ||
                 floor.ExtraLoops is not null ||
                 floor.DeadEndBraidPercent is not null ||
                 floor.EnemyAuraRadius is not null ||

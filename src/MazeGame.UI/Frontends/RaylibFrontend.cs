@@ -3,6 +3,7 @@ using MazeGame.Core.Game;
 using MazeGame.Core.Maze;
 using MazeGame.UI.Audio;
 using MazeGame.UI.Input;
+using MazeGame.UI.Persistence;
 using MazeGame.UI.Rendering;
 using MazeGame.UI.Rendering.Pixels;
 using Raylib_cs;
@@ -29,22 +30,32 @@ namespace MazeGame.UI.Frontends;
 internal static class RaylibFrontend
 {
     /// <summary>Menu entries on the title screen.</summary>
-    private const int MenuItemCount = 4;
+    private const int MenuItemCount = 5;
 
     private const int DescendItem = 0;
 
-    private const int TutorialItem = 1;
+    /// <summary>The saved run, offered only while there is one.</summary>
+    private const int ContinueItem = 1;
 
-    private const int CodexItem = 2;
+    private const int TutorialItem = 2;
 
-    private const int LeaveItem = 3;
+    private const int CodexItem = 3;
 
-    /// <summary>The pause menu's three entries.</summary>
+    private const int LeaveItem = 4;
+
+    /// <summary>The pause menu's five entries.</summary>
     private const int PauseContinueItem = 0;
 
-    private const int PauseCodexItem = 1;
+    /// <summary>The page that lists every card and relic the run is carrying.</summary>
+    private const int PauseDetailsItem = 1;
 
-    private const int PauseQuitItem = 2;
+    private const int PauseCodexItem = 2;
+
+    /// <summary>Leaves the run on the title, keeping it for CONTINUE.</summary>
+    private const int PauseSaveQuitItem = 3;
+
+    /// <summary>Leaves the run on the title and throws it away.</summary>
+    private const int PauseQuitItem = 4;
 
     /// <summary>How long a floor intro card stays up before play begins.</summary>
     private const double IntroSeconds = 1.6;
@@ -57,6 +68,10 @@ internal static class RaylibFrontend
     /// Builds a fresh run. Called on the first descent and on every new run, so a restart always
     /// starts on floor 1 with full hearts.
     /// </param>
+    /// <param name="restoreCampaign">
+    /// Rebuilds a saved run for CONTINUE. Called only when the player asks for it and a save
+    /// exists.
+    /// </param>
     /// <returns>
     /// <see langword="true"/> when a window was opened and the session ran;
     /// <see langword="false"/> when no window is available (for example on a headless
@@ -65,10 +80,14 @@ internal static class RaylibFrontend
     /// <exception cref="ArgumentNullException">
     /// Thrown when <paramref name="config"/> or <paramref name="createCampaign"/> is null.
     /// </exception>
-    public static bool TryRun(GameConfig config, Func<Campaign> createCampaign)
+    public static bool TryRun(
+        GameConfig config,
+        Func<Campaign> createCampaign,
+        Func<RunSnapshot, Campaign> restoreCampaign)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(createCampaign);
+        ArgumentNullException.ThrowIfNull(restoreCampaign);
 
         var (width, height) = RaylibLayout.WindowSize(config);
 
@@ -98,7 +117,7 @@ internal static class RaylibFrontend
 
         try
         {
-            var lastRun = RunLoop(config, createCampaign);
+            var lastRun = RunLoop(config, createCampaign, restoreCampaign);
 
             // Only report an outcome if there is one: leaving from the title, or mid-run, should
             // not print a summary for a run the player walked away from.
@@ -129,29 +148,46 @@ internal static class RaylibFrontend
     /// </summary>
     /// <param name="config">The settings the pixel canvas is sized from.</param>
     /// <param name="createCampaign">Builds each new run.</param>
+    /// <param name="restoreCampaign">Rebuilds a saved run.</param>
     /// <returns>
     /// The run being played, or <see langword="null"/> when the player left from the title screen
     /// without ever descending.
     /// </returns>
-    private static Campaign? RunLoop(GameConfig config, Func<Campaign> createCampaign)
+    private static Campaign? RunLoop(
+        GameConfig config,
+        Func<Campaign> createCampaign,
+        Func<RunSnapshot, Campaign> restoreCampaign)
     {
-        var renderer = new RaylibRenderer();
-
-        // The floors are drawn from the committed atlases; the vector renderer keeps the title, the
-        // campaign cards and the HUD chrome around the canvas.
+        // The floors are drawn from the committed atlases; the pixel renderer also paints the
+        // title, the campaign cards and the HUD chrome around the canvas.
         using var pixels = new PixelRenderer(config);
 
         // No device is a silent game, not a broken one: the director is null on a machine with no
         // sound card, and every use of it is a no-op.
         using var audio = AudioDirector.TryCreate();
+
+        // The save lives outside the window: a run survives a crash, and the garden outlives the
+        // run. Both are read once at the start and written at each floor and at each ending.
+        var saves = new SaveStore();
+        var garden = saves.LoadGarden();
         Campaign? campaign = null;
+
+        // The garden is banked once per ending: the card can be left with Escape and re-read, and
+        // a second visit must not count the same run twice.
+        var runBanked = false;
         var screen = Screen.Title;
         var selected = DescendItem;
         var introEndsAt = 0.0;
         var tutorialPage = 0;
         var codexScroll = 0;
         var codexReturn = Screen.Title;
+        var detailsScroll = 0;
         PracticeTutorial? practice = null;
+
+        // The relic card is shown once per floor, at the moment the altar is touched. Tracking the
+        // campaign as well as the number keeps a second run from inheriting the first one's marks.
+        Campaign? relicCardShown = null;
+        var relicCardFloor = -1;
 
         // Walking is a tap or a hold, and the difference is what keeps one press worth one tile.
         // The rule itself is Core's, so it is tested without a window.
@@ -162,13 +198,17 @@ internal static class RaylibFrontend
             switch (screen)
             {
                 case Screen.Title:
-                    switch (ReadTitleChoice(ref selected))
+                    switch (ReadTitleChoice(ref selected, saves.HasRun))
                     {
                         case TitleChoice.Quit:
                             return null;
 
                         case TitleChoice.Descend:
                             StartRun();
+                            break;
+
+                        case TitleChoice.Continue:
+                            ResumeRun();
                             break;
 
                         case TitleChoice.Tutorial:
@@ -233,7 +273,7 @@ internal static class RaylibFrontend
                     {
                         codexScroll = Math.Max(0, codexScroll - 1);
                     }
-                    else if (Pressed(KeyboardKey.Escape) || Pressed(KeyboardKey.Q) ||
+                    else if (Pressed(KeyboardKey.Escape) ||
                              Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter))
                     {
                         // Back to wherever the codex was opened from, with that menu's entry on
@@ -308,13 +348,13 @@ internal static class RaylibFrontend
 
                 case Screen.Play:
                     // Escape is the pause key, not the quit key: the run only ends from a menu
-                    // the player chose. While aiming, Escape is still the aim's cancel.
-                    if (Pressed(KeyboardKey.Escape) && !campaign!.Floor.IsAiming)
+                    // the player chose.
+                    if (Pressed(KeyboardKey.Escape))
                     {
                         screen = Screen.Paused;
                         selected = PauseContinueItem;
                         walk.Clear();
-                        campaign.Floor.SetSprinting(false);
+                        campaign?.Floor.SetSprinting(false);
                         break;
                     }
 
@@ -329,21 +369,36 @@ internal static class RaylibFrontend
                         {
                             // The room is the run's, not the floor's: the card is opened here and
                             // the floor keeps ticking (which the safe room pauses anyway).
-                            if (campaign.CanOpenRoom)
+                            if (campaign!.CanOpenRoom)
                             {
                                 campaign.OpenRoom();
                                 screen = Screen.Room;
                                 selected = 0;
                             }
                         }
-                        else if (!GameCommands.Apply(campaign.Floor, command))
+                        else
                         {
-                            return campaign;
+                            GameCommands.Apply(campaign.Floor, command);
                         }
                     }
 
                     // Measured frame time: the killer's pace must not depend on the frame rate.
                     campaign.Floor.Tick(Raylib.GetFrameTime());
+
+                    // An altar touched during that tick becomes part of the run now rather than at
+                    // the next floor, so the HUD, the next save and the run summary all agree.
+                    campaign.Sync();
+
+                    // An altar touched on this tick opens its card. It is checked before the Echo
+                    // so the relic is read first; if the Echo opened on the same step, it takes the
+                    // screen after this card closes.
+                    if (campaign.Floor.Relic is not null && campaign.Floor.IsRelicTaken &&
+                        (!ReferenceEquals(relicCardShown, campaign) || relicCardFloor != campaign.FloorNumber))
+                    {
+                        relicCardShown = campaign;
+                        relicCardFloor = campaign.FloorNumber;
+                        screen = Screen.Relic;
+                    }
 
                     // The Echo's card owns the screen while the floor is frozen: the hunt does not
                     // resume until the player has read the gardener's last line.
@@ -386,10 +441,17 @@ internal static class RaylibFrontend
                     {
                         selected = selected == PauseQuitItem ? PauseContinueItem : selected + 1;
                     }
-                    else if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) ||
+                    else                    if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) ||
                              Pressed(KeyboardKey.Space))
                     {
-                        if (selected == PauseCodexItem)
+                        if (selected == PauseDetailsItem)
+                        {
+                            // Reading the run does not end the pause either: the floor stays frozen
+                            // and Escape comes back to this menu.
+                            detailsScroll = 0;
+                            screen = Screen.RunDetails;
+                        }
+                        else if (selected == PauseCodexItem)
                         {
                             // Reading the catalog does not end the pause: the floor is still
                             // frozen, and Escape comes back to this menu.
@@ -397,10 +459,25 @@ internal static class RaylibFrontend
                             codexReturn = Screen.Paused;
                             screen = Screen.Codex;
                         }
+                        else if (selected == PauseSaveQuitItem)
+                        {
+                            // SAVE & QUIT is the way out for the night: the run is written now,
+                            // with the hearts and blooms earned on this floor, and the title
+                            // offers CONTINUE for it. Leaving this screen returns to the title
+                            // rather than closing the game, the same as quitting.
+                            saves.SaveRun(campaign!.Snapshot());
+                            campaign = null;
+                            audio?.StopMusic();
+                            Raylib.SetWindowTitle(RaylibLayout.Title);
+                            screen = Screen.Title;
+                            selected = ContinueItem;
+                        }
                         else if (selected == PauseQuitItem)
                         {
                             // Quitting the run returns to the title rather than closing the game:
-                            // the title's LEAVE is the only way out for good.
+                            // the title's LEAVE is the only way out for good. The save goes with
+                            // it, because this is the player saying they are done with this run.
+                            saves.ClearRun();
                             campaign = null;
                             audio?.StopMusic();
 
@@ -420,7 +497,10 @@ internal static class RaylibFrontend
                     break;
 
                 case Screen.FloorCleared:
-                    if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) || Pressed(KeyboardKey.Space))
+                    // Escape dismisses the card the same way Enter does: it is progress, not a
+                    // decision, so "back" and "continue" are the same beat.
+                    if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) ||
+                        Pressed(KeyboardKey.Space) || Pressed(KeyboardKey.Escape))
                     {
                         // The cleared card is the results beat; the choice itself is the next
                         // screen. A gate comes first: the run changes its rules before it offers
@@ -430,10 +510,6 @@ internal static class RaylibFrontend
 
                         // The killer is not on this screen; drop to the bed while the cards are up.
                         audio?.SetIntensity(MusicIntensity.Calm);
-                    }
-                    else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
-                    {
-                        return campaign;
                     }
 
                     break;
@@ -449,8 +525,41 @@ internal static class RaylibFrontend
 
                     break;
 
+                case Screen.Relic:
+                    if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) ||
+                        Pressed(KeyboardKey.Space) || Pressed(KeyboardKey.Escape))
+                    {
+                        // The relic is already in the run's cards (campaign.Sync did that before
+                        // this card opened), so closing it only gives the floor back.
+                        audio?.PlayCardResolved(true);
+                        screen = Screen.Play;
+                        walk.Clear();
+                    }
+
+                    break;
+
+                case Screen.RunDetails:
+                    if (Pressed(KeyboardKey.S) || Pressed(KeyboardKey.Down))
+                    {
+                        detailsScroll = Math.Min(
+                            Math.Max(0, campaign!.Modifiers.Cards.Count - 1),
+                            detailsScroll + 1);
+                    }
+                    else if (Pressed(KeyboardKey.W) || Pressed(KeyboardKey.Up))
+                    {
+                        detailsScroll = Math.Max(0, detailsScroll - 1);
+                    }
+                    else if (Pressed(KeyboardKey.Escape) || Pressed(KeyboardKey.Enter) ||
+                             Pressed(KeyboardKey.KpEnter))
+                    {
+                        screen = Screen.Paused;
+                        selected = PauseDetailsItem;
+                    }
+
+                    break;
+
                 case Screen.Room:
-                    if (ReadRoomChoice(campaign!, ref selected, renderer, pixels, audio))
+                    if (ReadRoomChoice(campaign!, ref selected, pixels, audio))
                     {
                         screen = Screen.Play;
                         selected = 0;
@@ -465,11 +574,9 @@ internal static class RaylibFrontend
                         screen = Screen.Draft;
                         selected = 0;
                     }
-                    else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
-                    {
-                        return campaign;
-                    }
 
+                    // No escape hatch: the gate exists to make the late run different, so the
+                    // player has to choose one of the rules on the table.
                     break;
 
                 case Screen.Draft:
@@ -507,30 +614,38 @@ internal static class RaylibFrontend
                             break;
                         }
 
-                        renderer.Reset();
-                        pixels.Reset();
+                                        pixels.Reset();
                         StartFloorIntro();
                     }
                     else if (selected != previousSelection)
                     {
                         audio?.PlayCardHover();
                     }
-                    else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
-                    {
-                        return campaign;
-                    }
 
                     break;
 
                 case Screen.RunComplete:
                 case Screen.RunLost:
+                    if (!runBanked && campaign is not null)
+                    {
+                        garden = saves.RecordRun(campaign.GardenCount, campaign.FloorNumber);
+                        saves.ClearRun();
+                        runBanked = true;
+                    }
+
                     if (Pressed(KeyboardKey.R) || Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter))
                     {
                         StartRun();
                     }
-                    else if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
+                    else if (Pressed(KeyboardKey.Escape))
                     {
-                        return campaign;
+                        // The run is over, so leaving the card returns to the title rather than
+                        // closing the window: the title's LEAVE is the only way out for good.
+                        campaign = null;
+                        audio?.StopMusic();
+                        Raylib.SetWindowTitle(RaylibLayout.Title);
+                        screen = Screen.Title;
+                        selected = DescendItem;
                     }
 
                     break;
@@ -545,7 +660,30 @@ internal static class RaylibFrontend
                 selected = 0;
             }
 
-            DrawFrame(screen, selected, campaign, renderer, pixels, tutorialPage, codexScroll, practice);
+            // The same guard for the two cards the pause can outlive: a relic card on a floor that
+            // has none, and run details with no run, must fall back rather than throw in the draw.
+            if (screen == Screen.Relic && campaign?.Floor.Relic is null)
+            {
+                screen = Screen.Play;
+            }
+
+            if (screen == Screen.RunDetails && campaign is null)
+            {
+                screen = Screen.Title;
+                selected = DescendItem;
+            }
+
+            DrawFrame(
+                screen,
+                selected,
+                campaign,
+                pixels,
+                tutorialPage,
+                codexScroll,
+                practice,
+                saves.HasRun,
+                garden.Blooms,
+                detailsScroll);
         }
 
         return screen == Screen.Title ? null : campaign;
@@ -553,7 +691,39 @@ internal static class RaylibFrontend
         void StartRun()
         {
             campaign = createCampaign();
-            renderer.Reset();
+            runBanked = false;
+            saves.SaveRun(campaign.Snapshot());
+            pixels.Reset();
+            StartFloorIntro();
+        }
+
+        void ResumeRun()
+        {
+            var snapshot = saves.LoadRun();
+
+            if (snapshot is null)
+            {
+                // The file vanished or was unreadable between the title and this press: fall back
+                // to a fresh run rather than leaving the player on a title with no way in.
+                saves.ClearRun();
+                StartRun();
+                return;
+            }
+
+            try
+            {
+                campaign = restoreCampaign(snapshot);
+                runBanked = false;
+            }
+            catch (ArgumentException)
+            {
+                // A save from another build, or one naming content this build dropped. Refusing it
+                // is the honest answer; starting over is better than starting nothing.
+                saves.ClearRun();
+                StartRun();
+                return;
+            }
+
             pixels.Reset();
             StartFloorIntro();
         }
@@ -561,7 +731,6 @@ internal static class RaylibFrontend
         void StartPractice()
         {
             practice = new PracticeTutorial();
-            renderer.Reset();
             pixels.Reset();
             pixels.SetFloor(practice.Definition);
             pixels.SetTheme(practice.Definition.ThemeId);
@@ -597,17 +766,19 @@ internal static class RaylibFrontend
         Screen screen,
         int selected,
         Campaign? campaign,
-        RaylibRenderer renderer,
         PixelRenderer pixels,
         int tutorialPage = 0,
         int codexScroll = 0,
-        PracticeTutorial? practice = null)
+        PracticeTutorial? practice = null,
+        bool hasContinue = false,
+        int gardenBlooms = 0,
+        int detailsScroll = 0)
     {
         Raylib.BeginDrawing();
 
         if (screen == Screen.Title)
         {
-            RaylibRenderer.DrawTitle(pixels.Font, selected);
+            RaylibRenderer.DrawTitle(pixels.Font, selected, hasContinue, gardenBlooms);
         }
         else if (screen == Screen.Tutorial)
         {
@@ -673,6 +844,21 @@ internal static class RaylibFrontend
                         RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId));
                     break;
 
+                case Screen.Relic:
+                    PixelCards.RelicFound(
+                        pixels.Font,
+                        campaign.Floor.Relic!.Value,
+                        RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId));
+                    break;
+
+                case Screen.RunDetails:
+                    PixelCards.RunDetails(
+                        pixels.Font,
+                        campaign,
+                        detailsScroll,
+                        RaylibRenderer.AccentFor(campaign.CurrentFloor.ThemeId));
+                    break;
+
                 case Screen.Draft:
                     PixelCards.Draft(
                         pixels.Font,
@@ -711,8 +897,8 @@ internal static class RaylibFrontend
     }
 
     /// <summary>
-    /// Reads one command for this frame. Escape means "cancel" while aiming and "quit"
-    /// otherwise, mirroring the console frontend.
+    /// Reads one command for this frame. Escape is not a command: play reads it as the pause,
+    /// and no command in the game can end a run.
     /// </summary>
     /// <param name="state">The floor being played.</param>
     /// <param name="walk">The walking gate's memory across frames.</param>
@@ -721,14 +907,6 @@ internal static class RaylibFrontend
     /// <returns><see langword="true"/> when a command is waiting.</returns>
     private static bool TryReadCommand(GameState state, StepRepeat walk, double now, out GameCommand command)
     {
-        var aiming = state.IsAiming;
-
-        if (Pressed(KeyboardKey.Q))
-        {
-            command = GameCommand.Quit;
-            return true;
-        }
-
         // Walking is a tap or a hold (see ReadWalk). The aim cursor stays press-based: holding a
         // direction there would fly across the map.
         if (ReadDirection(state, walk, now) is { } direction)
@@ -775,18 +953,6 @@ internal static class RaylibFrontend
             return true;
         }
 
-        if (aiming && (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter)))
-        {
-            command = GameCommand.ConfirmAim;
-            return true;
-        }
-
-        if (aiming && Pressed(KeyboardKey.Escape))
-        {
-            command = GameCommand.CancelAim;
-            return true;
-        }
-
         command = default;
         return false;
     }
@@ -805,16 +971,6 @@ internal static class RaylibFrontend
     /// </remarks>
     private static GameCommand? ReadDirection(GameState state, StepRepeat walk, double now)
     {
-        if (state.IsAiming)
-        {
-            walk.Clear();
-
-            return DirectionOf(Pressed, KeyboardKey.W, KeyboardKey.Up) ??
-                   DirectionOf(Pressed, KeyboardKey.S, KeyboardKey.Down) ??
-                   DirectionOf(Pressed, KeyboardKey.A, KeyboardKey.Left) ??
-                   DirectionOf(Pressed, KeyboardKey.D, KeyboardKey.Right);
-        }
-
         return ReadWalk(state, walk, now);
     }
 
@@ -947,20 +1103,18 @@ internal static class RaylibFrontend
     /// </summary>
     /// <param name="campaign">The run, whose open room card is being read.</param>
     /// <param name="selected">The highlighted option, moved in place.</param>
-    /// <param name="renderer">The vector renderer, reset when a Turn rebuilds the floor.</param>
-    /// <param name="pixels">The pixel renderer, reset with it.</param>
+    /// <param name="pixels">The pixel renderer, reset when a Turn rebuilds the floor.</param>
     /// <param name="audio">The music director, retuned when a Turn changes the floor.</param>
     /// <returns><see langword="true"/> when the card was closed and play should resume.</returns>
     /// <remarks>
     /// A resolved card shows what the choice did and waits for one more press, so the player always
     /// reads the outcome. A Turn is the one option that changes the floor under the card: the
-    /// renderers are reset and the intro card is skipped, because the run is already in play and
+    /// renderer is reset and the intro card is skipped, because the run is already in play and
     /// the room it lands in is the same session.
     /// </remarks>
     private static bool ReadRoomChoice(
         Campaign campaign,
         ref int selected,
-        RaylibRenderer renderer,
         PixelRenderer pixels,
         AudioDirector? audio)
     {
@@ -1008,8 +1162,7 @@ internal static class RaylibFrontend
                 // The Turn rebuilt the run on an earlier floor: draw it from scratch, and hand
                 // the new floor's place to the music and the window title as well. Only the
                 // picture used to change, so a rewind kept the theme it had just left.
-                renderer.Reset();
-                pixels.Reset();
+                    pixels.Reset();
                 pixels.SetFloor(campaign.CurrentFloor, campaign.ActiveConditions);
                 pixels.SetTheme(campaign.CurrentFloor.ThemeId);
                 audio?.PlayFloor(
@@ -1116,11 +1269,18 @@ internal static class RaylibFrontend
     }
 
     /// <summary>
-    /// Reads one title-screen command: move the highlight, start a descent, or leave.
+    /// Reads one title-screen command: move the highlight, start a descent, resume, or leave.
     /// </summary>
     /// <param name="selected">The highlighted entry, updated in place by W/S or the arrows.</param>
+    /// <param name="hasContinue">
+    /// Whether a saved run exists, which decides whether CONTINUE is on the menu at all.
+    /// </param>
     /// <returns>What the player chose this frame.</returns>
-    private static TitleChoice ReadTitleChoice(ref int selected)
+    /// <remarks>
+    /// The highlight walks the entries that are actually drawn: a title with no save steps from
+    /// DESCEND straight to TUTORIAL, so a player never has to press past a greyed-out row.
+    /// </remarks>
+    private static TitleChoice ReadTitleChoice(ref int selected, bool hasContinue)
     {
         if (Pressed(KeyboardKey.Q) || Pressed(KeyboardKey.Escape))
         {
@@ -1129,13 +1289,13 @@ internal static class RaylibFrontend
 
         if (Pressed(KeyboardKey.W) || Pressed(KeyboardKey.Up))
         {
-            selected = (selected + MenuItemCount - 1) % MenuItemCount;
+            selected = StepTitleMenu(selected, -1, hasContinue);
             return TitleChoice.None;
         }
 
         if (Pressed(KeyboardKey.S) || Pressed(KeyboardKey.Down))
         {
-            selected = (selected + 1) % MenuItemCount;
+            selected = StepTitleMenu(selected, 1, hasContinue);
             return TitleChoice.None;
         }
 
@@ -1144,6 +1304,7 @@ internal static class RaylibFrontend
             return selected switch
             {
                 DescendItem => TitleChoice.Descend,
+                ContinueItem => hasContinue ? TitleChoice.Continue : TitleChoice.None,
                 TutorialItem => TitleChoice.Tutorial,
                 CodexItem => TitleChoice.Codex,
                 _ => TitleChoice.Quit,
@@ -1151,6 +1312,29 @@ internal static class RaylibFrontend
         }
 
         return TitleChoice.None;
+    }
+
+    /// <summary>
+    /// Moves the title highlight by <paramref name="delta"/> entries, skipping CONTINUE when
+    /// there is no save to resume.
+    /// </summary>
+    /// <param name="selected">The entry the highlight is on.</param>
+    /// <param name="delta">+1 for down, -1 for up.</param>
+    /// <param name="hasContinue">Whether CONTINUE is on the menu.</param>
+    /// <returns>The entry the highlight lands on.</returns>
+    private static int StepTitleMenu(int selected, int delta, bool hasContinue)
+    {
+        var count = hasContinue ? MenuItemCount : MenuItemCount - 1;
+
+        var position = selected;
+        if (!hasContinue && selected > ContinueItem)
+        {
+            position--;
+        }
+
+        position = (position + delta + count) % count;
+
+        return !hasContinue && position >= ContinueItem ? position + 1 : position;
     }
 
     /// <summary>
@@ -1202,6 +1386,12 @@ internal static class RaylibFrontend
         /// <summary>The Echo's card: the gardener's voice, read over a frozen floor.</summary>
         Echo,
 
+        /// <summary>The relic card, opened the moment an altar is touched.</summary>
+        Relic,
+
+        /// <summary>The run details: every card and relic the run is carrying.</summary>
+        RunDetails,
+
         /// <summary>The run summary after the final floor.</summary>
         RunComplete,
 
@@ -1217,6 +1407,9 @@ internal static class RaylibFrontend
 
         /// <summary>Start a run.</summary>
         Descend,
+
+        /// <summary>Resume the saved run.</summary>
+        Continue,
 
         /// <summary>Open the guided tutorial.</summary>
         Tutorial,

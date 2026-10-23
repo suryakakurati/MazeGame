@@ -116,14 +116,12 @@ public sealed class GameStateTests
     }
 
     [Fact]
-    public void Constructor_StartsWithEveryKeyAndFullBarrierBudget()
+    public void Constructor_StartsWithEveryKey()
     {
-        var state = TestLevels.CorridorGame(keyCount: 3, barrierBudget: 2);
+        var state = TestLevels.CorridorGame(keyCount: 3);
 
         Assert.Equal(3, state.KeysRemaining);
         Assert.Equal(0, state.KeysCollected);
-        Assert.Equal(2, state.BarriersRemaining);
-        Assert.Empty(state.Barriers);
         Assert.Equal(GameStatus.InProgress, state.Status);
         Assert.False(state.IsExitUnlocked);
     }

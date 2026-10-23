@@ -11,9 +11,8 @@ namespace MazeGame.Core.Game;
 /// way a floor is played.
 /// </para>
 /// <para>
-/// Most fields are additive. The two nullable ones are absolute: a card that says "seals last
-/// 18 seconds" means exactly that, and the catalog marks the cards that disagree as mutually
-/// exclusive so two absolutes can never compete.
+/// Most fields are additive. A multiplier (a step-time scale) composes rather than adds, so two
+/// speed cards multiply instead of cancelling out.
 /// </para>
 /// </remarks>
 public sealed record CardEffect
@@ -23,12 +22,6 @@ public sealed record CardEffect
 
     /// <summary>Gets the change to the distance at which the killer's aura is visible.</summary>
     public int EnemyAuraDistance { get; init; }
-
-    /// <summary>Gets the change to the barriers available on each floor.</summary>
-    public int BarrierBudget { get; init; }
-
-    /// <summary>Gets the seal lifetime to use instead of the floor's, or null to keep it.</summary>
-    public double? BarrierSealSeconds { get; init; }
 
     /// <summary>
     /// Gets the multiplier applied to the killer's step time. Defaults to 1, so a card can only
@@ -66,9 +59,6 @@ public sealed record CardEffect
     /// <summary>Gets the change to how long the turn penalty lasts, in seconds.</summary>
     public double TurnPenaltySeconds { get; init; }
 
-    /// <summary>Gets the change to the heart ceiling of each floor.</summary>
-    public int MaxHearts { get; init; }
-
     /// <summary>Gets the change to how many keys each floor from now on demands.</summary>
     public int KeyCount { get; init; }
 
@@ -81,24 +71,6 @@ public sealed record CardEffect
     /// glowing bloom as well, so a second copy is a halo rather than a bigger map reveal.
     /// </remarks>
     public int BloomGlowReach { get; init; }
-
-    /// <summary>Gets the change to the wisps available on each floor.</summary>
-    public int LureCount { get; init; }
-
-    /// <summary>Gets the wisp lifetime to use instead of the floor's, or null to keep it.</summary>
-    public double? LureSeconds { get; init; }
-
-    /// <summary>
-    /// Gets the seconds the killer is stunned when it reaches a wisp. Additive, so a second card
-    /// could lengthen it; zero means "no stun", which is the shipped default.
-    /// </summary>
-    public double LureStunSeconds { get; init; }
-
-    /// <summary>
-    /// Gets how many steps of vision the player loses while a wisp is burning. Additive; zero
-    /// means the wisp costs no sight, which is the shipped default.
-    /// </summary>
-    public int LureVisionPenalty { get; init; }
 
     /// <summary>
     /// Gets the hearts restored the moment the card is picked. This is a one-shot, not a
@@ -176,8 +148,8 @@ public sealed record CardEffect
     public bool GuaranteedCasino { get; init; }
 
     /// <summary>
-    /// Gets a value indicating whether this effect changes what the player can see, directly or
-    /// through a burning wisp. The draft's rate limit counts these.
+    /// Gets a value indicating whether this effect changes what the player can see. The draft's
+    /// rate limit counts these.
     /// </summary>
-    public bool TouchesVision => VisionRadius != 0 || LureVisionPenalty != 0;
+    public bool TouchesVision => VisionRadius != 0;
 }

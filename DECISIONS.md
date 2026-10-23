@@ -1978,3 +1978,174 @@ frame lights twenty-eight cells instead of six, so the arch and both blooms are 
 first tap. `PracticeTutorialTests.ThePracticeFloor_OpensOnALitRoomRatherThanABlankCanvas` pins both
 halves: the room is nine cells across and covers more than half the viewport, and at least twenty
 cells are lit before the player moves.
+
+## 2026-10-22 — The pause card saves as well as quits
+
+**Decision:** The pause card gains `SAVE & QUIT` (`PixelCards.Pause` item 2, `RaylibFrontend`'s
+`PauseSaveQuitItem`), which writes `campaign.Snapshot()` through `SaveStore.SaveRun` and returns to
+the title, where `CONTINUE` offers it. The old `QUIT RUN` entry is renamed `ABANDON RUN` and keeps
+clearing the save. The terminal's pause menu gains `[S] save & quit` beside `[Q] abandon run`, with
+`ConsoleFrontend.PauseMenu` returning a `PauseChoice` and a `RunExit` carried up through `Play` and
+`PlayCampaign` so only `Run` writes or deletes the file.
+
+**Reason:** The run was already saved at the top of every floor, so a player who had to stop mid-floor
+had two bad options: quit and lose the run, or leave the game running. The floor is rebuilt from its
+seed on `CONTINUE` either way, so saving where the player stands costs one file write and gives them
+a way out for the night. Renaming the other entry was part of the same decision: two menu lines that
+both return to the title must say on their face which one keeps the run, because the difference is
+unrecoverable and invisible until the player comes back.
+
+**Consequences:** `SAVE & QUIT` captures hearts and blooms earned on the current floor, which the
+floor-start save could not; the floor's cell-level state is still not saved, because rebuilding the
+floor from the seed is the model `RunSnapshot` was built on. Both frontends were driven by hand
+through a temporary `MAZEGAME_SAVE_DIR`: `run.json` appears on save and is gone after an abandon,
+and `CONTINUE` resumes the run afterwards.
+
+## 2026-10-22 — A floor holds a find that is not the objective
+
+**Decision:** Every generated floor places one **curiosity** (`CuriosityKind`: Bell, Reliquary or
+Shrine) on a cell at least one step off the shortest route to the arch, from a hash of the run's
+seed and the floor number rather than from the floor's random stream. Touching it resolves it:
+a bell heals one heart and wakes every hunter, a reliquary spends one heart (never the last) for
+two blooms and a charge of some verb, a shrine gives one step of vision for the floor and a bloom.
+The HUD names what the floor is holding and the pixel renderer draws all three from primitives.
+
+**Reason:** The objective on every floor was identical — blooms, arch — so twenty floors of maze
+were twenty versions of one errand. A curiosity is content the player chooses: it is off the
+route, it is announced but not mapped, and each kind is a different bargain (a gift with a
+consequence, a purchase, a small light). It is also the cheapest kind of variance that is real:
+the kind and the place come from the seed, so two runs meet different things in different rooms
+without a new floor being authored.
+
+**Consequences:** The draw hashes the seed instead of pulling from the floor's random source, so
+adding curiosities did not move a single wall, hunter or bloom of an already-seeded floor. The
+placement reuses the Echo's detour rule with a lower bar (one step instead of two), and the Echo
+is placed first so the two never fight over a dead end. A reliquary a player cannot afford stays
+sealed, so the last heart is never spent by walking over something. `CuriosityTests` pins the
+placement, each bargain and the last-heart rule; `Campaign.BloomsPicked` now counts
+`GameState.BonusBlooms` toward the garden.
+
+## 2026-10-22 — Floors 3 and 6 get a rule, because their identity was a dial
+
+**Decision:** The Drowned Halls (floor 3) gains `FloorRule.Tide`: a repeating cycle of twelve
+dry seconds, a two-second swell and eight flooded ones, during which the torch loses a step and
+hunter time runs 1.35×. The Gilded Cage (floor 6) gains `FloorRule.ThreeLocks` and drops to two
+blooms: three gilded locks are placed near, middle and far from the player's start, and the arch
+stays barred until all three are thrown. The Gilded Cage's old identity — "no blink" — is gone,
+and so is its fifth bloom.
+
+**Reason:** Both floors were only numbers: floor 3 was four blooms at one second a step, floor 6
+was five blooms with a verb removed. A floor's identity has to be something the player does
+differently, not a value on a dial, and these two sit early enough that a player who bounces off
+them never reaches the floors that already have rules. The tide makes the floor a rhythm (read the
+swell, plan the room, move when the water is out) and needs no new key; the locks make it a route
+(three distant walks before the arch) and turn the floor's greedy theme into its mechanic. Neither
+changes walkability, so the maze, the hunters and the pathfinder are untouched.
+
+**Consequences:** `FloorRuleTests` now expects six ruled floors, and `CuriosityTests` covers the
+tide's phase clock, its cost to sight and the locks' count and their hold on the arch. The tide adds
+two timers' worth of state read only under its rule, so every other floor's feel is unchanged; the
+locks are cells in `GameState`, so a renderer draws them from state rather than from the theme. The
+console prints `locks n/3` and the tide's phase and countdown; the window tints the frame while
+flooded and prefixes the footer with the tide or the locks.
+
+## 2026-10-22 — Every floor wears a face, and the campaign still wrote the spine
+
+**Decision:** `FloorFace`/`FloorFaces` in Core bend each authored floor by one of three variations —
+quiet (one less hunter, a step more light, a slower hunt), greedy (one more bloom, one more hunter,
+a faster hunt) or haunted (a step less light, six more loops, dead ends braided to 80%, and the
+burning lantern on a floor with no rule). The face is rolled from the run seed and the floor number,
+weighted two-of-five in favour of the authored floor, and applied by `Campaign` when it snapshots
+its floors. Floors 1–3 never roll.
+
+**Reason:** The campaign is twenty authored places, and a player who has walked it once has walked
+it every time: the same keys, hunters, rules and route. Faces are the cheapest real variance the
+architecture allows — they use the floor's existing levers, need no new art or content, and are
+deterministic from the seed, so a save rebuilds the same run and a test can pin a seed's shape. The
+opening floors are protected because their job is to teach, and a lesson whose geometry changes
+between runs is a lesson the player has to relearn. The two-of-five weight is the difference between
+"this run is different" and "this is not the campaign I know": most of a descent still looks like
+the place the campaign wrote.
+
+**Consequences:** A face never changes a floor's number, name or theme, so the condition gates, the
+draft schedule and the story pages still line up. The face's clause is prepended to the floor's
+gimmick, which the intro card and the HUD already print, so no new UI was needed to announce it.
+The faces are applied at campaign construction, not in `FloorCatalog`, so `FloorCatalog.Shipped`
+stays the authored content a test can reason about, and a hand-built campaign of test floors gets
+faces only if its tests use the campaign path — `CampaignTests`' corridor floors keep their shape
+because floor 1–3 are protected, and `FloorFacesTests` pins each lever and the whole-run difference
+between two seeds.
+
+## 2026-10-22 — A relic is an altar's card, and the campaign banks it on the tick
+
+**Decision:** Every floor carries an **altar** (`GameConfig.Relic`, stocked by `Campaign.Build` from
+`RelicCatalog` — eighteen permanent boons expressed as rare `Card`s with no drawback) on a cell at
+least one step off the shortest route. Touching it sets `GameState.IsRelicTaken`, raises
+`GameEvent.RelicFound` and wakes every sleeper, but applies nothing. Both frontends call
+`Campaign.Sync()` after each tick, which folds the relic's card into the run's modifiers exactly
+once, and `Campaign.Build` will not stock a relic the run already holds.
+
+**Reason:** The game's whole composition path already understands cards: `RunModifiers` clamps them,
+the HUD's summary lists them, `RunSnapshot` saves their ids and the draft reasons about them. A
+parallel relic pipeline would duplicate all of that for no gain, and a relic that applied itself on
+the floor would either be lost in the next `Build` or be a different kind of thing. Making the
+campaign the only writer keeps one place where "what the run holds" changes, and calling `Sync` on
+the tick means a save taken after the altar keeps the relic even though the floor itself is rebuilt
+from its seed. Waking the sleepers is the altar's price: the relic is free, the walk back is not.
+
+**Consequences:** `RunSnapshot.Validate` and `Campaign.Restore` ask `RelicCatalog` as well as
+`CardCatalog` before calling a save corrupt, because relic ids sit in the same list as drafted
+cards. A floor with no detour to spare has no altar — the kind lives with the cell, so the HUD never
+announces a relic the player cannot walk to — and a run that has collected all eighteen finds empty
+plinths ahead. `RelicTests` pins the catalog's shape, the off-route placement, the one-shot take
+with its wake, the no-duplicate walk, the effect arriving on the next floor and the save round trip.
+
+## 2026-10-22 — A relic is read before the floor resumes, and the run has a page
+
+**Decision:** Touching an altar switches the frontend to a relic card (`Screen.Relic` in the
+window, `ReadRelic` in the terminal) that names the relic, its family and its promise; the floor
+is frozen until the card is closed, and the card appears once per floor. The window's pause menu
+gained `RUN DETAILS` (`PixelCards.RunDetails`, scrolling with W/S), and the terminal gained
+`[V] run details`; both list the floor, hearts, blooms, garden, relic count, the aggregate
+modifier line, the active condition or gimmick, and every carried card and relic.
+
+**Reason:** The relic was applied the instant it was touched and then disappeared into a modifier
+total, so the largest find in a run arrived as a sound and a floating word. A card makes the
+moment legible and gives the player the only pause the game has that is not about stopping: the
+altar has already been paid for by the detour, and the card is where the price turns into a
+reward. Run details is the other half of that: a run is now defined by a pile of cards, relics,
+conditions and faces, and a player who cannot see the pile cannot plan the next floor. Both
+screens are presentation only — the relic is banked by `Campaign.Sync` before the card opens, and
+neither screen mutates the run.
+
+**Consequences:** The relic card is checked before the Echo in `Screen.Play`, so a step that finds
+both reads the relic first and the Echo after; the relic is tracked per campaign *and* floor, so a
+second run cannot inherit the first one's marks, and a restored floor (which rebuilds untaken)
+cannot re-show the card. The window's pause menu is five entries, so its navigation, panel height
+and item constants moved together; the terminal restarts its clock after both cards so reading
+them is never handed to the hunters as walking time. `PixelCards.RelicFound` and `RunDetails` are
+drawing-only and are verified by compilation and by the Core tests for the data they read, not by
+a rendering test.
+
+## 2026-10-22 — Relic families live in Core, and the pool is deep enough to shape a run
+
+**Decision:** `RelicFamily` (Body, Light, Hunt, Garden, Rite) and `RelicCatalog.FamilyOf`/
+`KindOf` live in Core. The pool grew from eighteen to twenty-six — every family now has enough
+members that a run can lean into one — and `FloorFace.Starved` joined the face roll, which grew
+to six tickets with the authored floor still holding two.
+
+**Reason:** Colour was already being decided in the renderer by a switch over relic kinds; adding
+eight relics would have meant editing that switch in three places (gem, tag, terminal word) and
+keeping them in agreement by hand. Family in Core is one answer the UI reads, and it gives the
+run details card a vocabulary ("RELIC — HUNT") that means something at a glance. The new relics
+fill gaps the first eighteen left: three of the five verbs had no dedicated relic, and nothing
+touched turning, sprint length or drag's hangover. The starved face is the first face that takes
+something away without giving light back; it makes a floor shorter and sharper rather than
+brighter or darker.
+
+**Consequences:** `EveryKind_HasAFamily_AndEveryFamilyIsUsed` fails if a new relic is added
+without a family, and the family switch throws for an unknown kind rather than defaulting to a
+colour that means nothing. The face roll's weights are unchanged for the four old faces (authored
+2, one ticket each); starved takes the sixth ticket. The tutorial gained pages for the altar/relic
+and for the run's faces, and `TutorialTests` asserts both are taught, so content and guide move
+together.

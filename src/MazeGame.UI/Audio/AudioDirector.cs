@@ -221,6 +221,32 @@ internal sealed class AudioDirector : IDisposable
                     _engine.Play(SfxId.CardHover, 0.4f, 0.9f);
                     break;
 
+                // The floor's find is a different kind of pickup: the bloom's chime, struck once
+                // and left to ring, so a curiosity never sounds like a key.
+                case GameEvent.CuriosityFound:
+                    _engine.Play(SfxId.KeyPicked, 0.6f, 0.72f);
+                    _engine.Play(SfxId.CardTake, 0.35f, 0.6f);
+                    break;
+
+                // An altar is the run's largest find, so it gets the widest interval the kit has:
+                // the bloom's chime under the card's bell, both held. It should be the one sound
+                // in a floor the player remembers from the other side of the door.
+                case GameEvent.RelicFound:
+                    _engine.Play(SfxId.KeyPicked, 0.6f, 0.58f);
+                    _engine.Play(SfxId.CardTake, 0.5f, 0.5f);
+                    Duck(1.2);
+                    break;
+
+                case GameEvent.LockThrown:
+                    _engine.Play(SfxId.WallBroken, 0.55f, 0.86f);
+                    break;
+
+                // The tide turning is the floor breathing: a low shift rather than a stinger, so
+                // it is heard at the edge of attention and read from the light.
+                case GameEvent.TideTurned:
+                    _engine.Play(SfxId.LightOut, 0.4f, 0.72f);
+                    break;
+
                 // A safe room is a door closing on the hunt: one warm, low bell in, and a softer
                 // one on the way back out so the player hears the world start again.
                 case GameEvent.SecretRoomEntered:
@@ -249,32 +275,12 @@ internal sealed class AudioDirector : IDisposable
                     _engine.Play(SfxId.KillerStep, 0.4f, 1.0f, -0.15f);
                     break;
 
-                case GameEvent.SealPlaced:
-                    _engine.Play(SfxId.SealPlaced, 0.85f);
-                    break;
-
-                case GameEvent.SealCracked:
-                    _engine.Play(SfxId.SealCracked, 0.5f);
-                    break;
-
-                case GameEvent.SealBroken:
-                    _engine.Play(SfxId.SealBroken, 0.9f);
-                    break;
-
-                case GameEvent.WispLit:
-                    _engine.Play(SfxId.WispLit, 0.7f, 1.0f, 0.2f);
-                    break;
-
-                case GameEvent.WispConsumed:
-                    _engine.Play(SfxId.WispConsumed, 0.7f);
-                    break;
-
                 case GameEvent.Blink:
                     _engine.Play(SfxId.NearMiss, 0.7f, 1.18f, 0.2f);
                     break;
 
                 case GameEvent.Veiled:
-                    _engine.Play(SfxId.WispLit, 0.45f, 0.82f, -0.1f);
+                    _engine.Play(SfxId.SoftLight, 0.45f, 0.82f, -0.1f);
                     break;
 
                 case GameEvent.Drag:
@@ -282,15 +288,15 @@ internal sealed class AudioDirector : IDisposable
                     break;
 
                 case GameEvent.LanternThrown:
-                    _engine.Play(SfxId.WispLit, 0.65f, 1.0f, 0.3f);
+                    _engine.Play(SfxId.SoftLight, 0.65f, 1.0f, 0.3f);
                     break;
 
                 case GameEvent.LanternReturned:
-                    _engine.Play(SfxId.WispConsumed, 0.5f, 1.1f);
+                    _engine.Play(SfxId.LightOut, 0.5f, 1.1f);
                     break;
 
                 case GameEvent.Shoved:
-                    _engine.Play(SfxId.SealBroken, 0.85f, 1.12f);
+                    _engine.Play(SfxId.WallBroken, 0.85f, 1.12f);
                     break;
 
                 case GameEvent.Graced:
@@ -303,11 +309,11 @@ internal sealed class AudioDirector : IDisposable
 
                 case GameEvent.WallSealed:
                 case GameEvent.WallClosed:
-                    _engine.Play(SfxId.SealPlaced, 0.7f, 0.82f);
+                    _engine.Play(SfxId.WallSealed, 0.7f, 0.82f);
                     break;
 
                 case GameEvent.WallOpened:
-                    _engine.Play(SfxId.SealBroken, 0.55f, 0.86f);
+                    _engine.Play(SfxId.WallBroken, 0.55f, 0.86f);
                     break;
 
                 case GameEvent.ExitMoved:
@@ -319,7 +325,7 @@ internal sealed class AudioDirector : IDisposable
                     break;
 
                 case GameEvent.EclipseLifted:
-                    _engine.Play(SfxId.WispLit, 0.4f, 1.2f);
+                    _engine.Play(SfxId.SoftLight, 0.4f, 1.2f);
                     break;
 
                 case GameEvent.FloorCleared:

@@ -3,18 +3,19 @@
 Single source of truth for the state of the project. Update this file at the end of
 every work session (see the handoff protocol in `HANDOFF.md`).
 
-Last updated: 2026-10-22 (eighth pass: a card codex, a practice floor, and the fourth wave's balance)
+Last updated: 2026-10-22 (twelfth pass: the relic card, run details, eight more relics and a
+starved face)
 
 ## Current Status
 
-The solution builds with zero warnings, `dotnet test` is green (877 tests), and the game runs
+The solution builds with zero warnings, `dotnet test` is green (835 tests), and the game runs
 **in a Raylib window** as a **twenty-floor campaign with a card draft between floors, five
 powerups and timed steps**: the title leads to a floor intro card, then a seeded maze (15x15 at
 the top, 25x25 at the bottom) drawn as a bioluminescent cave — fog of war, braided dead ends,
 keys, an exit, and a killer (or three) that hunts the player with Dijkstra. **Every floor refills
 five one-key verbs** — Blink, Veil, Drag, Lantern and Shove — and **floors 8 and 14 are gates**
 where the run takes one of two **descent conditions** for the rest of the descent. **The player starts with three hearts**: a catch costs one, throws the
-killer to a distant cell and stuns it, and keeps every key and barrier; hearts carry from floor to
+killer to a distant cell and stuns it, and keeps every key; hearts carry from floor to
 floor and have no ceiling, so an Echo, a room or a card can push past three and the run is lost
 only when the last heart is. Walking is now a **cadence** — a constant 0.26 s per
 cell, with cards and sprint as the only speed-ups — while hunters start at 1.20 s and ramp to 0.22 s,
@@ -45,7 +46,66 @@ and meters, a Schroeder reverb and an intensity mix that follows the nearest hun
 opened through
 Raylib's stream callback; with no device the game is silent rather than broken.
 
-What changed in this pass:
+**No two descents are laid out the same.** Every floor from the fourth down rolls one of three
+**faces** from the run's seed — quiet (one less hunter, a step more light), greedy (one more bloom
+and one more hunter) or haunted (a step less light, more ways through, or a burning lantern where
+the floor had no rule) — and most floors still keep the shape the campaign wrote. Every floor also
+holds an **altar** off the shortest route, stocked with one of **twenty-six relics**: permanent,
+non-drafted boons (a heart on every clear, a faster stride, a third bloom on every floor, a
+resurrection, a magnet for blooms) that the campaign folds into the run's cards the moment they are
+touched. The floor's find, the altar and the Echo all wait off the route, so a run is now a route
+question as much as a chase.
+
+What changed in this pass (a relic is an event, and the run is inspectable):
+
+- **A relic opens a card, and the floor stops.** `PixelCards.RelicFound` (window) and
+  `ConsoleFrontend.ReadRelic` (terminal) show the gem, its family, the relic's name and its
+  promise the moment an altar is touched. The screen switch is what freezes the floor, exactly
+  like the Echo's card; the altar was already banked by `Campaign.Sync`, so the card changes no
+  state and closing it only gives the floor back. The terminal restarts its clock afterwards so
+  the read is not handed to the hunters as walking time.
+- **Run details on the pause menu.** The pause menu has five entries now: `RUN DETAILS` opens a
+  scrolling page with the floor, hearts, blooms, garden and relic count, the run's aggregate
+  modifier line, the active condition or floor gimmick, and every card and relic the run carries
+  — relics tagged `RELIC` in their family's colour. The terminal's pause menu gained `[V] run
+  details` printing the same list. `RelicFamily` (Body, Light, Hunt, Garden, Rite) moved into Core
+  so the gem colour, the tag colour and the terminal's tag word cannot drift apart.
+- **Eight more relics (twenty-six now), and a fifth face.** The new relics fill the verb kit and
+  the movement gaps: an extra veil, shove and drag; a third more secret rooms; a cheaper turn; a
+  longer sprint; a softer drag hangover; and Second Harvest, which pays a heart on pickup and a
+  heart on every clear. The starved face takes a bloom (never the last) and hurries the hunt
+  slightly, and the roll grew to six tickets (authored still holds two) so all five faces stay
+  possible.
+- **The tutorial grew with the content.** Two new pages teach the altar and the relic, and that the
+  cave itself changes with the run (quiet, greedy, haunted, starved); the draft and pause pages
+  were renumbered, and the pause page now names `RUN DETAILS`.
+
+What changed in the previous pass (faces and altars first landed):
+
+- **Floor faces.** `FloorFace`/`FloorFaces` in Core roll a face for each authored floor from the
+  run seed and floor number, and `Campaign` applies it while snapshotting its floors. Quiet takes a
+  hunter (never the last) and adds a step of light; greedy adds a bloom and a hunter and hurries
+  them; haunted takes a step of light, opens the walls and gives a rule-less floor the burning
+  lantern. Floors 1–3 stay authored — the teaching ladder must not change shape between runs — and
+  the authored floor holds two of the roll's five tickets, so most of a campaign still looks like
+  the campaign. The face prepends its clause to the floor's gimmick, which the intro card and HUD
+  already show, so the player is told what kind of descent they are in.
+- **Altars and relics.** `RelicKind`/`RelicCatalog` hold twenty-six relics as card-shaped effects
+  (rare tier, a face sentence, no drawback). `Campaign.Build` stocks each floor's altar with a
+  relic the run does not already hold, walking the pool by seed + floor + skip; when the pool is
+  exhausted the floor simply has no altar. `GameState` places the altar on a cell at least one step
+  off the route (after the curiosity, never on it), raises `GameEvent.RelicFound` when it is
+  touched, and wakes every sleeper — the trip is the price. `Campaign.Sync()` is called by both
+  frontends after each tick and folds the relic into the run's cards immediately, so its effect is
+  live on the next floor and a save taken after the altar keeps it. Both catalogs are consulted
+  when a save restores its card ids.
+- **The altar is drawn, not just simulated.** The pixel renderer draws a plinth and a floating gem
+  coloured by the relic's effect family, leaves the empty plinth behind after the take, and floats
+  the relic's name over the explorer for four and a half seconds; the console draws `A`, keeps a
+  full stop on the emptied plinth, and names the relic in the status line. `RelicFound` gets the
+  widest two-note interval in the audio bank.
+
+What changed in the previous pass (curiosities, the tide and the locks):
 
 - **The catalog is readable in the game.** `PixelCards.Codex` draws all thirty-nine cards one row
   each — name, tier on the right, the card's own face sentence — with W/S scrolling and a
@@ -73,6 +133,33 @@ What changed in this pass:
   Memory's blinks). Second Skin gained a second of grace, so it is no longer Blood Pact with less
   upside and the same price. Patient Hunter now pays a step of torch instead of drag's hangover,
   which a player who never drags never felt. `CardCatalogTests` pins all four.
+- **Every floor holds a curiosity.** `CuriosityKind` (Bell / Reliquary / Shrine) is placed on a
+  cell at least one step off the route to the arch, from a hash of the run seed and floor number —
+  so it never moves an existing floor's walls. A bell heals a heart and wakes every hunter; a
+  reliquary spends a heart (never the last) for two blooms and a charge; a shrine gives a step of
+  sight for the floor and a bloom. `Campaign.BloomsPicked` counts the blooms toward the garden.
+  Both frontends draw the three shapes and name them in the HUD; `CuriosityTests` pins placement,
+  each bargain and the last-heart rule.
+- **Floors 3 and 6 are now rules, not dials.** The Drowned Halls run on a tide (`FloorRule.Tide`:
+  twelve seconds dry, two of swell, eight flooded, during which the torch loses a step and hunter
+  time is 1.35×). The Gilded Cage is `FloorRule.ThreeLocks`: three gilded cages placed near,
+  middle and far from the start, and the arch stays barred until all three are thrown. The console
+  prints the locks and the tide's countdown, and the window tints the frame while flooded.
+- **The cave/crystal art search ended without a swap, and its candidates were deleted.** Two
+  rounds (Kenney's, then the dungeon fantasy sets) were rejected before six cave packs were
+  staged: OPP2017's crystal cave (32 px, CC0 — the closest to the bioluminescent brief, but
+  side-view), the Zelda-like top-down cave (16 px, CC0), a purple prebuilt cavern scene (16 px
+  grid, CC0), M13's dark blue cave rock (CC0), Hyptosis' top-down fantasy sheet (16 px, CC-BY 3.0)
+  and an underworld set (32 px, CC-BY 3.0). The finding stands: the look exists in side-view packs
+  and the top-down geometry exists in plain palettes, so a swap would need a hybrid. Blooms and
+  gates keep their current art, and the candidate folder was deleted on 2026-10-22.
+- **The pause card can save, not only quit.** `SAVE & QUIT` writes the run at the moment it is
+  pressed — hearts and blooms earned on the floor included — and returns to the title with
+  `CONTINUE` on it, so a session can end mid-floor without costing the run. The old `QUIT RUN`
+  entry is renamed `ABANDON RUN` and still clears the save, so the two ways out are named apart
+  instead of being told apart after the fact. The terminal gained `[S] save & quit` beside
+  `[Q] abandon run`: `ConsoleFrontend.PauseMenu` returns a `PauseChoice` and `Play`/`PlayCampaign`
+  hand a `RunExit` up to `Run`, which writes the save, throws it away, or rejoins the title.
 - **The terminal hints only what the floor can do.** `ConsoleRenderer.DescribeHints` lists the
   verbs with charges left, so the practice floor (no charges) and a Mute floor no longer
   advertise a key that does nothing.
@@ -898,6 +985,24 @@ caught card — is now set in the compiled pixel face. What is left of the visua
 the **HUD** still lives in the window's letterbox rather than inside the canvas, and a draft card is
 still type on a rectangle (9-slice frames and card art) rather than identity.
 
+## This Pass (persistence and cleanup)
+
+- **Save and resume.** `RunSnapshot` (Core) records a run — seed, floor, hearts, cards, conditions,
+  garden and the room promises still in flight — and `Campaign.Snapshot`/`Campaign.Restore` write
+  and rebuild it. `SaveStore` (UI/Persistence) writes `run.json` under the per-user data folder
+  (or `MAZEGAME_SAVE_DIR`) at every floor, using a temp file and a move; an unreadable file is
+  renamed `.bad`. The title offers `CONTINUE` only while a save exists, and Escape on a finished
+  run returns to the title rather than closing the window.
+- **A persistent garden.** `garden.json` keeps `Blooms`, `DeepestFloor` and `Runs`; one finished
+  run adds its garden to the tally, which the title prints under the rule. Abandoning a run from
+  the pause card clears its save without adding to the garden.
+- **Legacy cleanup.** The barrier/wisp system is gone end to end (rules, commands, sounds, card
+  fields, tests, renderer paths) and `CardEffect.MaxHearts` and its four hidden deltas are gone.
+  The unreachable vector world renderer is deleted; `RaylibRenderer` is now only the chrome
+  (title, HUD strips, hints, hearts, grain) that `PixelRenderer` calls.
+- **Escape and Q.** Q no longer quits from play or from a card; Escape means "back one step"
+  everywhere and only the title's LEAVE ends the session.
+
 ## Next Steps
 
 **Open from the second playtest (2026-10-21):** the player never used a powerup, did not enjoy the
@@ -907,6 +1012,23 @@ kit (Blink, Veil, Drag, Lantern, Shove) and adding two run-scoped **descent cond
 floors 8 and 14; that whole pass is now shipped, including the gate screen, the HUD marks, the
 three replacement floor gimmicks and the card rewrite. What it needs next is the playtest, not
 more code.
+
+**Queued from the tenth pass:**
+
+- **Per-run floor faces and relics are shipped (2026-10-22).** Faces roll from the run seed for
+  floors 4–20 and each floor stocks an altar with a relic the run does not yet hold. The natural
+  next step in the same direction is a **choice of two doors after every arch**, each naming the
+  next floor's face, so variance becomes a decision rather than a roll; `Campaign` already
+  snapshots its roster, so the chosen face indices would live in `RunSnapshot` and a face is still
+  just another `FloorDefinition` with the same number.
+- **Tune the relic economy.** Eighteen relics and one altar per floor is generous on purpose; a
+  playtest should say whether every floor should stock one or only every other floor, whether the
+  altar's wake is a real price, and whether the pool runs dry before the end of a good run. The
+  knobs are `RelicCatalog.Cards`, `Campaign.NextRelic` and the stock in `Campaign.Build`.
+- **The art/texture swap is parked (2026-10-22) and the candidate packs were deleted** at the
+  owner's request. The two routes, if it is picked up again: import a top-down cave shell
+  (Zelda-like walls and floors plus crystal props), or grow a crystal motif in AssetForge itself,
+  which keeps every floor in the art that already exists. Nothing in the build ever read them.
 
 0. **Play floors 1–4 with a hand on the keys.** The playtest that produced this pass stopped at
    floor 4, and it reported four things: static, unreadable walls, a hold that did not walk, and
@@ -1341,7 +1463,7 @@ Run these from the repository root (the folder containing `MazeGame.sln`):
 
 ```bash
 dotnet build                      # must report 0 Warning(s), 0 Error(s)
-dotnet test                       # currently 877/877 passing
+dotnet test                       # currently 835/835 passing
 dotnet run --project tools/AssetForge -- --check   # atlases and themes are healthy
 dotnet run --project src/MazeGame.UI              # Raylib window
 dotnet run --project src/MazeGame.UI -- --console # terminal fallback
@@ -1355,12 +1477,13 @@ If `dotnet` is not on `PATH` (this is the case on the setup machine):
 ~/.dotnet/dotnet run --project src/MazeGame.UI
 ```
 
-Controls: on the title, W/S or the arrows select (`DESCEND`, `TUTORIAL`, `CARDS`, `LEAVE`) and
-Enter/Space confirms; the tutorial turns its pages with Enter, starts the practice floor with P and
+Controls: on the title, W/S or the arrows select (`DESCEND`, `CONTINUE` when a run is saved,
+`TUTORIAL`, `CARDS`, `LEAVE`) and Enter/Space confirms; the tutorial turns its pages with Enter, starts the practice floor with P and
 leaves with Esc; and `C` on the title (or `L` in a pause) opens the catalog. In play, WASD or arrow keys
 move, **hold Shift to sprint** (window only; the console has no sprint yet), and the five powerups
 are Space (Blink), V (Veil), T (Drag), L (Lantern) and F (Shove). At a gate, A/D selects a condition
 and Enter takes it. **E opens a safe room's card** while standing in one (A/D choose, Enter takes,
 Esc leaves). **Esc pauses a floor** (continue, or quit the run back to the title); on the draft, A/D
 choose, Enter takes, S skips for a heart and **R rerolls for hearts**. Q on the title quits; after a
-run, R or Enter descends again. The same keys work in the window and in the terminal.
+run, R or Enter descends again. Esc never quits: it is pause in a floor and "back" on every card,
+and only the title's LEAVE closes the session. The same keys work in the window and in the terminal.

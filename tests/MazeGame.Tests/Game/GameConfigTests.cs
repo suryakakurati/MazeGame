@@ -19,17 +19,10 @@ public sealed class GameConfigTests
         Assert.Equal(15, config.Rows);
         Assert.Equal(15, config.Columns);
         Assert.Equal(3, config.KeyCount);
-        Assert.Equal(5, config.ObstacleCost);
-        Assert.Equal(3, config.BarrierBudget);
         Assert.Equal(0.6, config.EnemyStepSeconds);
         Assert.Equal(3, config.VisionRadius);
         Assert.Equal(8, config.ExtraLoops);
         Assert.Equal(55, config.DeadEndBraidPercent);
-        Assert.Equal(10.0, config.BarrierSealSeconds);
-        Assert.Equal(3.0, config.BarrierBreakSeconds);
-        Assert.Equal(40, config.SealedBarrierCost);
-        Assert.Equal(2, config.LureCount);
-        Assert.Equal(6.0, config.LureSeconds);
         Assert.Equal(2, config.EnemyAuraRadius);
         Assert.Equal(6, config.EnemyAuraDistance);
         Assert.Equal(3, config.StartingHearts);
@@ -75,35 +68,6 @@ public sealed class GameConfigTests
     public void Validate_WithNegativeKeyCount_Throws()
     {
         var config = new GameConfig { KeyCount = -1 };
-
-        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
-    }
-
-    [Fact]
-    public void DefaultBarrierCost_BuysThreeSeconds()
-    {
-        // The published balance: one barrier is a 3-second pause at the default step time.
-        var config = new GameConfig();
-
-        Assert.Equal(3.0, config.ObstacleCost * config.EnemyStepSeconds, precision: 9);
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-10)]
-    public void Validate_WithObstacleCostBelowOne_Throws(int obstacleCost)
-    {
-        // A cost below 1 would let a barrier act as a shortcut (or a wall), which breaks the
-        // "always a route, never a free pass" rules.
-        var config = new GameConfig { ObstacleCost = obstacleCost };
-
-        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
-    }
-
-    [Fact]
-    public void Validate_WithNegativeBarrierBudget_Throws()
-    {
-        var config = new GameConfig { BarrierBudget = -1 };
 
         Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
     }
@@ -230,60 +194,6 @@ public sealed class GameConfigTests
     }
 
     [Theory]
-    [InlineData(-0.1)]
-    [InlineData(double.NaN)]
-    [InlineData(double.PositiveInfinity)]
-    public void Validate_WithInvalidSealTime_Throws(double seconds)
-    {
-        var config = new GameConfig { BarrierSealSeconds = seconds };
-
-        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-1)]
-    [InlineData(double.NaN)]
-    [InlineData(double.PositiveInfinity)]
-    public void Validate_WithInvalidBreakTime_Throws(double seconds)
-    {
-        // If tearing a seal took no time at all, a sealed barrier would be a free pass.
-        var config = new GameConfig { BarrierBreakSeconds = seconds };
-
-        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-5)]
-    public void Validate_WithSealedBarrierCostBelowOne_Throws(int cost)
-    {
-        var config = new GameConfig { SealedBarrierCost = cost };
-
-        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
-    }
-
-    [Fact]
-    public void Validate_WithNegativeLureCount_Throws()
-    {
-        var config = new GameConfig { LureCount = -1 };
-
-        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-1)]
-    [InlineData(double.NaN)]
-    [InlineData(double.PositiveInfinity)]
-    public void Validate_WithInvalidLureLifetime_Throws(double seconds)
-    {
-        var config = new GameConfig { LureSeconds = seconds };
-
-        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
-    }
-
-    [Theory]
     [InlineData(1, 3, 1)]
     [InlineData(1, 2, 0)]
     [InlineData(2, 2, 2)]
@@ -313,37 +223,6 @@ public sealed class GameConfigTests
         var config = new GameConfig { Rows = 2, Columns = 2, KeyCount = 0 };
 
         config.Validate();
-    }
-
-    [Theory]
-    [InlineData(-0.1)]
-    [InlineData(double.NaN)]
-    [InlineData(double.PositiveInfinity)]
-    public void Validate_WithInvalidWispStun_Throws(double seconds)
-    {
-        var config = new GameConfig { LureStunSeconds = seconds };
-
-        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
-    }
-
-    [Fact]
-    public void Validate_WithNegativeWispVisionPenalty_Throws()
-    {
-        // A wisp cannot grant sight: the penalty is a cost, never a bonus.
-        var config = new GameConfig { LureVisionPenalty = -1 };
-
-        Assert.Throws<ArgumentOutOfRangeException>(() => config.Validate());
-    }
-
-    [Fact]
-    public void Validate_WithTheDefaultWispRules_IsAllowed()
-    {
-        var config = new GameConfig();
-
-        config.Validate();
-
-        Assert.Equal(0.0, config.LureStunSeconds);
-        Assert.Equal(0, config.LureVisionPenalty);
     }
 
     [Theory]

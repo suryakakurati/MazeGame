@@ -72,13 +72,19 @@ public static class FloorCatalog
         },
         new()
         {
+            // The tide is the floor's clock: twelve seconds of dry hall, two of warning, then
+            // eight of water that takes a step of sight and hurries the hunt by a third. The
+            // player reads the swell and plans the next room around it.
             Number = 3,
             Name = "Drowned Halls",
             ThemeId = "drowned",
-            Gimmick = "somebody built this, and the sea took it",
-            KeyCount = 4,
+            Gimmick = "the tide comes in and takes the light",
+            KeyCount = 3,
             EnemyStepSeconds = 1.00,
             PlayerStepSeconds = PlayerCadenceSeconds,
+            VisionRadius = 4,
+            Shape = ShapeKind.Ellipse,
+            Rule = FloorRule.Tide,
         },
         new()
         {
@@ -109,17 +115,19 @@ public static class FloorCatalog
         },
         new()
         {
-            // No blink at all: the first floor that removes a verb.
+            // Three locks instead of a fifth bloom: the arch is barred until all three gilded
+            // cages are thrown, and they sit near, middle and far from where the player starts.
+            // The floor is a route to plan, not a number to beat.
             Number = 6,
             Name = "The Gilded Cage",
             ThemeId = "gilded",
-            Gimmick = "no blink down here",
-            KeyCount = 5,
+            Gimmick = "three locks bar the arch",
+            KeyCount = 2,
             Rows = 17,
             Columns = 17,
             EnemyStepSeconds = 0.85,
             PlayerStepSeconds = PlayerCadenceSeconds,
-            Powerups = PowerupCharges.ForFloor(6).With(PowerupKind.Blink, 0),
+            Rule = FloorRule.ThreeLocks,
         },
         new()
         {

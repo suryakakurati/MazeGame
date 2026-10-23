@@ -73,7 +73,7 @@ public static class CardCatalog
             Tier = CardTier.Uncommon,
             MaxCopies = 2,
             FaceText = "Heal two hearts now, but the killer gives you 12% less time between steps.",
-            Effect = new CardEffect { HealNow = 2, MaxHearts = 1, EnemyStepScale = 0.88 },
+            Effect = new CardEffect { HealNow = 2, EnemyStepScale = 0.88 },
         },
         new()
         {
@@ -106,7 +106,7 @@ public static class CardCatalog
             Name = "Featherfall",
             Tier = CardTier.Rare,
             FaceText = "The first catch each floor costs no heart, but your torch loses a step for the rest of the run.",
-            Effect = new CardEffect { FirstCatchFree = true, MaxHearts = -1, VisionRadius = -1 },
+            Effect = new CardEffect { FirstCatchFree = true, VisionRadius = -1 },
         },
         new()
         {
@@ -171,7 +171,7 @@ public static class CardCatalog
             Name = "Debt of Sight",
             Tier = CardTier.Rare,
             FaceText = "Heal two hearts now, but your torch loses two steps for the rest of the run.",
-            Effect = new CardEffect { HealNow = 2, MaxHearts = 2, VisionRadius = -2 },
+            Effect = new CardEffect { HealNow = 2, VisionRadius = -2 },
         },
         new()
         {
@@ -197,7 +197,7 @@ public static class CardCatalog
             Tier = CardTier.Common,
             MaxCopies = 3,
             FaceText = "You walk nearly 18 percent faster, but the killer gives you 8% less time between steps.",
-            Effect = new CardEffect { PlayerStepScale = 0.825, MaxHearts = -1, EnemyStepScale = 0.92 },
+            Effect = new CardEffect { PlayerStepScale = 0.825, EnemyStepScale = 0.92 },
         },
         new()
         {

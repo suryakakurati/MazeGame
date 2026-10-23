@@ -128,26 +128,6 @@ public sealed class GameStateEnemyTests
     }
 
     [Fact]
-    public void Tick_AfterThePlayerMoves_RecomputesTheRoute()
-    {
-        // Step 1: the player stands on (0,1) with a barrier under them, so the killer's
-        // cached route runs along the top and it steps to (0,2).
-        var state = TestLevels.TwoRouteGame();
-        Assert.True(state.TryMove(Direction.East));
-        Assert.True(TestLevels.PlaceBarrierAt(state, 0, 1));
-        state.Tick(TestLevels.OneSecondPerStep);
-        Assert.Equal(state.Maze.GetCell(0, 2), state.Enemy);
-
-        // Step 2: the player steps back to (0,0). The cached route would continue to (0,1),
-        // but the barriers make that expensive, so a recomputed route goes back round the
-        // bottom: the killer must move to (1,2), not (0,1).
-        Assert.True(state.TryMove(Direction.West));
-        state.Tick(TestLevels.OneSecondPerStep);
-
-        Assert.Equal(state.Maze.GetCell(1, 2), state.Enemy);
-    }
-
-    [Fact]
     public void Tick_InTheSmallestMaze_CatchesThePlayerInTwoSteps()
     {
         // 1x3 with no keys: player (0,0), exit (0,1), killer (0,2).

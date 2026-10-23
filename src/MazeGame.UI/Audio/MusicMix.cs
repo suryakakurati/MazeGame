@@ -72,15 +72,14 @@ public static class MusicMix
     /// <returns>The intensity the mix should move towards.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="state"/> is null.</exception>
     /// <remarks>
-    /// Aiming freezes the clock, so it also settles the music: a player planning a barrier is not
-    /// being chased this second, even if the killer is one cell away. A stunned killer is a
-    /// reprieve, not a chase, which is exactly what the drop back to tense should say.
+    /// A stunned killer is a reprieve, not a chase, which is exactly what the drop back to calm
+    /// should say.
     /// </remarks>
     public static MusicIntensity From(GameState state)
     {
         ArgumentNullException.ThrowIfNull(state);
 
-        if (state.Status != GameStatus.InProgress || state.IsAiming || state.IsEnemyStunned)
+        if (state.Status != GameStatus.InProgress || state.IsEnemyStunned)
         {
             return MusicIntensity.Calm;
         }

@@ -219,19 +219,6 @@ public sealed class GameStateMovementTests
     }
 
     [Fact]
-    public void SprintIsRefusedWhileAiming()
-    {
-        var state = Corridor();
-        state.SetSprinting(true);
-
-        Assert.True(state.BeginBarrierPlacement());
-        Assert.False(state.IsSprinting);
-
-        state.CancelPlacement();
-        Assert.True(state.IsSprinting);
-    }
-
-    [Fact]
     public void AnInstantFloor_CannotSprint()
     {
         var state = Corridor(playerStepSeconds: 0);
@@ -239,20 +226,6 @@ public sealed class GameStateMovementTests
 
         Assert.False(state.IsSprinting);
         Assert.Equal(1.0, state.SprintStaminaFraction, precision: 9);
-    }
-
-    [Fact]
-    public void Aiming_FreezesTheStepCooldown()
-    {
-        var state = Corridor();
-
-        Assert.True(state.TryMove(Direction.East));
-        Assert.True(state.BeginBarrierPlacement());
-
-        state.Tick(5.0);
-
-        // The clock is frozen while aiming, and the cooldown is part of the clock.
-        Assert.True(state.IsPlayerStepping);
     }
 
     [Fact]
@@ -374,7 +347,6 @@ public sealed class GameStateMovementTests
                 Rows = 6,
                 Columns = 6,
                 KeyCount = 3,
-                BarrierBudget = 2,
                 EnemyStepSeconds = 1000.0,
                 PlayerStepSeconds = playerStepSeconds,
                 MomentumRampPerStep = ramp,
@@ -509,7 +481,6 @@ public sealed class GameStateMovementTests
                 Rows = 1,
                 Columns = length,
                 KeyCount = 3,
-                BarrierBudget = 2,
                 EnemyStepSeconds = 1000.0,
                 PlayerStepSeconds = Step,
                 SprintMultiplier = 1.4,
@@ -540,7 +511,6 @@ public sealed class GameStateMovementTests
                 Rows = 1,
                 Columns = 6,
                 KeyCount = keyCount,
-                BarrierBudget = 2,
                 EnemyStepSeconds = enemyStepSeconds,
                 PlayerStepSeconds = playerStepSeconds,
                 SprintMultiplier = sprintMultiplier,

@@ -63,11 +63,11 @@ public sealed class RunModifiersTests
     }
 
     [Fact]
-    public void BloodPact_BuysAHeartAndSpeedsTheKillerUp()
+    public void BloodPact_HealsNowAndSpeedsTheKillerUp()
     {
         var applied = RunModifiers.None.With(Card("blood-pact")).Apply(Floor());
 
-        Assert.Equal(4, applied.MaxHearts);
+        Assert.Equal(2, Card("blood-pact").Effect.HealNow);
         Assert.Equal(0.6 * 0.88, applied.EnemyStepSeconds, precision: 9);
         Assert.Equal(3, applied.VisionRadius);
     }
@@ -239,11 +239,11 @@ public sealed class RunModifiersTests
     }
 
     [Fact]
-    public void DebtOfSight_BuysHeartsAndNarrowsTheTorch()
+    public void DebtOfSight_HealsNowAndNarrowsTheTorch()
     {
         var applied = RunModifiers.None.With(Card("debt-of-sight")).Apply(Floor());
 
-        Assert.Equal(5, applied.MaxHearts);
+        Assert.Equal(2, Card("debt-of-sight").Effect.HealNow);
         Assert.Equal(1, applied.VisionRadius);
     }
 
@@ -271,16 +271,12 @@ public sealed class RunModifiersTests
     }
 
     [Fact]
-    public void LightFeet_BuysSpeedAndCostsAHeartSlot()
+    public void LightFeet_BuysSpeedAndCostsTheKillerGround()
     {
         var applied = RunModifiers.None.With(Card("light-feet")).Apply(Floor() with { StartingHearts = 2 });
 
         Assert.Equal(0.11 * 0.825, applied.PlayerStepSeconds, precision: 9);
-
-        // The slot is taken from the ceiling, never from a heart the player is already holding:
-        // the clamp is what keeps a card from throwing a wound at the player.
-        Assert.Equal(2, applied.MaxHearts);
-        Assert.Equal(3, RunModifiers.None.With(Card("light-feet")).Apply(Floor()).MaxHearts);
+        Assert.Equal(2, applied.StartingHearts);
     }
 
     [Fact]
@@ -348,15 +344,14 @@ public sealed class RunModifiersTests
     }
 
     [Fact]
-    public void Apply_NeverLetsABudgetOrCountGoNegative()
+    public void Apply_NeverLetsACountGoNegative()
     {
-        var hungry = CustomCard(new CardEffect { BarrierBudget = -9, LureCount = -9, KeyCount = -9 });
+        var hungry = CustomCard(new CardEffect { KeyCount = -9, EnemyAuraDistance = -9 });
 
         var applied = RunModifiers.None.With(hungry).Apply(Floor());
 
-        Assert.Equal(0, applied.BarrierBudget);
-        Assert.Equal(0, applied.LureCount);
         Assert.Equal(0, applied.KeyCount);
+        Assert.Equal(0, applied.EnemyAuraDistance);
     }
 
     [Fact]
@@ -371,19 +366,6 @@ public sealed class RunModifiersTests
         var applied = modifiers.Apply(Floor());
 
         Assert.Equal(RunModifiers.MinimumStepSeconds, applied.EnemyStepSeconds, precision: 9);
-    }
-
-    [Fact]
-    public void Apply_NeverPutsTheCeilingBelowTheHeartsCarried()
-    {
-        var cruel = CustomCard(new CardEffect { MaxHearts = -5 });
-        var woundedFloor = Floor() with { StartingHearts = 2, MaxHearts = 3 };
-
-        var applied = RunModifiers.None.With(cruel).Apply(woundedFloor);
-
-        // The floor must stay buildable: a ceiling under StartingHearts would throw.
-        Assert.Equal(2, applied.MaxHearts);
-        Assert.Equal(2, applied.StartingHearts);
     }
 
     [Fact]
@@ -425,7 +407,6 @@ public sealed class RunModifiersTests
 
         Assert.Contains("VISION +2", text, StringComparison.Ordinal);
         Assert.Contains("AURA +3", text, StringComparison.Ordinal);
-        Assert.Contains("HEARTS +1", text, StringComparison.Ordinal);
         Assert.Contains("KILLER PACE -12%", text, StringComparison.Ordinal);
     }
 
@@ -454,15 +435,11 @@ public sealed class RunModifiersTests
         Rows = 15,
         Columns = 15,
         KeyCount = 3,
-        BarrierBudget = 3,
-        BarrierSealSeconds = 10.0,
         EnemyStepSeconds = 0.6,
         PlayerStepSeconds = 0.11,
         VisionRadius = 3,
         EnemyAuraDistance = 6,
         EnemyAuraRadius = 2,
-        LureCount = 2,
-        LureSeconds = 6.0,
         StartingHearts = 3,
         MaxHearts = 3,
         Seed = 42,

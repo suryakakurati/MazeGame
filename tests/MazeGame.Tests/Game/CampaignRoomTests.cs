@@ -273,7 +273,6 @@ public sealed class CampaignRoomTests
 
         Assert.Empty(campaign.Modifiers.Cards);
         Assert.Equal(heartsBefore - 1, campaign.Hearts);
-        Assert.Equal(0, campaign.Modifiers.MaxHearts);
     }
 
     [Fact]
@@ -544,7 +543,6 @@ public sealed class CampaignRoomTests
             Assert.Equal(folded.VisionRadius, rebuilt.VisionRadius);
             Assert.Equal(folded.EnemyStepScale, rebuilt.EnemyStepScale, 6);
             Assert.Equal(folded.PlayerStepScale, rebuilt.PlayerStepScale, 6);
-            Assert.Equal(folded.MaxHearts, rebuilt.MaxHearts);
             Assert.Equal(folded.KeyCount, rebuilt.KeyCount);
             Assert.Equal(folded.CatchCost, rebuilt.CatchCost);
             Assert.Equal(folded.Describe(), rebuilt.Describe());

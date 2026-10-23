@@ -22,18 +22,6 @@ public enum GameCommand
     /// <summary>Step east, or move the aiming cursor east while aiming.</summary>
     MoveEast,
 
-    /// <summary>Start aiming a barrier, which also pauses the game clock.</summary>
-    BeginAim,
-
-    /// <summary>Start aiming a wisp, which pauses the clock in exactly the same way.</summary>
-    BeginLureAim,
-
-    /// <summary>Place the aimed barrier or wisp on the aiming cursor's cell.</summary>
-    ConfirmAim,
-
-    /// <summary>Stop aiming without spending a barrier or a wisp.</summary>
-    CancelAim,
-
     /// <summary>Step through the wall the player faces.</summary>
     Blink,
 
@@ -58,6 +46,4 @@ public enum GameCommand
     /// </remarks>
     Interact,
 
-    /// <summary>Leave the game.</summary>
-    Quit,
 }

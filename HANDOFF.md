@@ -24,6 +24,41 @@ If they are not green, fixing that is the first task, not the new feature.
 
 ## Project state at handoff (2026-10-22)
 
+**The latest pass (the relic card, run details and more content) is in:** touching an altar opens a
+**relic card** and freezes the floor until it is read (window `Screen.Relic`, terminal
+`ReadRelic`), and the pause menu's **RUN DETAILS** page lists every card and relic the run carries
+(window scrolls with W/S; terminal opens with `V`). The pool is now **twenty-six relics** with a
+Core-side `RelicFamily` deciding their colour, and a fifth floor face, **starved**, joined the
+roll. The tutorial gained pages for the altar/relic and for the run's faces. **The suite is 835
+tests, all green.**
+
+**The pass before that (run variance and relics) is in:** every floor holds an **altar** off the
+shortest route, stocked with a permanent **relic** (`RelicCatalog`), and touching it wakes the
+sleepers and folds the relic into the run's cards via `Campaign.Sync()` — called by both
+frontends after each tick. From floor 4 on, each floor also rolls a **face** (quiet, greedy,
+haunted or starved) from the run seed, so the same twenty authored places bend differently between
+runs; floors 1–3 stay fixed as the teaching ladder. Both renderers draw the plinth and gem, and the
+pixel one floats the relic's name over the explorer once.
+
+**The previous pass (curiosities, the tide, the Gilded Cage's locks and staged art candidates) is
+in:** every generated floor also holds one optional **curiosity** off the shortest route (a drowned
+bell, a sealed reliquary or a gardener's shrine), drawn from the run's seed and announced in the
+HUD; the Drowned Halls (floor 3) run on a tide and the Gilded Cage (floor 6) on three locks that
+bar its arch. Six cave/crystal art packs sat in `assets/candidates/` for a future texture swap —
+nothing in the build reads them; the candidate folder was deleted on 2026-10-22 and the swap is
+parked in `PROGRESS.md`.
+
+**The pass before that (save/resume, a persistent garden and the legacy cleanup) is in:** a run writes
+`run.json` at every floor under the per-user data folder (or `MAZEGAME_SAVE_DIR`), `CONTINUE` on the
+title rebuilds that floor from the run's seed, and `garden.json` keeps the blooms of every finished
+run. The pause card's `SAVE & QUIT` writes the run on the spot and keeps it for `CONTINUE`, beside
+`ABANDON RUN`, which clears it. `Escape` is "back" on every screen and never quits; only the
+title's `LEAVE` ends the session.
+The barrier/wisp system and the inert `CardEffect.MaxHearts` deltas are deleted, and
+`RaylibRenderer` is now only the chrome (the world is `PixelRenderer`). See `PROGRESS.md` for the
+full list and the tests that cover it.
+
+
 **The latest pass (a codex, a practice floor and the fourth wave's balance) is in:** the catalog is
 readable in the game — `PixelCards.Codex` from the title's `CARDS` entry and the pause menu's, with
 W/S scrolling, and `ConsoleFrontend.PrintCodex` printing the same data by rarity. The tutorial now
@@ -37,7 +72,7 @@ hangover — pinned by `CardCatalogTests.TheFourthWave_PricesItsTradesInUnitsThe
 `ConsoleRenderer.DescribeHints` now lists only the verbs that have charges, which keeps the
 practice floor honest, and the practice floor is a 9x9 chamber rather than the first pass's
 one-row corridor, which was a thin lit line in a dark viewport and read as a black screen.
-**The suite is 877 tests, all green.**
+**The suite is 798 tests, all green.**
 
 **The pass before that (pause, tutorial, rerolls and a fourth card wave) is in:** Escape now opens a
 pause card (`Screen.Paused`, `PixelCards.Pause`, `ConsoleFrontend.PauseMenu`) with `CONTINUE` and
@@ -53,8 +88,8 @@ seconds, each flower on its own tile only, through `GameConfig.BloomGlowReach`/`
 `GameState.IsBloomGlowActive` and `RecomputeVisibility`, with each extra copy lighting one more step
 around every flower. The title's second entry opens a
 **guided Tutorial** (`Tutorial`, `TutorialStep` in Core, `PixelCards.DrawTutorial` in the window,
-`ConsoleFrontend.PrintTutorial` in the terminal): twelve pages covering the floor, the hunters,
-hearts, every ability and the pause menu. **The suite is 868 tests, all green.**
+`ConsoleFrontend.PrintTutorial` in the terminal): fourteen pages covering the floor, the hunters,
+hearts, every ability, the altar and relics, the faces a run rolls, and the pause menu. **The suite is 868 tests, all green.**
 
 **The pass before that (the ten-item polish list) is in:** rooms roll ten percent after floor 1 and
 their door is lit within three steps (`GameState.IsSafeRoomDoorInSight`); Threshold Sense and

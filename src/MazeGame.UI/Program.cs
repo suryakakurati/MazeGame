@@ -23,7 +23,7 @@ var config = new GameConfig();
 // mode, so "descend again" after a lost run is the same call as the first descent.
 var factory = new GameFactory(config, seed => new SeededRandom(seed), new DijkstraPathfinder());
 
-if (useConsole || !RaylibFrontend.TryRun(config, factory.CreateCampaign))
+if (useConsole || !RaylibFrontend.TryRun(config, factory.CreateCampaign, factory.RestoreCampaign))
 {
-    ConsoleFrontend.Run(factory.CreateCampaign);
+    ConsoleFrontend.Run(factory.CreateCampaign, factory.RestoreCampaign);
 }

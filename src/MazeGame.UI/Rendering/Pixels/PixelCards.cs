@@ -41,6 +41,14 @@ public static class PixelCards
     /// </summary>
     /// <param name="font">The loaded font.</param>
     /// <param name="selectedItem">The highlighted menu entry, zero-based.</param>
+    /// <param name="hasContinue">
+    /// Whether a saved run exists. CONTINUE is drawn only when it is; the frontend's highlight
+    /// skips the entry too, so the two always agree about what is on the menu.
+    /// </param>
+    /// <param name="gardenBlooms">
+    /// The garden the player has grown across finished runs, or zero for a first launch. It is
+    /// set under the rule as a quiet line: a tally, not a score.
+    /// </param>
     /// <remarks>
     /// The atmosphere behind this — the cave gradient, the breathing blooms and the drifting
     /// spores — is painted by the renderer first, so this method only sets type on top of it.
@@ -48,7 +56,7 @@ public static class PixelCards
     /// wide as the window can hold, and the menu keeps its distance below it.
     /// </remarks>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="font"/> is null.</exception>
-    public static void Title(PixelFont font, int selectedItem)
+    public static void Title(PixelFont font, int selectedItem, bool hasContinue = false, int gardenBlooms = 0)
     {
         ArgumentNullException.ThrowIfNull(font);
 
@@ -80,15 +88,33 @@ public static class PixelCards
             width >= 760 ? 2 : 1,
             Dim);
 
+        if (gardenBlooms > 0)
+        {
+            font.DrawCentered($"THE GARDEN HOLDS {gardenBlooms} BLOOMS", centreX, ruleY + 44, 1, Fade(Glow, 0.7));
+        }
+
         var menuScale = Math.Clamp(width / 260, 2, 4);
         var menuY = Math.Max(ruleY + 58, (int)(height * 0.54f));
 
         var rowStep = (menuScale * 10) + 14;
+        var row = 0;
 
         DrawMenuItem(font, "DESCEND", centreX, menuY, selectedItem == 0, time, menuScale);
-        DrawMenuItem(font, "TUTORIAL", centreX, menuY + rowStep, selectedItem == 1, time, menuScale);
-        DrawMenuItem(font, "CARDS", centreX, menuY + (rowStep * 2), selectedItem == 2, time, menuScale);
-        DrawMenuItem(font, "LEAVE", centreX, menuY + (rowStep * 3), selectedItem == 3, time, menuScale);
+        row++;
+
+        if (hasContinue)
+        {
+            DrawMenuItem(font, "CONTINUE", centreX, menuY + (rowStep * row), selectedItem == 1, time, menuScale);
+            row++;
+        }
+
+        DrawMenuItem(font, "TUTORIAL", centreX, menuY + (rowStep * row), selectedItem == (hasContinue ? 2 : 1), time, menuScale);
+        row++;
+
+        DrawMenuItem(font, "CARDS", centreX, menuY + (rowStep * row), selectedItem == (hasContinue ? 3 : 2), time, menuScale);
+        row++;
+
+        DrawMenuItem(font, "LEAVE", centreX, menuY + (rowStep * row), selectedItem == (hasContinue ? 4 : 3), time, menuScale);
 
         font.DrawCentered(
             "W/S OR ARROWS: SELECT   ENTER: CONFIRM   ESC: LEAVE",
@@ -853,14 +879,19 @@ public static class PixelCards
     }
 
     /// <summary>
-    /// Draws the pause menu over a frozen floor: continue, or leave the run.
+    /// Draws the pause menu over a frozen floor: continue, read the cards, save and leave, or
+    /// abandon the run.
     /// </summary>
     /// <param name="font">The loaded font.</param>
-    /// <param name="selectedItem">The highlighted entry (0 = continue, 1 = quit run).</param>
+    /// <param name="selectedItem">
+    /// The highlighted entry (0 = continue, 1 = cards, 2 = save and quit, 3 = abandon run).
+    /// </param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="font"/> is null.</exception>
     /// <remarks>
     /// The world is still drawn underneath, dimmed rather than replaced: the pause is a hold on
-    /// this floor, not another screen, so the player can see where they left off.
+    /// this floor, not another screen, so the player can see where they left off. SAVE &amp; QUIT
+    /// and ABANDON RUN both return to the title and differ only in whether the save survives, so
+    /// the two are named apart rather than left to be told apart after the fact.
     /// </remarks>
     public static void Pause(PixelFont font, int selectedItem)
     {
@@ -870,7 +901,7 @@ public static class PixelCards
         var height = Raylib.GetScreenHeight();
         var centreX = width / 2;
         var panelWidth = Math.Min(width - 64, 420);
-        var panelHeight = 300;
+        var panelHeight = 392;
         var left = centreX - (panelWidth / 2);
         var top = (height / 2) - (panelHeight / 2);
         var time = Raylib.GetTime();
@@ -886,8 +917,10 @@ public static class PixelCards
         font.DrawCentered("THE DARK WAITS", centreX, top + 66, 1, Dim);
 
         DrawMenuItem(font, "CONTINUE", centreX, top + 100, selectedItem == 0, time, 3);
-        DrawMenuItem(font, "CARDS", centreX, top + 146, selectedItem == 1, time, 3);
-        DrawMenuItem(font, "QUIT RUN", centreX, top + 192, selectedItem == 2, time, 3);
+        DrawMenuItem(font, "RUN DETAILS", centreX, top + 142, selectedItem == 1, time, 3);
+        DrawMenuItem(font, "CARDS", centreX, top + 184, selectedItem == 2, time, 3);
+        DrawMenuItem(font, "SAVE & QUIT", centreX, top + 226, selectedItem == 3, time, 3);
+        DrawMenuItem(font, "ABANDON RUN", centreX, top + 268, selectedItem == 4, time, 3);
 
         Rule(centreX, top + panelHeight - 62, Glow);
         font.DrawCentered(
@@ -895,6 +928,194 @@ public static class PixelCards
             centreX,
             top + panelHeight - 46,
             1,
+            Text);
+    }
+
+    /// <summary>
+    /// Draws the card shown the moment an altar's relic is taken: a gem, its family, its name and
+    /// the promise it makes for the rest of the run.
+    /// </summary>
+    /// <param name="font">The loaded font.</param>
+    /// <param name="kind">The relic that was taken.</param>
+    /// <param name="accent">The floor's accent colour.</param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="font"/> is null.</exception>
+    /// <remarks>
+    /// The floor is frozen while this is up, for the same reason the Echo is: a relic changes the
+    /// run, not the floor, so the player should read what they gained before the hunt resumes. The
+    /// gem's colour is the relic's family, which is also the colour it wears on the run details
+    /// card, so the two read as the same thing.
+    /// </remarks>
+    public static void RelicFound(PixelFont font, RelicKind kind, Color accent)
+    {
+        ArgumentNullException.ThrowIfNull(font);
+
+        var card = RelicCatalog.CardFor(kind);
+        var tint = PixelRenderer.RelicTint(kind);
+        var width = Raylib.GetScreenWidth();
+        var height = Raylib.GetScreenHeight();
+        var centreX = width / 2;
+        var panelWidth = Math.Min(width - 64, 520);
+        const int panelHeight = 330;
+        var left = centreX - (panelWidth / 2);
+        var top = (height / 2) - (panelHeight / 2);
+
+        Begin(width, height);
+
+        Raylib.DrawRectangle(0, 0, width, height, new Color(2, 7, 9, 208));
+        Raylib.DrawRectangle(left + 7, top + 7, panelWidth, panelHeight, new Color(0, 0, 0, 140));
+        Raylib.DrawRectangle(left, top, panelWidth, panelHeight, new Color(4, 11, 13, 250));
+        Frame(left, top, panelWidth, panelHeight, Fade(tint, 0.7));
+        Frame(left + 4, top + 4, panelWidth - 8, panelHeight - 8, Fade(tint, 0.2));
+        Raylib.DrawRectangle(left, top, panelWidth, 2, Fade(tint, 0.95));
+
+        // The gem is drawn from the same three rectangles the floor's altar uses, so the card
+        // points back at the thing the player just touched.
+        var gemY = top + 42;
+        Raylib.DrawCircle(centreX, gemY, 20.0f, Fade(tint, 0.14));
+        Raylib.DrawCircle(centreX, gemY, 12.0f, Fade(tint, 0.24));
+        Raylib.DrawRectangle(centreX - 5, gemY - 10, 10, 10, tint);
+        Raylib.DrawRectangle(centreX - 8, gemY - 4, 16, 7, tint);
+        Raylib.DrawRectangle(centreX - 5, gemY + 3, 10, 5, tint);
+
+        font.DrawCentered("RELIC FOUND", centreX, top + 72, 1, Fade(tint, 1.0));
+        Heading(font, card.Name.ToUpperInvariant(), centreX, top + 92, panelWidth - 48, accent);
+        font.DrawCentered(
+            Fit($"{FamilyWord(kind)} - KEPT FOR THE REST OF THE RUN", 1, panelWidth - 40),
+            centreX,
+            top + 140,
+            1,
+            Dim);
+
+        Rule(centreX, top + 160, tint);
+
+        var lines = Wrap(card.FaceText, 2, panelWidth - 72);
+
+        for (var index = 0; index < lines.Count && index < 3; index++)
+        {
+            font.DrawCentered(lines[index], centreX, top + 180 + (index * 22), 2, Text);
+        }
+
+        Rule(centreX, top + panelHeight - 62, tint);
+        font.DrawCentered(
+            Fit("ENTER / SPACE: CONTINUE", 2, panelWidth - 24),
+            centreX,
+            top + panelHeight - 46,
+            2,
+            Text);
+    }
+
+    /// <summary>
+    /// Draws the run details card: what the run is, and every card and relic it is carrying.
+    /// </summary>
+    /// <param name="font">The loaded font.</param>
+    /// <param name="campaign">The run to describe.</param>
+    /// <param name="scroll">The first carried item to draw, clamped to the list.</param>
+    /// <param name="accent">The floor's accent colour.</param>
+    /// <exception cref="ArgumentNullException">Thrown when an argument is null.</exception>
+    /// <remarks>
+    /// The pause menu names the floor and the hearts; this is the page that says why the run plays
+    /// the way it does. A relic is tagged as a relic rather than folded in with the drafted cards,
+    /// because the player earned it by walking to an altar rather than by paying a card's price.
+    /// </remarks>
+    public static void RunDetails(PixelFont font, Campaign campaign, int scroll, Color accent)
+    {
+        ArgumentNullException.ThrowIfNull(font);
+        ArgumentNullException.ThrowIfNull(campaign);
+
+        var width = Raylib.GetScreenWidth();
+        var height = Raylib.GetScreenHeight();
+        var centreX = width / 2;
+        const int left = 32;
+        const int rowHeight = 50;
+        var right = width - left;
+        const int top = 152;
+        var visible = Math.Max(1, (height - top - 92) / rowHeight);
+        var carried = campaign.Modifiers.Cards;
+        var maxScroll = Math.Max(0, carried.Count - visible);
+        var first = Math.Clamp(scroll, 0, maxScroll);
+        var last = Math.Min(carried.Count, first + visible);
+        var relics = 0;
+
+        foreach (var held in carried)
+        {
+            if (RelicCatalog.ById(held.Id) is not null)
+            {
+                relics++;
+            }
+        }
+
+        Begin(width, height);
+
+        font.DrawCentered("THE RUN", centreX, 22, 1, Glow);
+        Heading(font, "WHAT YOU CARRY", centreX, 38, width - 72, accent);
+        font.DrawCentered(
+            FormattableString.Invariant(
+                $"FLOOR {campaign.FloorNumber:00} / {campaign.FloorCount:00}   HEARTS {campaign.Hearts}   BLOOMS {campaign.BloomsPicked}   GARDEN {campaign.GardenCount}   RELICS {relics}"),
+            centreX,
+            88,
+            1,
+            Dim);
+        font.DrawCentered(
+            Fit(campaign.Modifiers.Describe(), 1, width - 72),
+            centreX,
+            104,
+            1,
+            Text);
+
+        var conditions = DescentConditionCatalog.Line(campaign.ActiveConditions);
+        var rule = conditions.Length > 0
+            ? conditions
+            : campaign.CurrentFloor.Gimmick ?? string.Empty;
+
+        if (rule.Length > 0)
+        {
+            font.DrawCentered(Fit(rule, 1, width - 72), centreX, 120, 1, Fade(accent, 1.0));
+        }
+
+        Rule(centreX, 140, accent);
+
+        if (carried.Count == 0)
+        {
+            font.DrawCentered("NOTHING YET - THE FIRST DRAFT IS STILL AHEAD", centreX, top + 40, 2, Dim);
+        }
+
+        for (var row = first; row < last; row++)
+        {
+            var held = carried[row];
+            var y = top + ((row - first) * rowHeight);
+            var relic = RelicCatalog.KindOf(held.Id);
+            var tag = relic is null ? TierWord(held.Tier) : "RELIC";
+            var tagColor = relic is { } kind ? PixelRenderer.RelicTint(kind) : TierColor(held.Tier);
+
+            font.Draw(Fit(held.Name.ToUpperInvariant(), 2, right - left - 96), left, y, 2, Text);
+            font.Draw(tag, right - PixelFont.MeasureWidth(tag, 1), y + 4, 1, tagColor);
+
+            var lines = Wrap(held.FaceText, 1, right - left);
+
+            for (var line = 0; line < lines.Count && line < 2; line++)
+            {
+                var text = line == 1 && lines.Count > 2 ? $"{lines[line]} ..." : lines[line];
+                font.Draw(Fit(text, 1, right - left), left, y + 20 + (line * 11), 1, Dim);
+            }
+
+            Raylib.DrawRectangle(left, y + rowHeight - 3, right - left, 1, Fade(Dim, 0.16));
+        }
+
+        if (carried.Count > 0)
+        {
+            font.DrawCentered(
+                FormattableString.Invariant($"ITEMS {first + 1}-{last} OF {carried.Count}"),
+                centreX,
+                height - 62,
+                1,
+                Dim);
+        }
+
+        font.DrawCentered(
+            Fit("W/S OR ARROWS: SCROLL   ESC: BACK", width >= 700 ? 2 : 1, width - 24),
+            centreX,
+            height - 38,
+            width >= 700 ? 2 : 1,
             Text);
     }
 
@@ -1557,6 +1778,17 @@ public static class PixelCards
     /// </remarks>
     private static int CharsPerLine(int scale, int maxWidth) =>
         Math.Max(1, ((maxWidth / scale) + 1) / PixelFont.Advance);
+
+    /// <summary>Returns the word the relic card names a family with.</summary>
+    /// <param name="kind">The relic.</param>
+    private static string FamilyWord(RelicKind kind) => RelicCatalog.FamilyOf(kind) switch
+    {
+        RelicFamily.Body => "BODY",
+        RelicFamily.Light => "LIGHT",
+        RelicFamily.Hunt => "THE HUNT",
+        RelicFamily.Garden => "THE GARDEN",
+        _ => "RITE",
+    };
 
     /// <summary>Returns the label a card's tier is drawn with.</summary>
     /// <param name="tier">The tier.</param>

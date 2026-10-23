@@ -48,57 +48,6 @@ public sealed class GameEventTests
     }
 
     [Fact]
-    public void PlacingABarrier_RaisesSealPlaced()
-    {
-        var state = TestLevels.CorridorGame(keyCount: 3);
-
-        Assert.True(TestLevels.PlaceBarrierAt(state, 0, 3));
-
-        Assert.Contains(GameEvent.SealPlaced, state.DrainEvents());
-    }
-
-    [Fact]
-    public void ASealRunningOut_RaisesSealCracked()
-    {
-        var state = TestLevels.CorridorGame(keyCount: 3, barrierSealSeconds: 0.4);
-
-        Assert.True(TestLevels.PlaceBarrierAt(state, 0, 3));
-        state.DrainEvents();
-
-        state.Tick(0.5);
-
-        Assert.Contains(GameEvent.SealCracked, state.DrainEvents());
-    }
-
-    [Fact]
-    public void TheKillerTearingASeal_RaisesSealBroken()
-    {
-        var state = TestLevels.CorridorGame(keyCount: 3, barrierSealSeconds: 30.0);
-
-        // (0,4) is the killer's only way to the player, so it has to tear the seal down.
-        Assert.True(TestLevels.PlaceBarrierAt(state, 0, 4));
-        state.DrainEvents();
-
-        for (var tick = 0; tick < 12; tick++)
-        {
-            state.Tick(1.0);
-        }
-
-        Assert.Contains(GameEvent.SealBroken, state.DrainEvents());
-        Assert.Empty(state.Barriers);
-    }
-
-    [Fact]
-    public void LightingAWisp_RaisesWispLit()
-    {
-        var state = TestLevels.CorridorGame(keyCount: 3, barrierBudget: 0);
-
-        Assert.True(TestLevels.PlaceLureAt(state, 0, 4));
-
-        Assert.Contains(GameEvent.WispLit, state.DrainEvents());
-    }
-
-    [Fact]
     public void ASpentHeart_RaisesHeartLost()
     {
         var state = TestLevels.CorridorGame(startingHearts: 2, enemyStepSeconds: 0.2);

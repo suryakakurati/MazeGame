@@ -90,7 +90,6 @@ public sealed class PracticeTutorial
             VisionRadius = LanternRadius,
             EnemyAuraRadius = 0,
             EnemyAuraDistance = 0,
-            BarrierBudget = 0,
             Powerups = PowerupCharges.None,
             MaxHearts = 3,
         };

@@ -404,7 +404,6 @@ public sealed class CampaignTests
         var card = draft.Offers.FirstOrDefault(
             offer => offer.Effect.HealNow == 0 &&
                      offer.Effect.HealOnFloorClear == 0 &&
-                     offer.Effect.MaxHearts == 0 &&
                      offer.Effect.KeyCount == 0);
 
         if (card is null)

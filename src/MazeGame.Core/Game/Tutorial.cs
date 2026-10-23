@@ -144,7 +144,31 @@ public static class Tutorial
         },
         new()
         {
-            Caption = "STEP 10 - THE DRAFT",
+            Caption = "STEP 10 - ALTARS AND RELICS",
+            Title = "A STONE THAT REMEMBERS",
+            Lines =
+            [
+                "Some floors hide an altar off the short way to the arch: a plinth with a floating gem. Walk onto it to take the relic above it.",
+                "A relic is permanent. It stays for the rest of the run, not just the floor, and the card that opens names it. The pause menu's RUN DETAILS lists every relic and card you carry.",
+                "Touching an altar wakes every sleeping hunter. The relic is free; the walk back is not, and the altar is never on the fastest route to the arch.",
+            ],
+            Keys = "WALK ONTO THE ALTAR TO TAKE ITS RELIC",
+        },
+        new()
+        {
+            Caption = "STEP 11 - THE SHAPE OF A RUN",
+            Title = "THE CAVE CHANGES",
+            Lines =
+            [
+                "The first three floors are always the same, so the lesson is the same every time. Below them, each floor bends with the run's seed.",
+                "A quiet floor has one hunter fewer and more light. A greedy one adds a bloom and a hunter. A haunted one takes a step of light and opens the walls. A starved one has a bloom fewer and a hungrier hunt.",
+                "Every floor's intro card says what kind of descent it is. The same twenty places are a different campaign from one run to the next.",
+            ],
+            Keys = "READ THE FLOOR'S INTRO CARD",
+        },
+        new()
+        {
+            Caption = "STEP 12 - THE DRAFT",
             Title = "EVERY CARD GIVES AND TAKES",
             Lines =
             [
@@ -156,11 +180,11 @@ public static class Tutorial
         },
         new()
         {
-            Caption = "STEP 11 - THE PAUSE MENU",
+            Caption = "STEP 13 - THE PAUSE MENU",
             Title = "STOP, THEN CONTINUE",
             Lines =
             [
-                "Press ESC during a floor to pause. The pause menu offers CONTINUE, which puts you straight back where you stood, and QUIT RUN, which ends the run and returns to the title.",
+                "Press ESC during a floor to pause. The pause menu offers CONTINUE, which puts you straight back where you stood, RUN DETAILS, which lists every card, relic and condition the run carries, CARDS, the full catalog, SAVE & QUIT, which keeps the run for CONTINUE on the title, and ABANDON RUN, which throws the run away.",
                 "ESC also closes a safe-room card without spending it, and cancels an aim.",
                 "That is everything. Press ENTER to walk the practice floor once, or ESC to go back to the title and descend for real.",
             ],

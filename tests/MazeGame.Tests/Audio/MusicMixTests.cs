@@ -69,16 +69,6 @@ public sealed class MusicMixTests
     }
 
     [Fact]
-    public void Aiming_SettlesTheMusic()
-    {
-        var state = TestLevels.CorridorGame();
-
-        Assert.True(state.BeginBarrierPlacement());
-
-        Assert.Equal(MusicIntensity.Calm, MusicMix.From(state));
-    }
-
-    [Fact]
     public void ACatch_LeavesTheKillerStunned_SoTheMusicSettles()
     {
         var state = TestLevels.CorridorGame(startingHearts: 2, enemyStepSeconds: 0.2);

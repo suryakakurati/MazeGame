@@ -26,13 +26,12 @@ public sealed class ConsoleRenderer : IRenderer
 {
     private const char PlayerSymbol = '@';
     private const char EnemySymbol = 'K';
-    private const char BarrierSymbol = '#';
-    private const char SpentBarrierSymbol = '=';
-    private const char LureSymbol = '*';
     private const char KeySymbol = 'k';
+    private const char CuriositySymbol = '!';
+    private const char RelicSymbol = 'A';
+    private const char LockSymbol = '#';
     private const char EchoSymbol = 'e';
     private const char ExitSymbol = 'E';
-    private const char CursorSymbol = 'X';
     private const char RoomSymbol = ':';
     private const char EmptySymbol = ' ';
     private const char RememberedSymbol = '.';
@@ -91,8 +90,37 @@ public sealed class ConsoleRenderer : IRenderer
             .Append("  shove ")
             .Append(charges.Shove)
             .Append("   exit ")
-            .Append(state.IsExitUnlocked ? "OPEN" : "LOCKED")
-            .Append("   ")
+            .Append(state.IsExitUnlocked ? "OPEN" : "LOCKED");
+
+        // The Gilded Cage's locks and the Drowned Halls' tide are state the player has to be able
+        // to count from a still frame: a lock left unthrown is a walk that must still happen, and
+        // the tide is a window that is about to close.
+        if (state.Locks.Count > 0)
+        {
+            frame.Append("   locks ").Append(state.LocksRemaining).Append('/').Append(state.Locks.Count);
+        }
+
+        if (state.Rule == FloorRule.Tide)
+        {
+            frame.Append("   tide ").Append(state.Tide.ToString().ToUpperInvariant())
+                .Append(' ').Append((int)Math.Ceiling(state.TideSecondsLeft)).Append('s');
+        }
+
+        // The find is announced, not mapped: the player knows the floor holds one, and has to
+        // find it. Once spent, the line is silent.
+        if (state.CuriosityCell is not null && !state.IsCuriositySpent)
+        {
+            frame.Append("   off the path: ").Append(CuriosityCatalog.Name(state.Curiosity));
+        }
+
+        // The altar is announced the same way, by name, because the reward is the reason to walk
+        // to it; the gem's colour cannot carry that in ASCII.
+        if (state.Relic is { } relic && !state.IsRelicTaken)
+        {
+            frame.Append("   altar: ").Append(RelicCatalog.CardFor(relic).Name);
+        }
+
+        frame.Append("   ")
             .Append(state.Status)
             .AppendLine();
 
@@ -125,7 +153,7 @@ public sealed class ConsoleRenderer : IRenderer
         // A safe room is the one place nothing moves, said in the one place the player is looking.
         if (state.IsInSafeRoom)
         {
-            return "SAFE ROOM — E: look around    WASD: walk    Q: quit";
+            return "SAFE ROOM — E: look around    WASD: walk    Esc: pause";
         }
 
         var charges = state.PowerupsRemaining;
@@ -160,7 +188,7 @@ public sealed class ConsoleRenderer : IRenderer
             ? "WASD / arrows: move"
             : $"WASD / arrows: move    {string.Join("   ", verbs)}";
 
-        return $"{line}    Q: quit";
+        return $"{line}    Esc: pause";
     }
 
     /// <summary>
@@ -266,58 +294,21 @@ public sealed class ConsoleRenderer : IRenderer
         Math.Abs(cell.Column - state.Player.Column) <= MemoryRadius;
 
     /// <summary>
-    /// Reports whether <paramref name="cell"/> holds a barrier, and which of the two symbols it
-    /// gets: a sealed barrier still reads as a solid wall, a spent one as a broken husk.
-    /// </summary>
-    /// <param name="state">The game to read the barriers from.</param>
-    /// <param name="cell">The cell to test.</param>
-    /// <param name="symbol">The character to draw, or <c>'\0'</c> when there is no barrier.</param>
-    /// <returns><see langword="true"/> when the cell holds a barrier.</returns>
-    private static bool SymbolForBarrier(GameState state, Cell cell, out char symbol)
-    {
-        if (!state.Barriers.Contains(cell))
-        {
-            symbol = default;
-            return false;
-        }
-
-        symbol = state.BarrierSeals.ContainsKey(cell) ? BarrierSymbol : SpentBarrierSymbol;
-        return true;
-    }
-
-    /// <summary>
     /// Chooses the character for a cell the player has seen. The player is drawn on top of
     /// everything, because that is the one thing the player must always be able to find.
     /// </summary>
     private static char SymbolAt(GameState state, Cell cell)
     {
-        // The aiming cursor outranks everything: while aiming, the player needs to see exactly
-        // which cell the barrier will land on, even if that cell is still in the dark.
-        if (state.IsAiming && cell == state.AimCursor)
-        {
-            return CursorSymbol;
-        }
-
         if (cell == state.Player)
         {
             return PlayerSymbol;
         }
 
-        // Remembered cells keep their own barriers (the player put them there) and their floor,
-        // but not the killer, the keys or the exit: those must be seen to be known.
+        // Remembered cells keep their floor, but not the killer, the keys or the exit: those
+        // must be seen to be known.
         if (!state.IsVisible(cell))
         {
-            return SymbolForBarrier(state, cell, out var barrier) ? barrier : RememberedSymbol;
-        }
-
-        if (SymbolForBarrier(state, cell, out var visibleBarrier))
-        {
-            return visibleBarrier;
-        }
-
-        if (cell == state.Lure)
-        {
-            return LureSymbol;
+            return RememberedSymbol;
         }
 
         // A hunter is drawn on its own cell; with more than one they are the same glyph, because
@@ -347,6 +338,26 @@ public sealed class ConsoleRenderer : IRenderer
         if (state.Keys.Contains(cell))
         {
             return KeySymbol;
+        }
+
+        foreach (var lockCell in state.Locks)
+        {
+            if (cell == lockCell)
+            {
+                return state.IsLockThrown(lockCell) ? EmptySymbol : LockSymbol;
+            }
+        }
+
+        if (state.CuriosityCell is { } find && cell == find)
+        {
+            return state.IsCuriositySpent ? EmptySymbol : CuriositySymbol;
+        }
+
+        // The plinth keeps its place after the relic is taken, marked with a full stop so the
+        // player can tell an emptied altar from a wall they never visited.
+        if (state.RelicCell is { } altar && cell == altar)
+        {
+            return state.IsRelicTaken ? RememberedSymbol : RelicSymbol;
         }
 
         return cell == state.Exit ? ExitSymbol : EmptySymbol;

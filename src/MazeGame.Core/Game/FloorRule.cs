@@ -35,4 +35,13 @@ public enum FloorRule
 
     /// <summary>Vision falls one step every forty seconds, to a floor of one; each bloom restores it.</summary>
     BurningLantern,
+
+    /// <summary>
+    /// The tide comes in and goes out: while it is in, the torch loses a step and the hunters
+    /// surge. The swell warns two seconds before it floods.
+    /// </summary>
+    Tide,
+
+    /// <summary>Three gilded locks bar the arch; each must be thrown before the arch opens.</summary>
+    ThreeLocks,
 }

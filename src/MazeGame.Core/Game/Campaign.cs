@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 
 namespace MazeGame.Core.Game;
 
@@ -131,6 +132,22 @@ public sealed class Campaign
         IReadOnlyList<FloorDefinition> floors,
         Func<FloorDefinition, int, RunModifiers, IReadOnlyList<DescentCondition>, GameState> createFloor,
         int? runSeed = null)
+        : this(floors, createFloor, runSeed, null)
+    {
+    }
+
+    /// <summary>
+    /// Builds a campaign, either at its first floor or from a saved run.
+    /// </summary>
+    /// <param name="floors">The run's floors, in order. The list is snapshotted.</param>
+    /// <param name="createFloor">Builds one playable floor.</param>
+    /// <param name="runSeed">The seed to use, or null for a fresh one.</param>
+    /// <param name="resume">A saved run to restore, or null to start at floor one.</param>
+    private Campaign(
+        IReadOnlyList<FloorDefinition> floors,
+        Func<FloorDefinition, int, RunModifiers, IReadOnlyList<DescentCondition>, GameState> createFloor,
+        int? runSeed,
+        RunSnapshot? resume)
     {
         ArgumentNullException.ThrowIfNull(floors);
         ArgumentNullException.ThrowIfNull(createFloor);
@@ -140,6 +157,10 @@ public sealed class Campaign
             throw new ArgumentException("A campaign needs at least one floor.", nameof(floors));
         }
 
+        // The seed comes first because the run's floors wear faces drawn from it. A resume keeps
+        // the saved seed, so reloading a run rebuilds the same faces on the same floors.
+        _runSeed = resume?.RunSeed ?? runSeed ?? Random.Shared.Next();
+
         var snapshot = new FloorDefinition[floors.Count];
         for (var index = 0; index < floors.Count; index++)
         {
@@ -148,21 +169,159 @@ public sealed class Campaign
 
             floor.Validate();
 
-            if (index > 0 && floor.Number <= snapshot[index - 1].Number)
+            // Every floor of every run is bent by the face its seed rolls for it. The authored
+            // floor is the common case, but a run is never guaranteed to meet it everywhere.
+            var drawn = FloorFaces.Apply(floor, FloorFaces.Drawn(floor, _runSeed));
+            drawn.Validate();
+
+            if (index > 0 && drawn.Number <= snapshot[index - 1].Number)
             {
                 throw new ArgumentException(
-                    $"Floor numbers must increase: {snapshot[index - 1].Number} is followed by {floor.Number}.",
+                    $"Floor numbers must increase: {snapshot[index - 1].Number} is followed by {drawn.Number}.",
                     nameof(floors));
             }
 
-            snapshot[index] = floor;
+            snapshot[index] = drawn;
         }
 
         _floors = new ReadOnlyCollection<FloorDefinition>(snapshot);
         _createFloor = createFloor;
-        _runSeed = runSeed ?? Random.Shared.Next();
-        _deepestFloor = snapshot[0].Number;
-        _floor = Build(snapshot[0], snapshot[0].MaxHearts);
+
+        if (resume is null)
+        {
+            _deepestFloor = snapshot[0].Number;
+            _floor = Build(snapshot[0], snapshot[0].MaxHearts);
+            return;
+        }
+
+        // A restore rebuilds the floor from the run's seed rather than carrying a floor's state:
+        // the seed is what makes every wall, key and hunter land where they did.
+        resume.Validate(snapshot.Length);
+        _floorIndex = resume.FloorIndex;
+        _deepestFloor = Math.Max(resume.DeepestFloor, snapshot[resume.FloorIndex].Number);
+        _reincarnated = resume.Reincarnated;
+        _bloomsBanked = resume.BloomsBanked;
+        _carryHearts = resume.CarryHearts;
+        _draftRerolls = resume.DraftRerolls;
+        _nextDraftBonus = resume.NextDraftBonus;
+        _followingDraftBonus = resume.FollowingDraftBonus;
+        _huntersOffNextFloor = resume.HuntersOffNextFloor;
+        _seedBloomsOnFloor = resume.SeedBloomsOnFloor;
+        _casinoFloor = resume.CasinoFloor;
+        _casinoGambleUsed = resume.CasinoGambleUsed;
+
+        foreach (var condition in resume.Conditions)
+        {
+            if (!_conditions.Contains(condition))
+            {
+                _conditions.Add(condition);
+            }
+        }
+
+        foreach (var gate in resume.ChosenGates)
+        {
+            _chosenGates.Add(gate);
+        }
+
+        var cards = new Card[resume.CardIds.Count];
+
+        for (var index = 0; index < cards.Length; index++)
+        {
+            // A relic is stored as a card, so the save's list can name either. Both catalogs are
+            // asked before a save is called corrupt.
+            cards[index] = CardCatalog.ById(resume.CardIds[index])
+                ?? RelicCatalog.ById(resume.CardIds[index])
+                ?? throw new ArgumentException($"The save names an unknown card: '{resume.CardIds[index]}'.", nameof(resume));
+        }
+
+        _modifiers = RunModifiers.FromCards(cards);
+
+        // The pending promises belong to the floor after this one: rebuilding the saved floor must
+        // not spend a Toll or a Seed Vault heal the player has not reached yet.
+        _floor = Build(snapshot[_floorIndex], resume.Hearts, consumePending: false);
+    }
+
+    /// <summary>
+    /// Writes the run in a form the UI can store and <see cref="Restore"/> can rebuild.
+    /// </summary>
+    /// <returns>The run's progress, with this floor's blooms already banked.</returns>
+    /// <remarks>
+    /// The snapshot is taken from a floor that still has a heart: saving a run after the last
+    /// catch would save a game that cannot be played.
+    /// </remarks>
+    public RunSnapshot Snapshot() => new()
+    {
+        RunSeed = _runSeed,
+        FloorIndex = _floorIndex,
+        Hearts = _floor.Hearts,
+        CarryHearts = _carryHearts,
+        BloomsBanked = _bloomsBanked + _floor.KeysCollected,
+        DraftRerolls = _draftRerolls,
+        DeepestFloor = _deepestFloor,
+        Reincarnated = _reincarnated,
+        NextDraftBonus = _nextDraftBonus,
+        FollowingDraftBonus = _followingDraftBonus,
+        HuntersOffNextFloor = _huntersOffNextFloor,
+        SeedBloomsOnFloor = _seedBloomsOnFloor,
+        CasinoFloor = _casinoFloor,
+        CasinoGambleUsed = _casinoGambleUsed,
+        CardIds = new List<string>(_modifiers.Cards.Select(card => card.Id)),
+        Conditions = new List<DescentCondition>(_conditions),
+        ChosenGates = new List<int>(_chosenGates.OrderBy(number => number)),
+    };
+
+    /// <summary>
+    /// Folds a relic the player has taken into the run's cards.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The floor records that its altar was touched; only the campaign can make the relic last
+    /// past it. Frontends call this once a frame, immediately after the floor ticks, so the new
+    /// effect is live before the next step — and a save taken after the altar already holds it.
+    /// </para>
+    /// <para>
+    /// The run never holds two of the same relic, so a second call for the same altar does
+    /// nothing. That also makes the call idempotent for a frontend that ticks twice in a frame.
+    /// </para>
+    /// </remarks>
+    public void Sync()
+    {
+        if (_floor.Relic is not { } kind || !_floor.IsRelicTaken)
+        {
+            return;
+        }
+
+        var relic = RelicCatalog.CardFor(kind);
+
+        if (_modifiers.Cards.All(card => !string.Equals(card.Id, relic.Id, StringComparison.Ordinal)))
+        {
+            AddCard(relic);
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds a run from a saved snapshot, starting again at the beginning of its floor.
+    /// </summary>
+    /// <param name="floors">The run's floors, in order.</param>
+    /// <param name="createFloor">Builds one playable floor.</param>
+    /// <param name="snapshot">The saved run.</param>
+    /// <returns>A campaign whose current floor is the saved one, already playable.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when any argument is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when the snapshot is from another build, names a floor the catalog does not hold, or
+    /// has no hearts left.
+    /// </exception>
+    /// <exception cref="ArgumentException">Thrown when the snapshot names a card this build does not ship.</exception>
+    public static Campaign Restore(
+        IReadOnlyList<FloorDefinition> floors,
+        Func<FloorDefinition, int, RunModifiers, IReadOnlyList<DescentCondition>, GameState> createFloor,
+        RunSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(floors);
+        ArgumentNullException.ThrowIfNull(createFloor);
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        return new Campaign(floors, createFloor, snapshot.RunSeed, snapshot);
     }
 
     /// <summary>Gets the run's floors, in order.</summary>
@@ -206,7 +365,7 @@ public sealed class Campaign
     /// cleared, so a rewind keeps the blooms it took and a rebuilt floor starts its own count at
     /// zero.
     /// </remarks>
-    public int BloomsPicked => _bloomsBanked + _floor.KeysCollected;
+    public int BloomsPicked => _bloomsBanked + _floor.KeysCollected + _floor.BonusBlooms;
 
     /// <summary>
     /// Gets how many blooms the garden is worth: one for every bloom picked, plus one for every
@@ -1148,17 +1307,47 @@ public sealed class Campaign
     }
 
     /// <summary>
+    /// Returns the relic a floor's altar should hold, skipping every relic the run already has.
+    /// </summary>
+    /// <param name="floorNumber">The floor being built.</param>
+    /// <returns>A kind the run does not hold, or null when it holds them all.</returns>
+    /// <remarks>
+    /// The walk is deterministic from the seed and the floor, so a restored run stocks the same
+    /// altar. It is a walk rather than a re-roll because re-rolling could, in principle, keep
+    /// landing on held relics; stepping once per held relic is bounded by the pool size.
+    /// </remarks>
+    private RelicKind? NextRelic(int floorNumber)
+    {
+        for (var skip = 0; skip < RelicCatalog.Cards.Count; skip++)
+        {
+            var kind = RelicCatalog.Pick(_runSeed, floorNumber, skip);
+            var id = RelicCatalog.CardFor(kind).Id;
+
+            if (_modifiers.Cards.All(card => !string.Equals(card.Id, id, StringComparison.Ordinal)))
+            {
+                return kind;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Builds one floor with the run's cards, the promises rooms made and rejects a builder that
     /// returns nothing.
     /// </summary>
     /// <param name="floor">The floor to build.</param>
     /// <param name="hearts">Hearts the player brings to it.</param>
-    private GameState Build(FloorDefinition floor, int hearts)
+    /// <param name="consumePending">
+    /// Whether the promises that pay on this floor are spent by building it. A restore passes
+    /// false: its pending promises belong to the floor after the saved one.
+    /// </param>
+    private GameState Build(FloorDefinition floor, int hearts, bool consumePending = true)
     {
         var definition = floor;
 
         // The Toll: one hunter stays home, never below one. Consumed by the next floor only.
-        if (_huntersOffNextFloor > 0)
+        if (consumePending && _huntersOffNextFloor > 0)
         {
             definition = floor with
             {
@@ -1170,7 +1359,7 @@ public sealed class Campaign
 
         // The Seed Vault: the bloom pays on the floor it lands on, not a floor later. The heart
         // is never clipped, like every other heal in the run.
-        if (_seedBloomsOnFloor is { } bloom && floor.Number >= bloom)
+        if (consumePending && _seedBloomsOnFloor is { } bloom && floor.Number >= bloom)
         {
             hearts++;
             _seedBloomsOnFloor = null;
@@ -1180,6 +1369,14 @@ public sealed class Campaign
         if (_casinoFloor == floor.Number)
         {
             definition = definition with { ForceRoom = true };
+        }
+
+        // The altar is stocked here rather than authored, because it is a run decision: the relic
+        // a floor offers must be one the run does not already hold. A test floor that names its
+        // own relic keeps it.
+        if (definition.Relic is null)
+        {
+            definition = definition with { Relic = NextRelic(floor.Number) };
         }
 
         return _createFloor(definition, hearts, _modifiers, _conditions)

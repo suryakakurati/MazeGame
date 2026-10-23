@@ -8,10 +8,8 @@ namespace MazeGame.UI.Input;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This is the one place that knows the direction keys move the aiming cursor rather than the
-/// player while a barrier is being placed. The keyboard layouts themselves live in the
-/// frontends, so adding a second way to play (gamepad, replay file) means translating into
-/// these commands, not copying the rules.
+/// The keyboard layouts themselves live in the frontends, so adding a second way to play
+/// (gamepad, replay file) means translating into these commands, not copying the rules.
 /// </para>
 /// <para>
 /// <see cref="GameState"/> still has the final say: every method here may silently refuse
@@ -26,11 +24,7 @@ public static class GameCommands
     /// </summary>
     /// <param name="state">The game to act on.</param>
     /// <param name="command">The intention to carry out.</param>
-    /// <returns>
-    /// <see langword="true"/> when play should continue, <see langword="false"/> when the
-    /// command was <see cref="GameCommand.Quit"/>.
-    /// </returns>
-    public static bool Apply(GameState state, GameCommand command)
+    public static void Apply(GameState state, GameCommand command)
     {
         ArgumentNullException.ThrowIfNull(state);
 
@@ -47,18 +41,6 @@ public static class GameCommands
                 break;
             case GameCommand.MoveEast:
                 Move(state, Direction.East);
-                break;
-            case GameCommand.BeginAim:
-                state.BeginBarrierPlacement();
-                break;
-            case GameCommand.BeginLureAim:
-                state.BeginLurePlacement();
-                break;
-            case GameCommand.ConfirmAim:
-                state.ConfirmPlacement();
-                break;
-            case GameCommand.CancelAim:
-                state.CancelPlacement();
                 break;
             case GameCommand.Blink:
                 state.TryBlink();
@@ -80,11 +62,7 @@ public static class GameCommands
                 // Rooms belong to the run, not to one floor: the frontend opens the campaign's
                 // safe-room card in response to this command.
                 break;
-            case GameCommand.Quit:
-                return false;
         }
-
-        return true;
     }
 
     /// <summary>
@@ -92,13 +70,6 @@ public static class GameCommands
     /// </summary>
     private static void Move(GameState state, Direction direction)
     {
-        if (state.IsAiming)
-        {
-            state.MoveAimCursor(direction);
-        }
-        else
-        {
-            state.TryMove(direction);
-        }
+        state.TryMove(direction);
     }
 }

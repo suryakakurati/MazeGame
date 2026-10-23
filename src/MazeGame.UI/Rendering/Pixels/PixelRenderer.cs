@@ -74,6 +74,15 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     /// <summary>The room's shadow, used to set the pale floor off from the cave.</summary>
     private static readonly Color RoomShade = new(58, 46, 44, 255);
 
+    /// <summary>How long the relic's name floats over the explorer after it is taken.</summary>
+    private const double RelicAnnounceSeconds = 4.5;
+
+    /// <summary>The floor whose relic has already been announced, so it happens once.</summary>
+    private int _announcedRelicFloor = int.MinValue;
+
+    /// <summary>When the current relic announcement fades out.</summary>
+    private double _relicAnnounceUntil;
+
     /// <summary>The Echo's mark: cold moonlight, deliberately nothing like a bloom's gold.</summary>
     private static readonly Color EchoPale = new(198, 206, 255, 255);
 
@@ -264,7 +273,6 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         // The chrome is the existing HUD: pulled, glass status strip and hints. It draws in window
         // pixels, so it is applied after the canvas is scaled up, in the letterbox around it.
         var fit = _view.Present(RaylibLayout.HudHeight, RaylibLayout.FooterHeight, Margin, Backdrop());
-        DrawAimCursor(state, fit);
         _chrome.DrawOverlay(state, _floorChrome);
     }
 
@@ -656,10 +664,11 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         cell == state.Player ||
         HunterOn(state, cell) ||
         cell == state.Exit ||
-        cell == state.Lure ||
         state.Keys.Contains(cell) ||
-        state.Barriers.Contains(cell) ||
-        state.EchoCell == cell;
+        state.EchoCell == cell ||
+        state.CuriosityCell == cell ||
+        state.RelicCell == cell ||
+        state.Locks.Contains(cell);
 
     /// <summary>Returns a stable, positive hash of a cell, for variant and prop choices.</summary>
     private static int Hash(int row, int column) =>
@@ -746,21 +755,10 @@ public sealed class PixelRenderer : IRenderer, IDisposable
             }
         }
 
-        foreach (var barrier in state.Barriers)
-        {
-            if (!Known(state, barrier) || !OnScreen(barrier))
-            {
-                continue;
-            }
-
-            var sealedCell = state.BarrierSeals.ContainsKey(barrier);
-            atlas.Draw(sealedCell ? "barrier" : "barrier-cracked", CanvasX(barrier.Column), CanvasY(barrier.Row));
-        }
-
-        if (state.Lure is { } lure && Known(state, lure) && OnScreen(lure))
-        {
-            atlas.Draw($"wisp-{frame}", CanvasX(lure.Column), CanvasY(lure.Row));
-        }
+        DrawLocks(state);
+        DrawCuriosity(state);
+        DrawRelic(state);
+        DrawRelicAnnouncement(state);
 
         if (state.Exit is var exit && Known(state, exit) && OnScreen(exit))
         {
@@ -788,13 +786,247 @@ public sealed class PixelRenderer : IRenderer, IDisposable
                 CanvasX(hunter.Cell.Column),
                 CanvasY(hunter.Cell.Row),
                 hunter.Stunned ? Stunned : Color.White);
+        }            atlas.Draw(
+                $"player-{NameOf(_playerFacing)}-{PlayerFrame(state)}",
+                CanvasX(state.Player.Column),
+                CanvasY(state.Player.Row));
+
+        // The tide is a wash over the whole frame rather than a change to the tiles: the water does
+        // not replace the hall, it sits over it, and the player can still read the floorplan the
+        // lantern gives them.
+        if (state.IsTideIn)
+        {
+            var breath = 0.5 + (0.5 * Math.Sin(time * 1.7));
+            Raylib.DrawRectangle(
+                0,
+                0,
+                CanvasWidth,
+                CanvasHeight,
+                new Color(36, 92, 132, 40 + (int)(22 * breath)));
+
+            for (var line = 0; line < 5; line++)
+            {
+                var y = (int)((time * 9.0) + (line * 37)) % Math.Max(1, CanvasHeight);
+                Raylib.DrawRectangle(0, y, CanvasWidth, 1, new Color(150, 210, 240, 20));
+            }
+        }
+    }
+
+    /// <summary>Draws the Gilded Cage's three locks, shut or thrown.</summary>
+    /// <param name="state">The floor being drawn.</param>
+    private void DrawLocks(GameState state)
+    {
+        if (state.Locks.Count == 0)
+        {
+            return;
         }
 
-        atlas.Draw(
-            $"player-{NameOf(_playerFacing)}-{PlayerFrame(state)}",
-            CanvasX(state.Player.Column),
-            CanvasY(state.Player.Row));
+        var time = Raylib.GetTime();
+
+        foreach (var cell in state.Locks)
+        {
+            if (!Known(state, cell) || !OnScreen(cell))
+            {
+                continue;
+            }
+
+            var x = CanvasX(cell.Column);
+            var y = CanvasY(cell.Row);
+            var thrown = state.IsLockThrown(cell);
+            var gold = thrown
+                ? new Color(112, 96, 58, 190)
+                : new Color(236, 198, 104, 235);
+            var light = thrown
+                ? new Color(70, 62, 42, 120)
+                : new Color(255, 240, 186, (int)(150 + (90 * (0.5 + (0.5 * Math.Sin(time * 3.0))))));
+
+            // A gilded cage: a small barred box with a ring on top. Thrown, it hangs open and grey.
+            Raylib.DrawRectangle(x + 3, y + 6, 10, 8, light);
+            Raylib.DrawRectangle(x + 4, y + 7, 8, 6, gold);
+            Raylib.DrawRectangle(x + 5, y + 3, 6, 1, gold);
+            Raylib.DrawRectangle(x + 4, y + 4, 1, 2, gold);
+            Raylib.DrawRectangle(x + 11, y + 4, 1, 2, gold);
+
+            if (thrown)
+            {
+                // The door is swung out: one bar standing clear of the box.
+                Raylib.DrawRectangle(x + 13, y + 6, 1, 6, gold);
+            }
+            else
+            {
+                Raylib.DrawRectangle(x + 7, y + 7, 1, 5, new Color(96, 74, 34, 220));
+                Raylib.DrawRectangle(x + 9, y + 7, 1, 5, new Color(96, 74, 34, 220));
+            }
+        }
     }
+
+    /// <summary>Draws the floor's one optional find, in its three forms.</summary>
+    /// <param name="state">The floor being drawn.</param>
+    /// <remarks>
+    /// Each is drawn from primitives rather than from a tile because there are three of them and
+    /// they have to be told apart at a glance in the dark: a bell, a box, a lit stone. Once spent
+    /// they stay where they were, greyed out, so the player can see what they walked past.
+    /// </remarks>
+    private void DrawCuriosity(GameState state)
+    {
+        if (state.CuriosityCell is not { } cell || !Known(state, cell) || !OnScreen(cell))
+        {
+            return;
+        }
+
+        var x = CanvasX(cell.Column);
+        var y = CanvasY(cell.Row);
+        var time = Raylib.GetTime();
+        var spent = state.IsCuriositySpent;
+        var pulse = 0.5 + (0.5 * Math.Sin(time * 2.6));
+
+        if (spent)
+        {
+            Raylib.DrawRectangle(x + 5, y + 6, 6, 5, new Color(74, 82, 84, 150));
+            return;
+        }
+
+        switch (state.Curiosity)
+        {
+            case CuriosityKind.Bell:
+            {
+                var gold = new Color(240, 214, 138, (int)(190 + (60 * pulse)));
+
+                Raylib.DrawRectangle(x + 6, y + 3, 4, 1, gold);
+                Raylib.DrawRectangle(x + 4, y + 4, 8, 1, gold);
+                Raylib.DrawRectangle(x + 5, y + 5, 6, 4, gold);
+                Raylib.DrawRectangle(x + 7, y + 9, 2, 2, gold);
+                Raylib.DrawCircle(
+                    x + 8,
+                    y + 12,
+                    4.0f,
+                    new Color((byte)255, (byte)226, (byte)150, (byte)(40 + (int)(50 * pulse))));
+                break;
+            }
+
+            case CuriosityKind.Reliquary:
+            {
+                var bone = new Color(206, 198, 176, 230);
+                var seal = new Color(196, 78, 88, (int)(170 + (70 * pulse)));
+
+                Raylib.DrawRectangle(x + 3, y + 5, 10, 7, bone);
+                Raylib.DrawRectangle(x + 3, y + 4, 10, 1, new Color(150, 142, 124, 230));
+                Raylib.DrawRectangle(x + 7, y + 7, 2, 2, seal);
+                Raylib.DrawCircle(
+                    x + 8,
+                    y + 9,
+                    7.0f,
+                    new Color((byte)210, (byte)90, (byte)100, (byte)(34 + (int)(46 * pulse))));
+                break;
+            }
+
+            default:
+            {
+                var stone = new Color(120, 148, 128, 235);
+                var flame = new Color(170, 246, 186, (int)(170 + (80 * pulse)));
+
+                Raylib.DrawRectangle(x + 4, y + 9, 8, 3, stone);
+                Raylib.DrawRectangle(x + 6, y + 6, 4, 3, stone);
+                Raylib.DrawRectangle(x + 7, y + 3, 2, 3, flame);
+                Raylib.DrawCircle(
+                    x + 8,
+                    y + 6,
+                    6.0f,
+                    new Color((byte)150, (byte)240, (byte)170, (byte)(36 + (int)(44 * pulse))));
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Draws the altar: a low plinth holding one floating relic, colour-coded by what it does.
+    /// </summary>
+    /// <remarks>
+    /// The altar has to read as a destination, not a pickup: it is a stone with something above
+    /// it rather than a glint on the floor, and its colour is the effect's family — violet for
+    /// power, gold for the run's economy, green for healing. Once taken, the plinth stays, empty.
+    /// </remarks>
+    private void DrawRelic(GameState state)
+    {
+        if (state.RelicCell is not { } cell || !Known(state, cell) || !OnScreen(cell))
+        {
+            return;
+        }
+
+        var x = CanvasX(cell.Column);
+        var y = CanvasY(cell.Row);
+        var time = Raylib.GetTime();
+        var pulse = 0.5 + (0.5 * Math.Sin(time * 2.1));
+
+        // The plinth is the same whether the relic is there or gone; only the gem changes.
+        Raylib.DrawRectangle(x + 3, y + 10, 10, 2, new Color(96, 92, 112, 235));
+        Raylib.DrawRectangle(x + 5, y + 8, 6, 2, new Color(118, 112, 138, 235));
+
+        if (state.IsRelicTaken || state.Relic is not { } kind)
+        {
+            return;
+        }
+
+        var tint = RelicTint(kind);
+        var glow = new Color(tint.R, tint.G, tint.B, (byte)(52 + (int)(70 * pulse)));
+        var core = new Color(tint.R, tint.G, tint.B, (byte)(190 + (int)(60 * pulse)));
+
+        Raylib.DrawCircle(x + 8, y + 5, 6.5f, glow);
+        Raylib.DrawRectangle(x + 7, y + 2, 3, 3, core);
+        Raylib.DrawRectangle(x + 6, y + 4, 5, 2, core);
+        Raylib.DrawRectangle(x + 7, y + 6, 3, 1, core);
+    }
+
+    /// <summary>
+    /// Floats the relic's name over the explorer for a few seconds after the altar is touched.
+    /// </summary>
+    /// <remarks>
+    /// The relic's effect is not visible until the next floor, so without a word at the moment of
+    /// taking it the biggest find in the run would pass with only a chime. The name is drawn over
+    /// the player rather than in the HUD so it reads as something that happened to them.
+    /// </remarks>
+    private void DrawRelicAnnouncement(GameState state)
+    {
+        if (!state.IsRelicTaken || state.Relic is not { } kind)
+        {
+            return;
+        }
+
+        var time = Raylib.GetTime();
+
+        if (_announcedRelicFloor != state.Config.FloorNumber)
+        {
+            _announcedRelicFloor = state.Config.FloorNumber;
+            _relicAnnounceUntil = time + RelicAnnounceSeconds;
+        }
+
+        var left = _relicAnnounceUntil - time;
+
+        if (left <= 0)
+        {
+            return;
+        }
+
+        var fade = (byte)(255 * Math.Clamp(left / 1.2, 0, 1));
+        var centre = CanvasX(state.Player.Column) + (PixelLayout.CellSize / 2);
+        var name = RelicCatalog.CardFor(kind).Name.ToUpperInvariant();
+
+        Font.DrawCentered(name, centre, CanvasY(state.Player.Row) - 12, 1, new Color((byte)238, (byte)228, (byte)255, fade));
+    }
+
+    /// <summary>Returns the gem colour that names a relic's family.</summary>
+    /// <remarks>
+    /// The family comes from Core, so a gem and the run details card agree on what red, green and
+    /// gold mean instead of each keeping its own list.
+    /// </remarks>
+    public static Color RelicTint(RelicKind kind) => RelicCatalog.FamilyOf(kind) switch
+    {
+        RelicFamily.Body => new Color(132, 214, 190, 255),
+        RelicFamily.Light => new Color(140, 196, 240, 255),
+        RelicFamily.Hunt => new Color(190, 168, 236, 255),
+        RelicFamily.Garden => new Color(232, 196, 120, 255),
+        _ => new Color(224, 118, 118, 255),
+    };
 
     /// <summary>Returns the walk-cycle frame the explorer is on.</summary>
     private static string PlayerFrame(GameState state)
@@ -1168,40 +1400,6 @@ public sealed class PixelRenderer : IRenderer, IDisposable
                 height,
                 new Color(colour.R, colour.G, colour.B, alpha));
         }
-    }
-
-    /// <summary>
-    /// Draws a bracketed reticle on the aimed cell while the player is placing something.
-    /// </summary>
-    /// <remarks>
-    /// Chrome rather than world: it is drawn after the canvas has been scaled, in window pixels, so
-    /// the fog cannot dim the one thing the player needs to see while placing a barrier. The arms
-    /// are whole screen pixels wide at any scale, so the recticle stays crisp at 2x and 3x.
-    /// </remarks>
-    private void DrawAimCursor(GameState state, PixelLayout.PixelFit fit)
-    {
-        if (!state.IsAiming || !OnScreen(state.AimCursor))
-        {
-            return;
-        }
-
-        var size = PixelLayout.CellSize * fit.Scale;
-        var x = fit.X + (CanvasX(state.AimCursor.Column) * fit.Scale);
-        var y = fit.Y + (CanvasY(state.AimCursor.Row) * fit.Scale);
-
-        var arm = Math.Max(2, size / 4);
-        var thickness = Math.Max(1, fit.Scale);
-        var inset = Math.Max(1, fit.Scale / 2);
-
-        // Four corner brackets: two rectangles each, so a 1 px arm at 1x and a 2 px arm at 2x.
-        Raylib.DrawRectangle(x + inset, y + inset, arm, thickness, Cursor);
-        Raylib.DrawRectangle(x + inset, y + inset, thickness, arm, Cursor);
-        Raylib.DrawRectangle(x + size - inset - arm, y + inset, arm, thickness, Cursor);
-        Raylib.DrawRectangle(x + size - inset - thickness, y + inset, thickness, arm, Cursor);
-        Raylib.DrawRectangle(x + inset, y + size - inset - thickness, arm, thickness, Cursor);
-        Raylib.DrawRectangle(x + inset, y + size - inset - arm, thickness, arm, Cursor);
-        Raylib.DrawRectangle(x + size - inset - arm, y + size - inset - thickness, arm, thickness, Cursor);
-        Raylib.DrawRectangle(x + size - inset - thickness, y + size - inset - arm, thickness, arm, Cursor);
     }
 
     /// <summary>

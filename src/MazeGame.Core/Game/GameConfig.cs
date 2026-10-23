@@ -45,91 +45,8 @@ public sealed record GameConfig
     public int KeyCount { get; init; } = 3;
 
     /// <summary>
-    /// Gets how many normal cells a spent (already cracked) barriered cell is worth to the
-    /// killer. Defaults to 5, against a normal cell's cost of 1. It is both the Dijkstra weight
-    /// of that cell and the number of normal steps the killer needs to enter it, so a spent
-    /// barrier always costs real time: with the default step time that is a 3-second pause.
-    /// Must be at least 1: barriers slow the killer down, they never make a cell impassable.
-    /// </summary>
-    /// <remarks>
-    /// Fresh barriers are sealed instead and are governed by <see cref="BarrierSealSeconds"/>,
-    /// <see cref="BarrierBreakSeconds"/> and <see cref="SealedBarrierCost"/>; this value is what
-    /// a barrier is worth once it has cracked.
-    /// </remarks>
-    public int ObstacleCost { get; init; } = 5;
-
-    /// <summary>
-    /// Gets how many barriers the player may place in one game. Defaults to 3.
-    /// </summary>
-    public int BarrierBudget { get; init; } = 3;
-
-    /// <summary>
-    /// Gets how long a freshly placed barrier stays sealed: the killer treats a sealed barrier
-    /// as a wall and looks for another way round. Defaults to 10 seconds, deliberately longer
-    /// than the walk from the killer's usual distance so a barrier put on its route is still
-    /// sealed when it arrives. Zero means barriers are never sealed and only ever cost
-    /// <see cref="ObstacleCost"/>. Must be finite and not negative.
-    /// </summary>
-    /// <remarks>
-    /// After the seal lapses the barrier cracks into a spent husk that is still expensive to
-    /// cross, so a barrier has two phases: a short wall, then a permanent speed bump.
-    /// </remarks>
-    public double BarrierSealSeconds { get; init; } = 10.0;
-
-    /// <summary>
-    /// Gets how long the killer takes to tear a sealed barrier apart when the seal is the only
-    /// way to reach the player. Defaults to 3 seconds, so a barrier that truly cuts the route
-    /// is still broken through rather than soft-locking the game. Must be finite and greater
-    /// than zero.
-    /// </summary>
-    public double BarrierBreakSeconds { get; init; } = 3.0;
-
-    /// <summary>
-    /// Gets what a sealed barrier is worth to the killer's pathfinding, in normal cells.
-    /// Defaults to 40, which is far more than any detour a 15x15 maze offers, so the killer
-    /// takes another route while the seal holds and only attacks the barrier when there is
-    /// none. Must be at least 1.
-    /// </summary>
-    public int SealedBarrierCost { get; init; } = 40;
-
-    /// <summary>
-    /// Gets how many wisps the player may place in one game. Defaults to 2.
-    /// </summary>
-    public int LureCount { get; init; } = 2;
-
-    /// <summary>
-    /// Gets how many seconds a placed wisp keeps glowing. Defaults to 6, which is roughly ten
-    /// killer steps: long enough to pull it down a side branch, short enough that it cannot be
-    /// parked. Must be finite and greater than zero.
-    /// </summary>
-    public double LureSeconds { get; init; } = 6.0;
-
-    /// <summary>
-    /// Gets how long the killer is stunned when it reaches a wisp. Defaults to zero, which means
-    /// the decoy only costs it the trip. Must be finite and not negative.
-    /// </summary>
-    /// <remarks>
-    /// A stun is the same window as the one after a catch: the killer neither moves nor banks
-    /// progress towards its next step, so a card that grants one buys the player real distance
-    /// rather than a step that lands the moment the stun ends.
-    /// </remarks>
-    public double LureStunSeconds { get; init; }
-
-    /// <summary>
-    /// Gets how many steps of vision a burning wisp costs. Defaults to zero, so the wisp costs
-    /// nothing to watch. Must not be negative.
-    /// </summary>
-    /// <remarks>
-    /// This is the drawback half of a card, not a rule of the wisp: the wisp is a beacon, and a
-    /// card may make watching it expensive. Visibility is recomputed when a wisp starts and when
-    /// it clears, so the penalty really does come and go with the glow.
-    /// </remarks>
-    public int LureVisionPenalty { get; init; }
-
-    /// <summary>
     /// Gets the seconds the killer needs to enter a normal cell. Defaults to 0.6, which is
-    /// slow enough for the player to keep walking away. A barriered cell multiplies this by
-    /// <see cref="ObstacleCost"/>. Must be positive.
+    /// slow enough for the player to keep walking away. Must be positive.
     /// </summary>
     public double EnemyStepSeconds { get; init; } = 0.6;
 
@@ -395,6 +312,15 @@ public sealed record GameConfig
     public bool EchoEnabled { get; init; }
 
     /// <summary>
+    /// Gets the relic this floor's altar holds, or null for no altar.
+    /// </summary>
+    /// <remarks>
+    /// The campaign stocks the relic when it builds the floor, skipping the relics the run already
+    /// holds. The default is null, so a hand-built test floor has no altar to walk to.
+    /// </remarks>
+    public RelicKind? Relic { get; init; }
+
+    /// <summary>
     /// Gets the radius, in cells, lit by the killer itself. Defaults to 2. Zero means only the
     /// killer's own cell glows. Must not be negative.
     /// </summary>
@@ -587,80 +513,6 @@ public sealed record GameConfig
         if (KeyCount < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(KeyCount), KeyCount, "The key count cannot be negative.");
-        }
-
-        if (ObstacleCost < 1)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(ObstacleCost),
-                ObstacleCost,
-                "A barrier must cost at least 1 to enter; it can slow the killer but never block it.");
-        }
-
-        if (BarrierBudget < 0)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(BarrierBudget),
-                BarrierBudget,
-                "The barrier budget cannot be negative.");
-        }
-
-        if (SealedBarrierCost < 1)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(SealedBarrierCost),
-                SealedBarrierCost,
-                "A sealed barrier must cost at least 1 to enter; it is a detour, never a hole in the map.");
-        }
-
-        // Written as "not greater than or equal to zero" so NaN is rejected as well as negatives.
-        if (!(BarrierSealSeconds >= 0) || double.IsInfinity(BarrierSealSeconds))
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(BarrierSealSeconds),
-                BarrierSealSeconds,
-                "The seal time must be a finite, non-negative number of seconds.");
-        }
-
-        if (!(BarrierBreakSeconds > 0) || double.IsInfinity(BarrierBreakSeconds))
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(BarrierBreakSeconds),
-                BarrierBreakSeconds,
-                "The time to break a sealed barrier must be a finite, positive number of seconds.");
-        }
-
-        if (LureCount < 0)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(LureCount),
-                LureCount,
-                "The wisp count cannot be negative.");
-        }
-
-        if (!(LureSeconds > 0) || double.IsInfinity(LureSeconds))
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(LureSeconds),
-                LureSeconds,
-                "A wisp must last a finite, positive number of seconds.");
-        }
-
-        // Written as "not greater than or equal to zero" so NaN is rejected as well as negatives.
-        if (!(LureStunSeconds >= 0) || double.IsInfinity(LureStunSeconds))
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(LureStunSeconds),
-                LureStunSeconds,
-                "The stun a wisp buys must be a finite, non-negative number of seconds.");
-        }
-
-        if (LureVisionPenalty < 0)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(LureVisionPenalty),
-                LureVisionPenalty,
-                "A wisp cannot grant vision; the penalty is a non-negative number of steps.");
         }
 
         if (DeadEndBraidPercent is < 0 or > 100)
@@ -910,9 +762,8 @@ public sealed record GameConfig
             // three and 16-20 four. A card's own surcharge is added over this by RunModifiers.
             CatchCost = CatchCost + ((floor.Number - 1) / 5),
 
-            // The design's own slot count, before the run's cards. <c>RunModifiers.Apply</c>
-            // widens it for the cards and never lets it fall below the hearts carried in, which
-            // is what keeps a healed run's footer honest now that hearts have no ceiling.
+            // The design's own slot count. Hearts have no ceiling at runtime, so this is a
+            // description of the floor rather than a limit on the hearts a run carries in.
             MaxHearts = ceiling,
 
             // The floor's own kit, where it has one; otherwise the teaching ladder. Mute has
@@ -922,9 +773,6 @@ public sealed record GameConfig
             MutedPowerup = muted,
 
             // The floor's own gimmick, where it has one; otherwise the run's shared rule.
-            BarrierBudget = floor.BarrierBudget ?? BarrierBudget,
-            LureCount = floor.LureCount ?? LureCount,
-            LureSeconds = floor.LureSeconds ?? LureSeconds,
             VisionRadius = floor.VisionRadius ?? VisionRadius,
             NearSightRadius = NearSightRadius,
             ExtraLoops = floor.ExtraLoops ?? ExtraLoops,
@@ -936,6 +784,7 @@ public sealed record GameConfig
             // on by GameFactory, the one place a floor is built for a real run: a hand-built test
             // floor keeps the plain "step and tick" behaviour its tests were written against.
             FloorNumber = floor.Number,
+            Relic = floor.Relic,
             EnemyAuraRadius = floor.EnemyAuraRadius ?? EnemyAuraRadius,
             EnemyAuraDistance = floor.EnemyAuraDistance ?? EnemyAuraDistance,
             RespawnDistance = floor.RespawnDistance ?? RespawnDistance,
@@ -943,12 +792,6 @@ public sealed record GameConfig
             RespawnStunSeconds = floor.RespawnStunSeconds ?? RespawnStunSeconds,
 
             // Shared rules: everything else the run tunes once and every floor inherits.
-            ObstacleCost = ObstacleCost,
-            BarrierSealSeconds = BarrierSealSeconds,
-            BarrierBreakSeconds = BarrierBreakSeconds,
-            SealedBarrierCost = SealedBarrierCost,
-            LureStunSeconds = LureStunSeconds,
-            LureVisionPenalty = LureVisionPenalty,
             BloomGlowReach = BloomGlowReach,
             BloomGlowSeconds = BloomGlowSeconds,
             SprintMultiplier = SprintMultiplier,

@@ -41,6 +41,23 @@ public sealed class TutorialTests
     }
 
     [Fact]
+    public void TheGuide_TeachesTheAltarTheRunDetailsAndTheFaces()
+    {
+        var text = string.Join(
+            " ",
+            Tutorial.Steps.Select(page => $"{page.Title} {string.Join(" ", page.Lines)} {page.Keys}"))
+            .ToUpperInvariant();
+
+        Assert.Contains("ALTAR", text, System.StringComparison.Ordinal);
+        Assert.Contains("RELIC", text, System.StringComparison.Ordinal);
+        Assert.Contains("RUN DETAILS", text, System.StringComparison.Ordinal);
+        Assert.Contains("QUIET", text, System.StringComparison.Ordinal);
+        Assert.Contains("GREEDY", text, System.StringComparison.Ordinal);
+        Assert.Contains("HAUNTED", text, System.StringComparison.Ordinal);
+        Assert.Contains("STARVED", text, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Page_IsClampedIntoTheGuide()
     {
         Assert.Same(Tutorial.Steps[0], Tutorial.Page(-5));

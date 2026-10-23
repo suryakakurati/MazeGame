@@ -20,13 +20,15 @@ namespace MazeGame.Tests.Game;
 public sealed class FloorRuleTests
 {
     [Fact]
-    public void TheCatalog_AssignsOneRuleToFourFloors()
+    public void TheCatalog_AssignsOneRuleToTheFloorsWhoseIdentityIsOne()
     {
         var ruled = FloorCatalog.Shipped.Where(floor => floor.Rule is not null).ToList();
 
-        Assert.Equal(4, ruled.Count);
-        Assert.Equal(4, ruled.Select(floor => floor.Rule!.Value).Distinct().Count());
+        Assert.Equal(6, ruled.Count);
+        Assert.Equal(6, ruled.Select(floor => floor.Rule!.Value).Distinct().Count());
 
+        Assert.Equal(FloorRule.Tide, ByNumber(3).Rule);
+        Assert.Equal(FloorRule.ThreeLocks, ByNumber(6).Rule);
         Assert.Equal(FloorRule.Sleeper, ByNumber(14).Rule);
         Assert.Equal(FloorRule.ThreadGates, ByNumber(18).Rule);
         Assert.Equal(FloorRule.BurningLantern, ByNumber(19).Rule);
@@ -259,7 +261,6 @@ public sealed class FloorRuleTests
         var config = TestLevels.CorridorConfig(
             length,
             keyCount,
-            barrierBudget: 0,
             enemyStepSeconds: enemyStepSeconds,
             visionRadius: visionRadius,
             startingHearts: startingHearts) with

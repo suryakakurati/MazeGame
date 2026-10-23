@@ -17,8 +17,8 @@ namespace MazeGame.Core.Game;
 /// </para>
 /// <para>
 /// A catch costs a heart rather than ending the run: the killer is thrown to a distant dead
-/// end, the player gets a short window of invulnerability, and every key, barrier and wisp on
-/// the floor is kept. Only the last heart ends the run.
+/// end, the player gets a short window of invulnerability, and every key on the floor is kept.
+/// Only the last heart ends the run.
 /// </para>
 /// <para>
 /// <b>Nothing here can soft-lock the game.</b> Three invariants are enforced by design and
@@ -27,12 +27,6 @@ namespace MazeGame.Core.Game;
 /// <list type="bullet">
 ///   <item><description>The exit can be walked over while locked, so it can never trap the
 ///   player in a corridor. It simply does nothing until every key is collected.</description></item>
-///   <item><description>A barrier is sealed for a few seconds, which makes the killer treat
-///   that cell as a wall and look for another way, and afterwards a speed bump that is
-///   expensive but passable. A sealed barrier is never a permanent wall: when it is the only
-///   route the killer tears it apart, so a route always exists.</description></item>
-///   <item><description>A wisp only changes <i>where</i> the killer walks, never whether it
-///   can reach the player, so it cannot affect reachability at all.</description></item>
 ///   <item><description>Keys, the exit and the killer are placed on distinct cells after the
 ///   maze exists, and the maze is connected, so everything is reachable.</description></item>
 ///   <item><description>The killer starts on a dead end. Since a perfect maze is a tree, a
@@ -91,9 +85,6 @@ public sealed class GameState
     private static readonly Direction[] NeighbourDirections =
         [Direction.North, Direction.East, Direction.South, Direction.West];
 
-    /// <summary>How many steps of cave a glowing wisp lights up around itself.</summary>
-    private const int LureGlowRadius = 1;
-
     /// <summary>
     /// How far a hunter can know the player's exact cell, in steps.
     /// </summary>
@@ -134,6 +125,24 @@ public sealed class GameState
     /// </summary>
     private const int MaxQueuedEvents = 32;
 
+    /// <summary>Seconds of dry floor before the tide comes in.</summary>
+    private const double TideDrySeconds = 12.0;
+
+    /// <summary>Seconds the floor spends flooded.</summary>
+    private const double TideFloodSeconds = 8.0;
+
+    /// <summary>Seconds of warning before the flood, counted from the end of the dry span.</summary>
+    private const double TideSwellSeconds = 2.0;
+
+    /// <summary>Steps of sight the flooded floor takes from the torch.</summary>
+    private const int TideVisionCost = 1;
+
+    /// <summary>How much faster the hunters move while the water is in.</summary>
+    private const double TideHunterScale = 1.35;
+
+    /// <summary>How many locks the Gilded Cage needs thrown.</summary>
+    private const int LockCount = 3;
+
     private readonly GameConfig _config;
     private readonly Grid _maze;
     private readonly SecretRoom? _safeRoom;
@@ -145,25 +154,44 @@ public sealed class GameState
     private readonly IRandom _random;
     private readonly HashSet<Cell> _keys;
 
+    // The floor's one optional find, off the critical path. It is not a key and not a room: it
+    // pays only if the player chooses to leave the route and touch it.
+    private readonly Cell? _curiosity;
+    private readonly CuriosityKind _curiosityKind;
+    private bool _curiositySpent;
+
+    // The floor's altar: a relic a run keeps, off the route like the curiosity. Null when the
+    // campaign found nothing left to stock it with.
+    private readonly Cell? _relic;
+    private readonly RelicKind? _relicKind;
+    private bool _relicTaken;
+
+    // Blooms the curiosity paid. They are score, not keys: they never open the arch, so the branch
+    // is worth taking for the garden rather than for progress.
+    private int _bonusBlooms;
+
+    // Sight a shrine gave for the rest of the floor, in steps.
+    private int _visionBonus;
+
+    // The Gilded Cage's locks: three cells that must each be stepped on before the arch opens.
+    private readonly List<Cell> _locks = [];
+    private readonly HashSet<Cell> _locksThrown = [];
+
+    // The Drowned Halls' tide, in seconds since the cycle began.
+    private double _tideElapsed;
+
     // The Echo: the floor's story, on one cell in a dead end. Null when the floor has none, which
     // is every hand-built test floor unless it asks for one.
     private readonly Cell? _echo;
     private readonly IReadOnlyList<string> _echoLines;
     private bool _echoOpen;
     private bool _echoRead;
-    private readonly HashSet<Cell> _barriers = [];
-    private readonly Dictionary<Cell, double> _barrierSeals = [];
     private readonly HashSet<Cell> _visible = [];
     private readonly HashSet<Cell> _enemyGlow = [];
     private Cell _exit;
     private readonly Queue<GameEvent> _events = new();
 
     private Cell _player;
-    private Cell _aimCursor;
-    private Cell? _lure;
-    private double _lureSecondsLeft;
-    private int _barriersRemaining;
-    private int _luresRemaining;
 
     // The new kit. Charges are per floor; the state is the rule, the HUD only reads it.
     private PowerupCharges _powerupsRemaining;
@@ -206,7 +234,6 @@ public sealed class GameState
     private bool _freeCatchUsed;
     private bool _reviveUsed;
     private GameStatus _status = GameStatus.InProgress;
-    private PlacementMode _aiming;
 
     // Timed steps. The player's cell changes the instant a step is accepted; this cooldown only
     // decides when the next step may start, and the renderer slides the figure across.
@@ -285,8 +312,6 @@ public sealed class GameState
         _safeRoom = safeRoom;
         _pathfinder = pathfinder;
         _random = random;
-        _barriersRemaining = config.BarrierBudget;
-        _luresRemaining = config.LureCount;
         _powerupsRemaining = config.MutedPowerup is { } muted
             ? config.Powerups.With(muted, 0)
             : config.Powerups;
@@ -390,6 +415,51 @@ public sealed class GameState
         else
         {
             _echoLines = Array.Empty<string>();
+        }
+
+        // The Gilded Cage's locks come after the Echo, so the story's cell always wins the tie: a
+        // lock can move a step, an Echo cannot.
+        if (config.Rule == FloorRule.ThreeLocks)
+        {
+            PlaceLocks(available, config.KeyCount, roomCells);
+        }
+
+        // The curiosity is placed last, from what everything else did not take. It must be off the
+        // shortest route, because a find on the critical path is not a find.
+        _curiosityKind = CuriosityCatalog.Pick(config.Seed ?? config.FloorNumber, config.FloorNumber);
+        _curiosity = ChooseCuriosityCell(
+            maze,
+            available,
+            config.KeyCount,
+            _player,
+            _echo,
+            _threadGateA,
+            _threadGateB,
+            _locks);
+
+        // The altar is placed after the curiosity, from the same pool, and never on the curiosity's
+        // cell: two finds on one tile would be one find. Both are detours, so both are scored the
+        // same way and a floor that has room for one usually has room for the other.
+        if (config.Relic is { } relic)
+        {
+            var taken = new List<Cell>(_locks);
+            if (_curiosity is { } find)
+            {
+                taken.Add(find);
+            }
+
+            // A floor with no detour to spare has no altar: the kind lives with the cell, so the
+            // HUD never announces a relic the player could not walk to.
+            _relic = ChooseCuriosityCell(
+                maze,
+                available,
+                config.KeyCount,
+                _player,
+                _echo,
+                _threadGateA,
+                _threadGateB,
+                taken);
+            _relicKind = _relic is null ? null : relic;
         }
 
         // Nothing is mid-step at the start, so every figure is drawn exactly on its cell.
@@ -676,6 +746,9 @@ public sealed class GameState
         Raise(GameEvent.Teleported);
 
         CollectKeyAt(_player);
+        ResolveCuriosityAt(_player);
+        ResolveRelicAt(_player);
+        TryThrowLockAt(_player);
 
         if (_config.MagneticKeys)
         {
@@ -982,47 +1055,6 @@ public sealed class GameState
     public IReadOnlySet<Cell> Keys => _keys;
 
     /// <summary>
-    /// Gets the cells holding a player-placed barrier, whether it is still sealed or already a
-    /// spent husk.
-    /// </summary>
-    public IReadOnlySet<Cell> Barriers => _barriers;
-
-    /// <summary>
-    /// Gets the barriers that are still sealed, mapped to the seconds the seal has left.
-    /// </summary>
-    /// <remarks>
-    /// A sealed barrier counts as a wall for the killer, so a renderer draws these differently
-    /// from the cracked ones and can show how much of the seal is left. A cell in
-    /// <see cref="Barriers"/> that is missing here is spent: passable, but expensive.
-    /// </remarks>
-    public IReadOnlyDictionary<Cell, double> BarrierSeals => _barrierSeals;
-
-    /// <summary>
-    /// Gets the cell holding the glowing wisp, or <see langword="null"/> when none is active.
-    /// </summary>
-    /// <remarks>
-    /// The wisp is a decoy, not a trap: while it is the cheaper destination by Dijkstra's
-    /// measure, the killer walks towards it instead of the player. It never blocks anything and
-    /// never hides the player, so the game stays winnable and losable exactly as before.
-    /// </remarks>
-    public Cell? Lure => _lure;
-
-    /// <summary>
-    /// Gets how many seconds the active wisp has left to glow, or 0 when none is active.
-    /// </summary>
-    public double LureSecondsRemaining => _lure is null ? 0.0 : _lureSecondsLeft;
-
-    /// <summary>
-    /// Gets how many wisps the player may still place.
-    /// </summary>
-    public int LuresRemaining => _luresRemaining;
-
-    /// <summary>
-    /// Gets a value indicating whether a wisp is currently glowing.
-    /// </summary>
-    public bool IsLureActive => _lure is not null;
-
-    /// <summary>
     /// Gets how many keys are still to be collected.
     /// </summary>
     public int KeysRemaining => _keys.Count;
@@ -1031,11 +1063,6 @@ public sealed class GameState
     /// Gets how many keys the player has collected so far.
     /// </summary>
     public int KeysCollected => _config.KeyCount - _keys.Count;
-
-    /// <summary>
-    /// Gets how many barriers the player may still place.
-    /// </summary>
-    public int BarriersRemaining => _barriersRemaining;
 
     /// <summary>Gets the powerup charges left on this floor.</summary>
     /// <remarks>
@@ -1096,7 +1123,95 @@ public sealed class GameState
     /// Gets a value indicating whether the exit can be used. It opens once every key is
     /// collected, and it can still be walked over while locked.
     /// </summary>
-    public bool IsExitUnlocked => _keys.Count == 0;
+    public bool IsExitUnlocked => _keys.Count == 0 && LocksRemaining == 0;
+
+    /// <summary>Gets the cell of the floor's curiosity, or <see langword="null"/> when it has none.</summary>
+    /// <remarks>
+    /// The cell is reported even after the find has been spent, so a renderer can keep showing
+    /// what the player found; <see cref="IsCuriositySpent"/> says whether it still pays.
+    /// </remarks>
+    public Cell? CuriosityCell => _curiosity;
+
+    /// <summary>Gets the kind of curiosity this floor holds.</summary>
+    public CuriosityKind Curiosity => _curiosityKind;
+
+    /// <summary>Gets a value indicating whether the curiosity has already been taken.</summary>
+    public bool IsCuriositySpent => _curiositySpent;
+
+    /// <summary>
+    /// Gets the cell of the floor's altar, or <see langword="null"/> when the floor has none.
+    /// </summary>
+    /// <remarks>
+    /// The relic is stocked by the campaign, never rolled by the floor: a test floor with no
+    /// <see cref="GameConfig.Relic"/> has no altar at all. The cell is reported after the relic is
+    /// taken as well, so a renderer can show the emptied plinth.
+    /// </remarks>
+    public Cell? RelicCell => _relic;
+
+    /// <summary>Gets the relic waiting on this floor's altar, or null when there is none.</summary>
+    public RelicKind? Relic => _relicKind;
+
+    /// <summary>Gets a value indicating whether the relic has already been taken.</summary>
+    public bool IsRelicTaken => _relicTaken;
+
+    /// <summary>Gets the blooms the curiosity paid, which count for the garden and never for the arch.</summary>
+    public int BonusBlooms => _bonusBlooms;
+
+    /// <summary>Gets the steps of extra sight a shrine has granted on this floor.</summary>
+    public int VisionBonus => _visionBonus;
+
+    /// <summary>Gets the locks on this floor, empty on every floor but the Gilded Cage.</summary>
+    public IReadOnlyList<Cell> Locks => _locks;
+
+    /// <summary>Gets a value indicating whether the lock on <paramref name="cell"/> has been thrown.</summary>
+    /// <param name="cell">The cell to ask about.</param>
+    /// <returns><see langword="true"/> when the lock is open.</returns>
+    public bool IsLockThrown(Cell cell) => _locksThrown.Contains(cell);
+
+    /// <summary>Gets how many locks still bar the arch.</summary>
+    public int LocksRemaining => _locks.Count - _locksThrown.Count;
+
+    /// <summary>Gets how far along its cycle the tide is, which is <see cref="TidePhase.Dry"/> off the Drowned Halls.</summary>
+    public TidePhase Tide
+    {
+        get
+        {
+            if (_config.Rule != FloorRule.Tide)
+            {
+                return TidePhase.Dry;
+            }
+
+            var cycle = TideDrySeconds + TideFloodSeconds;
+            var position = _tideElapsed % cycle;
+
+            if (position < TideDrySeconds - TideSwellSeconds)
+            {
+                return TidePhase.Dry;
+            }
+
+            return position < TideDrySeconds ? TidePhase.Swell : TidePhase.Flood;
+        }
+    }
+
+    /// <summary>Gets a value indicating whether the water is in right now.</summary>
+    public bool IsTideIn => Tide == TidePhase.Flood;
+
+    /// <summary>Gets the seconds until the tide next changes.</summary>
+    public double TideSecondsLeft
+    {
+        get
+        {
+            if (_config.Rule != FloorRule.Tide)
+            {
+                return 0.0;
+            }
+
+            var cycle = TideDrySeconds + TideFloodSeconds;
+            var position = _tideElapsed % cycle;
+
+            return position < TideDrySeconds ? TideDrySeconds - position : cycle - position;
+        }
+    }
 
     /// <summary>
     /// Gets the current outcome of the game.
@@ -1322,34 +1437,6 @@ public sealed class GameState
     }
 
     /// <summary>
-    /// Gets what the player is aiming, or <see cref="PlacementMode.None"/> when they are just
-    /// walking.
-    /// </summary>
-    public PlacementMode AimMode => _aiming;
-
-    /// <summary>
-    /// Gets a value indicating whether the player is aiming anything. While this is true the
-    /// game clock is paused, the player cannot walk, and the directional keys move
-    /// <see cref="AimCursor"/> instead.
-    /// </summary>
-    public bool IsAiming => _aiming != PlacementMode.None;
-
-    /// <summary>
-    /// Gets a value indicating whether the player is currently aiming a barrier.
-    /// </summary>
-    public bool IsPlacingBarrier => _aiming == PlacementMode.Barrier;
-
-    /// <summary>
-    /// Gets a value indicating whether the player is currently aiming a wisp.
-    /// </summary>
-    public bool IsPlacingLure => _aiming == PlacementMode.Lure;
-
-    /// <summary>
-    /// Gets the cell the aimed item would be placed on, or the player's cell when not aiming.
-    /// </summary>
-    public Cell AimCursor => _aimCursor;
-
-    /// <summary>
     /// Determines whether the player can currently see <paramref name="cell"/>.
     /// </summary>
     /// <param name="cell">The cell to test.</param>
@@ -1399,11 +1486,11 @@ public sealed class GameState
     {
         get
         {
-            var radius = _config.VisionRadius - _lanternLoss;
+            var radius = _config.VisionRadius + _visionBonus - _lanternLoss;
 
-            if (_lure is not null)
+            if (IsTideIn)
             {
-                radius -= _config.LureVisionPenalty;
+                radius -= TideVisionCost;
             }
 
             if (_eclipseDark)
@@ -1483,8 +1570,7 @@ public sealed class GameState
         _sprintStaminaLeft > 0 &&
         _config.PlayerStepSeconds > 0 &&
         _config.SprintStaminaSeconds > 0 &&
-        _status == GameStatus.InProgress &&
-        _aiming == PlacementMode.None;
+        _status == GameStatus.InProgress;
 
     /// <summary>Gets the fraction of the stamina bar that is left, from 0 to 1.</summary>
     /// <remarks>One when sprinting is disabled for the floor, so a HUD can hide the bar.</remarks>
@@ -1565,7 +1651,7 @@ public sealed class GameState
         // While aiming, the directional keys move the cursor, not the player, and the game
         // clock is frozen, so a move here would be ambiguous. While the Echo is speaking the same
         // is true: the player is reading, not walking.
-        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None || _echoOpen)
+        if (_status != GameStatus.InProgress || _echoOpen)
         {
             return false;
         }
@@ -1642,6 +1728,9 @@ public sealed class GameState
         Raise(GameEvent.Step);
 
         CollectKeyAt(_player);
+        ResolveCuriosityAt(_player);
+        ResolveRelicAt(_player);
+        TryThrowLockAt(_player);
 
         if (_config.MagneticKeys)
         {
@@ -1711,198 +1800,6 @@ public sealed class GameState
     }
 
     /// <summary>
-    /// Starts aiming a barrier. The game clock pauses until the placement is confirmed or
-    /// cancelled.
-    /// </summary>
-    /// <returns>
-    /// <see langword="true"/> when aiming started; <see langword="false"/> when there is no
-    /// barrier left, the game is over, or an aim is already in progress.
-    /// </returns>
-    /// <remarks>
-    /// Aiming is a rule, not a UI mode: while it is active <see cref="Tick(double)"/> does
-    /// nothing, so the killer is frozen and the player can study the map without being
-    /// punished for the time spent deciding where to put the trap.
-    /// </remarks>
-    public bool BeginBarrierPlacement() => BeginAim(PlacementMode.Barrier);
-
-    /// <summary>
-    /// Starts aiming a wisp. The game clock pauses until the placement is confirmed or
-    /// cancelled, exactly as it does for a barrier.
-    /// </summary>
-    /// <returns>
-    /// <see langword="true"/> when aiming started; <see langword="false"/> when no wisp is
-    /// left, one is already glowing, the game is over, or an aim is already in progress.
-    /// </returns>
-    /// <remarks>
-    /// Only one wisp may glow at a time. That is a deliberate limit: two decoys would let the
-    /// player split the killer's attention without ever being chased, whereas one turns into a
-    /// decision about <i>when</i> to spend it.
-    /// </remarks>
-    public bool BeginLurePlacement() => BeginAim(PlacementMode.Lure);
-
-    /// <summary>
-    /// Starts aiming <paramref name="mode"/>, placing the cursor on the player.
-    /// </summary>
-    /// <returns><see langword="true"/> when the aim started.</returns>
-    /// <remarks>
-    /// The single gate for both placeables, so the "game over", "already aiming" and
-    /// "nothing left to spend" rules cannot drift apart.
-    /// </remarks>
-    private bool BeginAim(PlacementMode mode)
-    {
-        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None)
-        {
-            return false;
-        }
-
-        var available = mode switch
-        {
-            PlacementMode.Barrier => _barriersRemaining > 0,
-            PlacementMode.Lure => _luresRemaining > 0 && _lure is null,
-            _ => false,
-        };
-
-        if (!available)
-        {
-            return false;
-        }
-
-        _aiming = mode;
-        _aimCursor = _player;
-        return true;
-    }
-
-    /// <summary>
-    /// Moves the aiming cursor one cell in <paramref name="direction"/>.
-    /// </summary>
-    /// <param name="direction">The direction to move the aim in.</param>
-    /// <returns>
-    /// <see langword="true"/> when the cursor moved; <see langword="false"/> when it would
-    /// leave the maze or no aim is in progress.
-    /// </returns>
-    /// <remarks>
-    /// The cursor ignores walls: it is a targeting reticle, not the player, so a barrier or a
-    /// wisp can be dropped anywhere the player has decided to put it.
-    /// </remarks>
-    /// <exception cref="ArgumentOutOfRangeException">
-    /// Thrown when <paramref name="direction"/> is not one of the four directions.
-    /// </exception>
-    public bool MoveAimCursor(Direction direction)
-    {
-        if (_aiming == PlacementMode.None)
-        {
-            return false;
-        }
-
-        var (rowDelta, columnDelta) = direction.Delta();
-        var row = _aimCursor.Row + rowDelta;
-        var column = _aimCursor.Column + columnDelta;
-
-        if (row < 0 || row >= _maze.Rows || column < 0 || column >= _maze.Columns)
-        {
-            return false;
-        }
-
-        _aimCursor = _maze.GetCell(row, column);
-        return true;
-    }
-
-    /// <summary>
-    /// Places whatever is being aimed on the cursor's cell and ends the aim.
-    /// </summary>
-    /// <returns><see langword="true"/> when it was placed; <see langword="false"/> otherwise.</returns>
-    /// <remarks>
-    /// A refusal spends nothing and leaves the aim active, so a player who aims at an
-    /// occupied cell can simply move the cursor and try again.
-    /// </remarks>
-    public bool ConfirmPlacement() => _aiming switch
-    {
-        PlacementMode.Barrier => ConfirmBarrier(),
-        PlacementMode.Lure => ConfirmLure(),
-        _ => false,
-    };
-
-    /// <summary>
-    /// Places a barrier on the cursor's cell at the start of its seal, and ends the aim.
-    /// </summary>
-    /// <returns>
-    /// <see langword="true"/> when the barrier was placed; <see langword="false"/> when no
-    /// barrier is being aimed, the budget is gone, or that cell already holds a barrier.
-    /// </returns>
-    /// <remarks>
-    /// A refusal spends nothing and leaves the aim active, so a player who aims at an
-    /// occupied cell can simply move the cursor and try again.
-    /// </remarks>
-    private bool ConfirmBarrier()
-    {
-        if (!IsPlacingBarrier || _barriersRemaining <= 0)
-        {
-            return false;
-        }
-
-        // Add returns false when the cell already has a barrier; the budget must not be
-        // spent twice on the same cell.
-        if (!_barriers.Add(_aimCursor))
-        {
-            return false;
-        }
-
-        // The seal is what makes a barrier a wall rather than a toll. A configured seal of
-        // zero means "never sealed", so the cell goes straight to its spent price.
-        if (_config.BarrierSealSeconds > 0)
-        {
-            _barrierSeals[_aimCursor] = _config.BarrierSealSeconds;
-        }
-
-        _barriersRemaining--;
-        _aiming = PlacementMode.None;
-        InvalidateEnemyRoute();
-        Raise(GameEvent.SealPlaced);
-        return true;
-    }
-
-    /// <summary>
-    /// Lights a wisp on the cursor's cell and ends the aim.
-    /// </summary>
-    /// <returns>
-    /// <see langword="true"/> when the wisp was placed; <see langword="false"/> when no wisp
-    /// is being aimed, one is already glowing, or the cursor is on the player's or the killer's
-    /// own cell.
-    /// </returns>
-    /// <remarks>
-    /// A wisp on the player's own cell would be a decoy at the exact place the killer is
-    /// already heading, so it is refused rather than silently spending a charge for nothing. A
-    /// wisp under the killer's feet is refused for a sharper reason: the killer's route to it
-    /// would be zero steps long, so it would sit still for the wisp's whole lifetime. That is a
-    /// six-second freeze for one charge, which the barrier does not even offer.
-    /// </remarks>
-    private bool ConfirmLure()
-    {
-        if (!IsPlacingLure || _luresRemaining <= 0 || _lure is not null ||
-            _aimCursor == _player || HunterAt(_aimCursor) is not null)
-        {
-            return false;
-        }
-
-        _lure = _aimCursor;
-        _lureSecondsLeft = _config.LureSeconds;
-        _luresRemaining--;
-        _aiming = PlacementMode.None;
-        InvalidateEnemyRoute();
-        Raise(GameEvent.WispLit);
-
-        // The wisp lights its own cell, so what the player can see changes at once.
-        RecomputeVisibility();
-        return true;
-    }
-
-    /// <summary>
-    /// Stops aiming without placing anything or spending a charge.
-    /// </summary>
-    /// <remarks>Does nothing when no aim is in progress.</remarks>
-    public void CancelPlacement() => _aiming = PlacementMode.None;
-
-    /// <summary>
     /// Blinks through the wall the player faces, leaving the breach open.
     /// </summary>
     /// <returns><see langword="true"/> when the player moved.</returns>
@@ -1913,7 +1810,7 @@ public sealed class GameState
     /// </remarks>
     public bool TryBlink()
     {
-        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None ||
+        if (_status != GameStatus.InProgress ||
             _powerupsRemaining.Blink <= 0)
         {
             return false;
@@ -1953,6 +1850,9 @@ public sealed class GameState
         Raise(GameEvent.Blink);
 
         CollectKeyAt(_player);
+        ResolveCuriosityAt(_player);
+        ResolveRelicAt(_player);
+        TryThrowLockAt(_player);
 
         if (_config.MagneticKeys)
         {
@@ -1996,7 +1896,7 @@ public sealed class GameState
     /// </remarks>
     public bool TryVeil()
     {
-        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None ||
+        if (_status != GameStatus.InProgress ||
             IsVeiled || IsVeilCharging || _powerupsRemaining.Veil <= 0)
         {
             return false;
@@ -2012,7 +1912,7 @@ public sealed class GameState
     /// <returns><see langword="true"/> when the drag started.</returns>
     public bool TryDrag()
     {
-        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None ||
+        if (_status != GameStatus.InProgress ||
             IsDragActive || _powerupsRemaining.Drag <= 0)
         {
             return false;
@@ -2038,7 +1938,7 @@ public sealed class GameState
     /// </remarks>
     public bool TryThrowLantern()
     {
-        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None ||
+        if (_status != GameStatus.InProgress ||
             IsLanternActive || _powerupsRemaining.Lantern <= 0)
         {
             return false;
@@ -2112,7 +2012,7 @@ public sealed class GameState
     /// </remarks>
     public bool TryShove()
     {
-        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None ||
+        if (_status != GameStatus.InProgress ||
             _powerupsRemaining.Shove <= 0)
         {
             return false;
@@ -2426,6 +2326,146 @@ public sealed class GameState
         return openings;
     }
 
+    /// <summary>
+    /// Places the Gilded Cage's locks, spread across the walkable floor.
+    /// </summary>
+    /// <param name="available">The cells the exit, the blooms and the hunters did not take.</param>
+    /// <param name="keyCount">How many blooms the floor holds.</param>
+    /// <param name="roomCells">The safe room's cells, which nothing that must be found may use.</param>
+    /// <remarks>
+    /// The locks are taken at even intervals through the floor's cells sorted by distance from the
+    /// player: near, middle and far. That is the whole puzzle — the three keys to the arch are not
+    /// carried, they are three walks in three directions, and the floor has to be read before the
+    /// first one is chosen.
+    /// </remarks>
+    private void PlaceLocks(
+        List<Cell> available,
+        int keyCount,
+        HashSet<(int Row, int Column)> roomCells)
+    {
+        var fromPlayer = DistancesFrom(_maze, _player, int.MaxValue / 2);
+        var candidates = new List<Cell>();
+
+        for (var index = 1 + keyCount; index < available.Count; index++)
+        {
+            var cell = available[index];
+
+            if (roomCells.Contains((cell.Row, cell.Column)) ||
+                (_echo is { } echo && SameCell(cell, echo)) ||
+                (_threadGateA is { } first && SameCell(cell, first)) ||
+                (_threadGateB is { } second && SameCell(cell, second)))
+            {
+                continue;
+            }
+
+            candidates.Add(cell);
+        }
+
+        candidates.Sort((left, right) =>
+        {
+            var byDistance = fromPlayer.GetValueOrDefault(left).CompareTo(fromPlayer.GetValueOrDefault(right));
+
+            return byDistance != 0
+                ? byDistance
+                : left.Row != right.Row ? left.Row.CompareTo(right.Row) : left.Column.CompareTo(right.Column);
+        });
+
+        for (var index = 0; index < LockCount && candidates.Count > 0; index++)
+        {
+            // Evenly spaced so the three walks are genuinely different lengths: the first lock is
+            // the closest candidate, the last the furthest.
+            var position = Math.Min(candidates.Count - 1, (index * candidates.Count) / LockCount);
+            _locks.Add(candidates[position]);
+            candidates.RemoveAt(position);
+        }
+    }
+
+    /// <summary>
+    /// Chooses the curiosity's cell: a detour off the shortest route to the arch.
+    /// </summary>
+    /// <param name="maze">The floor.</param>
+    /// <param name="available">The cells everything else did not take.</param>
+    /// <param name="keyCount">How many blooms the floor holds.</param>
+    /// <param name="player">Where the player starts.</param>
+    /// <param name="echo">The Echo's cell, or null.</param>
+    /// <param name="gateA">The first thread gate, or null.</param>
+    /// <param name="gateB">The second thread gate, or null.</param>
+    /// <param name="locks">The Gilded Cage's locks, empty on every other floor.</param>
+    /// <returns>The cell, or <see langword="null"/> when the floor has no room for a detour.</returns>
+    /// <remarks>
+    /// It prefers a dead end and a long detour, but only needs one step off the route: a curiosity
+    /// is meant to be found by a player who looks around, not by a player who maps the floor.
+    /// </remarks>
+    private static Cell? ChooseCuriosityCell(
+        Grid maze,
+        List<Cell> available,
+        int keyCount,
+        Cell player,
+        Cell? echo,
+        Cell? gateA,
+        Cell? gateB,
+        IReadOnlyList<Cell> locks)
+    {
+        const int DeadEndBonus = 400;
+
+        var fromPlayer = DistancesFrom(maze, player, int.MaxValue / 2);
+        var toExit = DistancesFrom(maze, available[0], int.MaxValue / 2);
+
+        if (!fromPlayer.TryGetValue(available[0], out var shortest))
+        {
+            return null;
+        }
+
+        Cell? best = null;
+        var bestScore = -1;
+
+        for (var index = 1 + keyCount; index < available.Count; index++)
+        {
+            var cell = available[index];
+
+            if ((echo is { } heard && SameCell(cell, heard)) ||
+                (gateA is { } first && SameCell(cell, first)) ||
+                (gateB is { } second && SameCell(cell, second)) ||
+                Contains(locks, cell) ||
+                !fromPlayer.TryGetValue(cell, out var fromStart) ||
+                !toExit.TryGetValue(cell, out var toArch))
+            {
+                continue;
+            }
+
+            var detour = fromStart + toArch - shortest;
+
+            if (detour < 1)
+            {
+                continue;
+            }
+
+            var score = (detour * 4) + (CountOpenings(maze, cell) == 1 ? DeadEndBonus : 0) + fromStart;
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = cell;
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>Tests whether <paramref name="cells"/> already holds a cell at the same position.</summary>
+    private static bool Contains(IReadOnlyList<Cell> cells, Cell cell)
+    {
+        for (var index = 0; index < cells.Count; index++)
+        {
+            if (SameCell(cells[index], cell))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>Collects the key on <paramref name="cell"/>, if there is one.</summary>
     /// <param name="cell">The cell just entered.</param>
     /// <remarks>
@@ -2462,6 +2502,111 @@ public sealed class GameState
         if (HasCondition(DescentCondition.Drift))
         {
             RelocateExit();
+        }
+    }
+
+    /// <summary>
+    /// Resolves the floor's curiosity if the player has just stepped onto it and can pay.
+    /// </summary>
+    /// <param name="cell">The cell the player just entered.</param>
+    /// <remarks>
+    /// A bell and a shrine are free, so touching them always spends them. A reliquary costs a
+    /// heart, so a player down to their last one can walk over it as often as they like: it stays
+    /// sealed rather than becoming a losing move the floor makes for them.
+    /// </remarks>
+    private void ResolveCuriosityAt(Cell cell)
+    {
+        if (_curiosity is not { } site || _curiositySpent || !SameCell(cell, site))
+        {
+            return;
+        }
+
+        switch (_curiosityKind)
+        {
+            case CuriosityKind.Bell:
+                _curiositySpent = true;
+                _hearts++;
+                WakeAllSleepers();
+                InvalidateEnemyRoute();
+                break;
+
+            case CuriosityKind.Reliquary:
+                if (_hearts <= 1)
+                {
+                    return;
+                }
+
+                _curiositySpent = true;
+                _hearts--;
+                _bonusBlooms += 2;
+                _powerupsRemaining = _powerupsRemaining.Adjust(
+                    CuriosityCatalog.BonusPowerup(_config.Seed ?? _config.FloorNumber, _config.FloorNumber),
+                    1);
+                WakeAllSleepers();
+                break;
+
+            case CuriosityKind.Shrine:
+                _curiositySpent = true;
+                _visionBonus++;
+                _bonusBlooms++;
+                RecomputeVisibility();
+                break;
+        }
+
+        Raise(GameEvent.CuriosityFound);
+    }
+
+    /// <summary>
+    /// Takes the floor's relic if the player has just stepped onto the altar.
+    /// </summary>
+    /// <param name="cell">The cell the player just entered.</param>
+    /// <remarks>
+    /// <para>
+    /// The relic is free to take but not free to reach: the altar always stands off the shortest
+    /// route. Touching it is loud — every sleeper wakes and the hunters lose their cached route,
+    /// so the last leg back to the arch is played against a floor that knows where the player was.
+    /// </para>
+    /// <para>
+    /// The effect is not applied here. The floor only reports that it was taken; the campaign
+    /// folds the relic into the run's modifiers, which is what makes it last past this floor.
+    /// </para>
+    /// </remarks>
+    private void ResolveRelicAt(Cell cell)
+    {
+        if (_relic is not { } site || _relicTaken || !SameCell(cell, site))
+        {
+            return;
+        }
+
+        _relicTaken = true;
+        WakeAllSleepers();
+        InvalidateEnemyRoute();
+        Raise(GameEvent.RelicFound);
+    }
+
+    /// <summary>Throws the lock on <paramref name="cell"/>, if the floor has one there.</summary>
+    /// <param name="cell">The cell the player just entered.</param>
+    /// <remarks>
+    /// A lock is thrown by arrival, like a bloom, so the Gilded Cage needs no new key: the player
+    /// walks onto the three gilded cages and the arch opens. What the floor adds is the route, not
+    /// an interaction.
+    /// </remarks>
+    private void TryThrowLockAt(Cell cell)
+    {
+        if (_config.Rule != FloorRule.ThreeLocks)
+        {
+            return;
+        }
+
+        foreach (var lockCell in _locks)
+        {
+            if (!SameCell(lockCell, cell) || !_locksThrown.Add(lockCell))
+            {
+                continue;
+            }
+
+            Raise(GameEvent.LockThrown);
+            return;
         }
     }
 
@@ -2522,12 +2667,8 @@ public sealed class GameState
     /// the killer across the maze.
     /// </para>
     /// <para>
-    /// Entering a normal cell takes <see cref="GameConfig.EnemyStepSeconds"/>. Entering a spent
-    /// barriered cell takes that long multiplied by <see cref="GameConfig.ObstacleCost"/>, and
-    /// tearing a sealed one apart takes <see cref="GameConfig.BarrierBreakSeconds"/> on its own,
-    /// so an obstacle is a real delay and not just a different route. Barrier seals and the
-    /// wisp age in the same wall-clock time (a long frame still ages them fully, even though it
-    /// cannot bank more than one step), and everything is frozen while the player is aiming.
+    /// Entering a normal cell takes <see cref="GameConfig.EnemyStepSeconds"/>, and a frame is
+    /// banked at most one step at a time. The floor is frozen while the Echo is open.
     /// After the game is over this method does nothing.
     /// </para>
     /// </remarks>
@@ -2544,7 +2685,7 @@ public sealed class GameState
                 "Elapsed time must be a finite, non-negative number of seconds.");
         }
 
-        if (_status != GameStatus.InProgress || _aiming != PlacementMode.None || _echoOpen)
+        if (_status != GameStatus.InProgress || _echoOpen)
         {
             return;
         }
@@ -2557,8 +2698,7 @@ public sealed class GameState
         }
         else
         {
-            // Seals and the wisp age in wall-clock time, so a frame long enough to be clamped below
-            // still counts fully against them.
+            // Conditions age in wall-clock time, so a long frame still counts fully against them.
             AdvanceTimers(deltaSeconds);
         }
 
@@ -2663,7 +2803,8 @@ public sealed class GameState
     /// individual-hunter and Pack clocks cannot disagree about what time it is.
     /// </remarks>
     private double HunterTimeScale =>
-        _dragSecondsLeft > 0 ? 0.4 : _dragPenaltyLeft > 0 ? 1.1 : 1.0;
+        (_dragSecondsLeft > 0 ? 0.4 : _dragPenaltyLeft > 0 ? 1.1 : 1.0) *
+        (IsTideIn ? TideHunterScale : 1.0);
 
     /// <summary>
     /// Spends a buffered direction once the last step's cooldown has run out.
@@ -2753,15 +2894,6 @@ public sealed class GameState
         total <= 0 ? 1.0 : Math.Clamp(1.0 - (left / total), 0, 1);
 
     /// <summary>
-    /// Ages the seals and the wisp by <paramref name="deltaSeconds"/>, expiring whatever runs
-    /// out, and marks the killer's route stale when a cost changed.
-    /// </summary>
-    /// <remarks>
-    /// A cracked seal and an expired wisp both change what the killer should do, so both
-    /// invalidate the cached route. Only the seal leaves: the barrier itself stays on the map
-    /// as a husk that is passable at <see cref="GameConfig.ObstacleCost"/>.
-    /// </remarks>
-    /// <summary>
     /// Ages the player's own clocks by <paramref name="deltaSeconds"/> and nothing else.
     /// </summary>
     /// <remarks>
@@ -2801,8 +2933,36 @@ public sealed class GameState
         Raise(inside ? GameEvent.SecretRoomEntered : GameEvent.SecretRoomLeft);
     }
 
+    /// <summary>Winds the tide's clock and rebuilds the light when the water turns.</summary>
+    /// <param name="deltaSeconds">Seconds since the last frame.</param>
+    /// <remarks>
+    /// The tide is only read when the floor's rule is in force, and the flood is only a change of
+    /// sight and pace: no cell becomes impassable, so the floor never puts a player in the water
+    /// or a hunter in a wall. The rebuild happens once per turn of the tide, not per frame.
+    /// </remarks>
+    private void AdvanceTide(double deltaSeconds)
+    {
+        if (_config.Rule != FloorRule.Tide)
+        {
+            return;
+        }
+
+        var before = Tide;
+        _tideElapsed += deltaSeconds;
+
+        if (Tide == before)
+        {
+            return;
+        }
+
+        RecomputeVisibility();
+        Raise(GameEvent.TideTurned);
+    }
+
     private void AdvanceTimers(double deltaSeconds)
     {
+        AdvanceTide(deltaSeconds);
+
         if (_mapRevealSecondsLeft > 0)
         {
             _mapRevealSecondsLeft = Math.Max(0, _mapRevealSecondsLeft - deltaSeconds);
@@ -2843,43 +3003,6 @@ public sealed class GameState
         if (_config.Rule == FloorRule.BurningLantern)
         {
             AdvanceLanternLoss(deltaSeconds);
-        }
-
-        if (_barrierSeals.Count > 0)
-        {
-            // Snapshot the keys before touching the dictionary: the values are updated in the
-            // loop, and removing an entry while enumerating would invalidate the enumerator.
-            var sealedCells = new List<Cell>(_barrierSeals.Keys);
-            var cracked = false;
-
-            foreach (var cell in sealedCells)
-            {
-                var remaining = _barrierSeals[cell] - deltaSeconds;
-
-                if (remaining > 0)
-                {
-                    _barrierSeals[cell] = remaining;
-                    continue;
-                }
-
-                _barrierSeals.Remove(cell);
-                Raise(GameEvent.SealCracked);
-                cracked = true;
-            }
-
-            if (cracked)
-            {
-                InvalidateEnemyRoute();
-            }
-        }
-
-        if (_lure is not null)
-        {
-            _lureSecondsLeft -= deltaSeconds;
-            if (_lureSecondsLeft <= 0)
-            {
-                ClearLure();
-            }
         }
 
         if (_invulnerableSeconds > 0)
@@ -3022,40 +3145,13 @@ public sealed class GameState
     }
 
     /// <summary>
-    /// Removes the glowing wisp and marks the killer's route stale.
-    /// </summary>
-    /// <remarks>
-    /// The wisp is spent whether it was reached or timed out, so the killer always falls back
-    /// to the player on the very next route.
-    /// </remarks>
-    private void ClearLure()
-    {
-        if (_lure is null)
-        {
-            return;
-        }
-
-        _lure = null;
-        _lureSecondsLeft = 0;
-        InvalidateEnemyRoute();
-
-        // The wisp's pool of light goes with it, and a card's vision penalty ends with the glow.
-        // Without this the cells it lit stayed visible until the next move.
-        RecomputeVisibility();
-    }
-
-    /// <summary>
     /// Returns how long <paramref name="hunter"/> needs before its next step: one normal step,
-    /// times the cost of the cell it is about to enter, or the full tear-down time when that cell
-    /// holds a sealed barrier.
+    /// times the cost of the cell it is about to enter.
     /// </summary>
     /// <param name="hunter">The hunter whose next step is being timed.</param>
     /// <remarks>
-    /// Charging the delay before the move (rather than after) is what makes a barrier read
-    /// correctly: the killer stalls at the barrier, then forces its way through, instead of
-    /// appearing to pass it instantly and then idling on the other side. A sealed barrier is
-    /// priced at <see cref="GameConfig.BarrierBreakSeconds"/> rather than a multiple of the step
-    /// time because tearing it apart is a different action from walking.
+    /// A cell costs one normal step, except for a safe room's floor, which a hunter prices out of
+    /// reach on purpose.
     /// </remarks>
     private double SecondsUntilNextStep(Hunter hunter)
     {
@@ -3068,9 +3164,7 @@ public sealed class GameState
         }
 
         var next = route[hunter.NextStep];
-        var interval = _barrierSeals.ContainsKey(next)
-            ? _config.BarrierBreakSeconds
-            : _config.EnemyStepSeconds * CostOfEntering(next);
+        var interval = _config.EnemyStepSeconds * CostOfEntering(next);
 
         // Hunted is one relentless pursuer, not a faster pack: only the first hunter gets the
         // 20% edge, so the other hunters stay readable and dodgeable.
@@ -3103,12 +3197,6 @@ public sealed class GameState
         }
 
         var next = route[hunter.NextStep];
-
-        if (_barrierSeals.ContainsKey(next))
-        {
-            BreakSeal(next);
-            return;
-        }
 
         // The creature cannot share the player's cell during the post-catch window, so it waits
         // outside and strikes when the window closes. Letting it step on would either overlap the
@@ -3144,20 +3232,6 @@ public sealed class GameState
             ClearLantern();
         }
 
-        // Reaching the wisp spends it: the decoy has done its job and the chase resumes.
-        if (hunter.Cell == _lure)
-        {
-            Raise(GameEvent.WispConsumed);
-            ClearLure();
-
-            // A card may make the wisp cost the hunter real time. The stun is the same window a
-            // catch buys, so it cannot be shortened by a frame landing mid-step.
-            if (_config.LureStunSeconds > 0)
-            {
-                hunter.StunSeconds = Math.Max(hunter.StunSeconds, _config.LureStunSeconds);
-                hunter.Elapsed = 0;
-            }
-        }
     }
 
     /// <summary>
@@ -3357,25 +3431,11 @@ public sealed class GameState
     /// deliberately placed, and so a poor place to drop the killer.
     /// </summary>
     private bool IsObjectiveCell(Cell cell) =>
-        _keys.Contains(cell) || cell == _exit || cell == _lure || _barriers.Contains(cell) ||
-        IsLandmarkCell(cell);
+        _keys.Contains(cell) || cell == _exit || IsLandmarkCell(cell);
 
     /// <summary>Row-major ordering, used only to break respawn ties reproducibly.</summary>
     private static bool Precedes(Cell left, Cell right) =>
         left.Row < right.Row || (left.Row == right.Row && left.Column < right.Column);
-
-    /// <summary>
-    /// Tears a sealed barrier apart: the seal and the barrier both leave the map, so the cell
-    /// is plain floor from the next step on, and the killer's route is recomputed.
-    /// </summary>
-    /// <param name="cell">The sealed cell the killer has just spent its time on.</param>
-    private void BreakSeal(Cell cell)
-    {
-        _barrierSeals.Remove(cell);
-        _barriers.Remove(cell);
-        InvalidateEnemyRoute();
-        Raise(GameEvent.SealBroken);
-    }
 
     /// <summary>
     /// Returns the killer's route to whichever target it currently wants, recomputing it only
@@ -3426,19 +3486,6 @@ public sealed class GameState
 
         var toPlayer = _pathfinder.FindPath(_maze, hunter.Cell, destination, cell => CostOfEnteringFor(hunter, cell));
         hunter.Route = toPlayer;
-
-        // A wisp under the hunter's own feet is not a target: its route would be a single
-        // cell, which would stall the hunt instead of redirecting it. Placement refuses that
-        // cell as well; this is the belt-and-braces half of the same rule.
-        if (_lure is { } lure && lure != hunter.Cell)
-        {
-            var toLure = _pathfinder.FindPath(_maze, hunter.Cell, lure, cell => CostOfEnteringFor(hunter, cell));
-
-            if (toLure.Count > 0 && RouteCost(toLure) < RouteCost(toPlayer))
-            {
-                hunter.Route = toLure;
-            }
-        }
 
         hunter.NextStep = 1;
         return hunter.Route;
@@ -3554,26 +3601,6 @@ public sealed class GameState
     }
 
     /// <summary>
-    /// Sums what the killer pays to walk <paramref name="route"/>, which is the cost of every
-    /// cell entered (the cell it starts on is free).
-    /// </summary>
-    /// <remarks>
-    /// This is what makes two Dijkstra searches comparable: a route's length in cells says
-    /// nothing when one of those cells is a barriered one.
-    /// </remarks>
-    private int RouteCost(IReadOnlyList<Cell> route)
-    {
-        var total = 0;
-
-        for (var index = 1; index < route.Count; index++)
-        {
-            total += CostOfEntering(route[index]);
-        }
-
-        return total;
-    }
-
-    /// <summary>
     /// Rebuilds the set of cells the player can see: their own torch range, the light around
     /// an active wisp, plus the killer's aura once the killer is close enough.
     /// </summary>
@@ -3671,17 +3698,6 @@ public sealed class GameState
                 {
                     _visible.Add(cell);
                 }
-            }
-        }
-
-        // A wisp is a beacon the player placed, so its own pool of light is visible even where
-        // the torch does not reach. It is deliberately not part of EnemyGlow: it reveals the
-        // wisp, nothing about where the killer is.
-        if (_lure is { } lure)
-        {
-            foreach (var cell in DistancesFrom(_maze, lure, LureGlowRadius).Keys)
-            {
-                _visible.Add(cell);
             }
         }
 
@@ -3869,12 +3885,7 @@ public sealed class GameState
             return SafeRoomEnterCost;
         }
 
-        if (_barrierSeals.ContainsKey(cell))
-        {
-            return _config.SealedBarrierCost;
-        }
-
-        return _barriers.Contains(cell) ? _config.ObstacleCost : 1;
+        return 1;
     }
 
     /// <summary>Runs the timed part of every descent condition in force.</summary>
@@ -4194,8 +4205,6 @@ public sealed class GameState
                 cell == _exit ||
                 HunterAt(cell) is not null ||
                 IsLandmarkCell(cell) ||
-                _barriers.Contains(cell) ||
-                cell == _lure ||
                 (_lantern is { } lantern && cell == lantern))
             {
                 continue;

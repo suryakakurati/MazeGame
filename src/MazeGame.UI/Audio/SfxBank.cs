@@ -63,11 +63,10 @@ public static class SfxBank
         [SfxId.Heartbeat] = Heartbeat(),
         [SfxId.KeyPicked] = KeyPicked(),
         [SfxId.KeyPulse] = KeyPulse(),
-        [SfxId.SealPlaced] = SealPlaced(),
-        [SfxId.SealCracked] = SealCracked(),
-        [SfxId.SealBroken] = SealBroken(),
-        [SfxId.WispLit] = WispLit(),
-        [SfxId.WispConsumed] = WispConsumed(),
+        [SfxId.WallSealed] = WallSealedCue(),
+        [SfxId.WallBroken] = WallBrokenCue(),
+        [SfxId.SoftLight] = SoftLight(),
+        [SfxId.LightOut] = LightOut(),
         [SfxId.ArchLocked] = ArchLocked(),
         [SfxId.ArchUnlocked] = ArchUnlocked(),
         [SfxId.FloorCleared] = FloorCleared(),
@@ -164,8 +163,8 @@ public static class SfxBank
         return Finish(buffer, 0.6f);
     }
 
-    /// <summary>A barrier thudding into place: a dry seal, then a heavy settle.</summary>
-    private static float[] SealPlaced()
+    /// <summary>A passage closing: a dry seal, then a heavy settle.</summary>
+    private static float[] WallSealedCue()
     {
         var buffer = Buffer(0.45);
 
@@ -176,19 +175,8 @@ public static class SfxBank
         return Finish(buffer, 0.8f);
     }
 
-    /// <summary>A seal running out of time: a high crack and a tired low note.</summary>
-    private static float[] SealCracked()
-    {
-        var buffer = Buffer(0.4);
-
-        AddNoise(buffer, 0, 0.18, 6200, 0.018, 0.9f, 0xC7ACu);
-        AddSweep(buffer, 0.03, 0.3, 150, 92, 0.08, 0.45f);
-
-        return Finish(buffer, 0.7f);
-    }
-
-    /// <summary>The killer tearing a live seal apart: two cracks and a body blow.</summary>
-    private static float[] SealBroken()
+    /// <summary>Stone breaking apart: two cracks and a body blow.</summary>
+    private static float[] WallBrokenCue()
     {
         var buffer = Buffer(0.55);
 
@@ -199,8 +187,8 @@ public static class SfxBank
         return Finish(buffer, 0.85f);
     }
 
-    /// <summary>A wisp catching light: airy noise under a rising tone.</summary>
-    private static float[] WispLit()
+    /// <summary>Something glowing into life: airy noise under a rising tone.</summary>
+    private static float[] SoftLight()
     {
         var buffer = Buffer(0.75);
 
@@ -211,8 +199,8 @@ public static class SfxBank
         return Finish(buffer, 0.66f);
     }
 
-    /// <summary>The wisp swallowed: a falling tone with the air going out of it.</summary>
-    private static float[] WispConsumed()
+    /// <summary>A light guttering out: a falling tone with the air going out of it.</summary>
+    private static float[] LightOut()
     {
         var buffer = Buffer(0.65);
 

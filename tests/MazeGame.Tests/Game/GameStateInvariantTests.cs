@@ -33,7 +33,6 @@ public sealed class GameStateInvariantTests
                 Rows = MazeSize,
                 Columns = MazeSize,
                 KeyCount = 3,
-                BarrierBudget = 3,
                 EnemyStepSeconds = 0.05,
                 StartingHearts = 1,
                 MaxHearts = 1,
@@ -47,62 +46,10 @@ public sealed class GameStateInvariantTests
                 // Direction's values are 1, 2, 4, 8, so this picks uniformly among the four.
                 state.TryMove((Direction)(1 << random.NextInt(4)));
 
-                // Aim, wiggle the cursor, then either place or cancel — the same choices a
-                // player has, including giving up on a placement.
-                if (random.NextInt(5) == 0 && state.BeginBarrierPlacement())
-                {
-                    for (var aimStep = random.NextInt(4); aimStep > 0; aimStep--)
-                    {
-                        state.MoveAimCursor((Direction)(1 << random.NextInt(4)));
-                    }
-
-                    if (random.NextInt(3) == 0)
-                    {
-                        state.CancelPlacement();
-                    }
-                    else
-                    {
-                        state.ConfirmPlacement();
-                    }
-                }
-
-                // The wisp gets the same treatment, including giving up on the aim.
-                if (random.NextInt(7) == 0 && state.BeginLurePlacement())
-                {
-                    for (var aimStep = random.NextInt(4); aimStep > 0; aimStep--)
-                    {
-                        state.MoveAimCursor((Direction)(1 << random.NextInt(4)));
-                    }
-
-                    if (random.NextInt(4) == 0)
-                    {
-                        state.CancelPlacement();
-                    }
-                    else
-                    {
-                        state.ConfirmPlacement();
-                    }
-                }
-
                 state.Tick(0.05);
 
                 Assert.InRange(state.KeysRemaining, 0, config.KeyCount);
                 Assert.Equal(config.KeyCount - state.KeysRemaining, state.KeysCollected);
-                Assert.InRange(state.BarriersRemaining, 0, config.BarrierBudget);
-                Assert.InRange(state.LuresRemaining, 0, config.LureCount);
-                Assert.Equal(state.KeysRemaining == 0, state.IsExitUnlocked);
-                Assert.True(state.Barriers.Count <= config.BarrierBudget);
-                Assert.True(state.BarrierSeals.Count <= state.Barriers.Count);
-
-                // A wisp is either gone or still has time on it: it can never become a
-                // permanent decoy, however the player places and walks over it.
-                if (state.Lure is not null)
-                {
-                    Assert.True(state.LureSecondsRemaining > 0);
-                    Assert.True(state.LureSecondsRemaining <= config.LureSeconds);
-                }
-
-                Assert.Equal(state.Lure is not null, state.IsLureActive);
 
                 // The killer must always have a way to the player, whatever the player does.
                 if (state.Status == GameStatus.InProgress)
@@ -111,9 +58,7 @@ public sealed class GameStateInvariantTests
                         state.Maze,
                         state.Enemy,
                         state.Player,
-                        cell => state.BarrierSeals.ContainsKey(cell)
-                            ? config.SealedBarrierCost
-                            : state.Barriers.Contains(cell) ? config.ObstacleCost : 1);
+                        _ => 1);
 
                     Assert.NotEmpty(route);
                 }
@@ -222,7 +167,6 @@ public sealed class GameStateInvariantTests
                 Rows = MazeSize,
                 Columns = MazeSize,
                 KeyCount = 3,
-                BarrierBudget = 3,
                 EnemyStepSeconds = 0.05,
                 StartingHearts = 1,
                 MaxHearts = 1,
@@ -248,9 +192,6 @@ public sealed class GameStateInvariantTests
 
             state.Tick(1.0);
             state.TryMove(Direction.North);
-            state.BeginBarrierPlacement();
-            state.ConfirmPlacement();
-            state.CancelPlacement();
 
             Assert.Equal(status, state.Status);
             Assert.Equal(player, state.Player);

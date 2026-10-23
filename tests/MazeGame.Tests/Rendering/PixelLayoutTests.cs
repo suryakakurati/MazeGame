@@ -63,7 +63,7 @@ public sealed class PixelLayoutTests
     [Fact]
     public void ViewCells_ComesFromTheConfig()
     {
-        var config = new GameConfig { Rows = 15, Columns = 15, KeyCount = 3, BarrierBudget = 3, EnemyStepSeconds = 1, Seed = 1 };
+        var config = new GameConfig { Rows = 15, Columns = 15, KeyCount = 3, EnemyStepSeconds = 1, Seed = 1 };
 
         Assert.Equal(PixelLayout.ViewCells(config.VisionRadius), PixelLayout.ViewCells(config));
     }
@@ -193,7 +193,7 @@ public sealed class PixelLayoutTests
     [Fact]
     public void Fit_GivesTheShippedWindowAReadableScale()
     {
-        var config = new GameConfig { Rows = 15, Columns = 15, KeyCount = 3, BarrierBudget = 3, EnemyStepSeconds = 1, Seed = 1 };
+        var config = new GameConfig { Rows = 15, Columns = 15, KeyCount = 3, EnemyStepSeconds = 1, Seed = 1 };
         var cells = PixelLayout.ViewCells(config.VisionRadius);
         var fit = PixelLayout.Fit(
             PixelLayout.CanvasWidth(cells),

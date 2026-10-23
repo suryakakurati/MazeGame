@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Threading;
 using MazeGame.Core.Game;
 using MazeGame.UI.Input;
+using MazeGame.UI.Persistence;
 using MazeGame.UI.Rendering;
 
 namespace MazeGame.UI.Frontends;
@@ -32,47 +33,110 @@ internal static class ConsoleFrontend
     /// <param name="createCampaign">
     /// Builds a fresh, playable run from floor 1. Called once per run, so a replay starts over.
     /// </param>
+    /// <param name="restoreCampaign">Rebuilds the saved run for CONTINUE.</param>
     /// <exception cref="ArgumentNullException">
-    /// Thrown when <paramref name="createCampaign"/> is null.
+    /// Thrown when <paramref name="createCampaign"/> or <paramref name="restoreCampaign"/> is null.
     /// </exception>
-    public static void Run(Func<Campaign> createCampaign)
+    public static void Run(
+        Func<Campaign> createCampaign,
+        Func<RunSnapshot, Campaign> restoreCampaign)
     {
         ArgumentNullException.ThrowIfNull(createCampaign);
+        ArgumentNullException.ThrowIfNull(restoreCampaign);
+
+        var saves = new SaveStore();
+        var garden = saves.LoadGarden();
 
         // The title needs a keypress to leave, which a redirected run can never provide.
-        if (!Console.IsInputRedirected && !ShowTitleMenu())
-        {
-            return;
-        }
+        var action = Console.IsInputRedirected
+            ? TitleAction.Descend
+            : ShowTitleMenu(saves.HasRun, garden.Blooms);
 
         while (true)
         {
-            var campaign = createCampaign();
-            var quit = PlayCampaign(campaign);
-
-            if (quit)
+            if (action == TitleAction.Leave)
             {
-                return; // the player quit mid-run, so there is no outcome to report
+                return;
             }
+
+            var campaign = action == TitleAction.Resume ? Resume() : createCampaign();
+
+            if (action == TitleAction.Resume)
+            {
+                Console.WriteLine($"  resumed on floor {campaign.FloorNumber}, {campaign.Hearts} heart(s).");
+            }
+
+            var exit = PlayCampaign(campaign, saves);
+
+            if (exit != RunExit.Ended)
+            {
+                if (exit == RunExit.Saved)
+                {
+                    // Save and quit keeps the run: the title's CONTINUE rebuilds this floor.
+                    Console.WriteLine("  the run is saved — CONTINUE on the title picks it up.");
+                }
+                else
+                {
+                    // Abandoning the run throws its save away: the title is where the player
+                    // chooses what to do next.
+                    Console.WriteLine("  the run is abandoned.");
+                    saves.ClearRun();
+                }
+
+                if (Console.IsInputRedirected)
+                {
+                    return;
+                }
+
+                action = ShowTitleMenu(saves.HasRun, garden.Blooms);
+                continue;
+            }
+
+            // The run is over: its blooms join the garden, and there is nothing left to resume.
+            garden = saves.RecordRun(campaign.GardenCount, campaign.FloorNumber);
+            saves.ClearRun();
 
             if (campaign.Status == CampaignStatus.Won)
             {
                 Console.WriteLine(
                     $"You escaped the depths: {campaign.FloorCount} floors, {campaign.Hearts} heart(s) " +
-                    $"left, {campaign.GardenCount} bloom(s) in the garden.");
+                    $"left, {campaign.GardenCount} bloom(s) this run; the garden holds {garden.Blooms}.");
             }
             else
             {
                 Console.WriteLine(DescribeEnding(GameStatus.Caught));
                 Console.WriteLine(
                     $"Floor {campaign.FloorNumber} of {campaign.FloorCount}, " +
-                    $"{campaign.FloorsCleared} cleared.");
+                    $"{campaign.FloorsCleared} cleared; the garden holds {garden.Blooms} bloom(s).");
             }
 
             if (Console.IsInputRedirected || !WantsAnotherDescent())
             {
                 return;
             }
+
+            action = ShowTitleMenu(saves.HasRun, garden.Blooms);
+        }
+
+        Campaign Resume()
+        {
+            var snapshot = saves.LoadRun();
+
+            if (snapshot is not null)
+            {
+                try
+                {
+                    return restoreCampaign(snapshot);
+                }
+                catch (ArgumentException)
+                {
+                    // A save from another build: refuse it and start over rather than refusing to
+                    // start at all.
+                }
+            }
+
+            saves.ClearRun();
+            return createCampaign();
         }
     }
 
@@ -80,14 +144,23 @@ internal static class ConsoleFrontend
     /// Plays every floor of one run until it ends or the player quits.
     /// </summary>
     /// <param name="campaign">The run to play.</param>
+    /// <param name="saves">The store that remembers the run between floors.</param>
     /// <returns>
-    /// <see langword="true"/> when the player quit mid-run; <see langword="false"/> when the run
-    /// ended by winning or losing.
+    /// <see cref="RunExit.Saved"/> when the player left through SAVE &amp; QUIT,
+    /// <see cref="RunExit.Abandoned"/> when they left through ABANDON RUN, and
+    /// <see cref="RunExit.Ended"/> when the run ended by winning or losing.
     /// </returns>
-    private static bool PlayCampaign(Campaign campaign)
+    /// <remarks>
+    /// The save is written at the top of every floor and again when the player saves from the
+    /// pause card, so a crash costs at most the floor being played: CONTINUE rebuilds that floor
+    /// from the run's seed.
+    /// </remarks>
+    private static RunExit PlayCampaign(Campaign campaign, SaveStore saves)
     {
         while (true)
         {
+            saves.SaveRun(campaign.Snapshot());
+
             Console.WriteLine();
             Console.WriteLine(
                 $"FLOOR {campaign.FloorNumber}/{campaign.FloorCount} — " +
@@ -95,16 +168,24 @@ internal static class ConsoleFrontend
 
             PauseForDescent();
 
-            Play(campaign);
+            var exit = Play(campaign);
 
-            if (campaign.Floor.Status == GameStatus.InProgress)
+            if (exit == RunExit.Saved)
             {
-                return true;
+                // Written here rather than in Play: the pause card asks, and the run is what
+                // knows its hearts, blooms and cards.
+                saves.SaveRun(campaign.Snapshot());
+                return RunExit.Saved;
+            }
+
+            if (exit == RunExit.Abandoned)
+            {
+                return RunExit.Abandoned;
             }
 
             if (campaign.Status == CampaignStatus.Lost)
             {
-                return false;
+                return RunExit.Ended;
             }
 
             // The floor is cleared: either the run continues or this was the last one. The page
@@ -117,17 +198,13 @@ internal static class ConsoleFrontend
             {
                 Console.WriteLine();
 
-                if (PromptForDraft(campaign))
-                {
-                    return true;
-                }
-
+                PromptForDraft(campaign);
                 Console.WriteLine($"run: {campaign.Modifiers.Describe()}");
             }
 
             if (!campaign.TryAdvanceFloor())
             {
-                return false;
+                return RunExit.Ended;
             }
 
             Console.WriteLine(
@@ -268,21 +345,19 @@ internal static class ConsoleFrontend
     /// Offers the cards between two floors and applies the player's choice.
     /// </summary>
     /// <param name="campaign">The run whose draft is open.</param>
-    /// <returns>
-    /// <see langword="true"/> when the player asked to leave; <see langword="false"/> when the
-    /// draft was resolved and the run can continue.
-    /// </returns>
     /// <remarks>
-    /// The offers are printed even when the input is a pipe, so a log shows the run's choices;
-    /// a piped run cannot press a key, so it takes the heart. Taking a hit point is the safe
-    /// default: it never spends a card the player did not choose.
+    /// A draft has no way out: every run takes a card or pays a heart, so Escape does nothing
+    /// here rather than ending a run the player only paused to think in. The offers are printed
+    /// even when the input is a pipe, so a log shows the run's choices; a piped run cannot press
+    /// a key, so it takes the heart. Taking a hit point is the safe default: it never spends a
+    /// card the player did not choose.
     /// </remarks>
-    private static bool PromptForDraft(Campaign campaign)
+    private static void PromptForDraft(Campaign campaign)
     {
         var draft = campaign.Draft;
         if (draft is null)
         {
-            return false;
+            return;
         }
 
         if (Console.IsInputRedirected)
@@ -290,7 +365,7 @@ internal static class ConsoleFrontend
             PrintDraft(campaign);
             campaign.SkipDraft();
             Console.WriteLine("  (no input: skipped for a heart)");
-            return false;
+            return;
         }
 
         while (true)
@@ -300,16 +375,11 @@ internal static class ConsoleFrontend
 
             var key = Console.ReadKey(intercept: true).Key;
 
-            if (key is ConsoleKey.Q or ConsoleKey.Escape)
-            {
-                return true;
-            }
-
             if (key == ConsoleKey.S)
             {
                 campaign.SkipDraft();
                 Console.WriteLine("  skipped: one heart restored.");
-                return false;
+                return;
             }
 
             if (key == ConsoleKey.R)
@@ -332,7 +402,7 @@ internal static class ConsoleFrontend
             if (index >= 0 && index < draft.Offers.Count && campaign.TakeCard(draft.Offers[index]))
             {
                 Console.WriteLine($"  took {draft.Offers[index].Name}.");
-                return false;
+                return;
             }
         }
     }
@@ -393,7 +463,7 @@ internal static class ConsoleFrontend
         {
             var key = Console.ReadKey(intercept: true).Key;
 
-            if (key is ConsoleKey.Q or ConsoleKey.Escape)
+            if (key == ConsoleKey.Escape)
             {
                 campaign.CloseRoom();
                 return;
@@ -476,14 +546,23 @@ internal static class ConsoleFrontend
     }
 
     /// <summary>
-    /// Plays one floor until it ends or the player quits, drawing a frame per iteration.
+    /// Plays one floor until it ends or the player leaves from the pause card, drawing a frame per
+    /// iteration.
     /// </summary>
     /// <param name="campaign">The run to play. Its floor is left in whatever state the run ended in.</param>
-    private static void Play(Campaign campaign)
+    /// <returns>
+    /// <see cref="RunExit.Ended"/> when the floor ended on its own, otherwise the way the player
+    /// chose to leave it from the pause card.
+    /// </returns>
+    private static RunExit Play(Campaign campaign)
     {
         var state = campaign.Floor;
         var renderer = new ConsoleRenderer();
         var clock = Stopwatch.StartNew();
+
+        // The relic card is read once per floor, at the moment the altar is touched. The floor
+        // number is enough here: this loop only ever plays one campaign.
+        var relicShownFor = -1;
 
         while (state.Status == GameStatus.InProgress)
         {
@@ -496,12 +575,16 @@ internal static class ConsoleFrontend
 
                 // Escape pauses instead of ending the run. While aiming it still cancels the aim,
                 // so the map key is asked first and only a non-aiming Escape pauses.
-                if (pressed == ConsoleKey.Escape && !state.IsAiming)
+                if (pressed == ConsoleKey.Escape)
                 {
-                    if (PauseMenu())
+                    var choice = PauseMenu(campaign);
+
+                    if (choice != PauseChoice.Resume)
                     {
-                        Console.WriteLine("  the run is abandoned.");
-                        return;
+                        // The floor stays standing while the player leaves it. SAVE & QUIT keeps
+                        // the run for CONTINUE; ABANDON throws it away. Whether to write the
+                        // save is PlayCampaign's call, so the choice is handed up as it is.
+                        return choice == PauseChoice.Save ? RunExit.Saved : RunExit.Abandoned;
                     }
 
                     // The pause lasted real seconds while the floor stood still: the clock has to
@@ -511,7 +594,7 @@ internal static class ConsoleFrontend
                     continue;
                 }
 
-                var command = MapKey(pressed, state.IsAiming);
+                var command = MapKey(pressed);
 
                 if (command == GameCommand.Interact)
                 {
@@ -520,10 +603,9 @@ internal static class ConsoleFrontend
                         PromptForRoom(campaign);
                     }
                 }
-                else if (command is { } chosen && !GameCommands.Apply(state, chosen))
+                else if (command is { } chosen)
                 {
-                    Console.WriteLine("You slip back into the dark.");
-                    return;
+                    GameCommands.Apply(state, chosen);
                 }
             }
 
@@ -531,6 +613,19 @@ internal static class ConsoleFrontend
             // depend on how fast the machine draws.
             state.Tick(clock.Elapsed.TotalSeconds);
             clock.Restart();
+
+            // A relic touched during that tick joins the run now, so the next floor is built with
+            // it and a save taken here keeps it.
+            campaign.Sync();
+
+            // The altar's card freezes the floor the way the Echo does: the relic is read before
+            // the hunt resumes, and only once per floor.
+            if (state.IsRelicTaken && state.Relic is { } found && relicShownFor != campaign.FloorNumber)
+            {
+                relicShownFor = campaign.FloorNumber;
+                ReadRelic(found);
+                clock.Restart();
+            }
 
             // The Echo freezes the floor, so reading it is the only thing that can happen until
             // the player lets go. It is checked after the tick as well as after a keypress: a
@@ -546,17 +641,21 @@ internal static class ConsoleFrontend
 
         // The last frame stays on screen so the ending can be read next to it.
         renderer.Draw(state);
+
+        return RunExit.Ended;
     }
 
     /// <summary>
     /// Draws the terminal title screen and reads the menu, so the two frontends open the same way.
     /// </summary>
-    /// <returns><see langword="true"/> to descend; <see langword="false"/> to leave.</returns>
-    private static bool ShowTitleMenu()
+    /// <param name="hasSave">Whether a saved run is on offer.</param>
+    /// <param name="gardenBlooms">The garden grown across finished runs.</param>
+    /// <returns>What the player chose.</returns>
+    private static TitleAction ShowTitleMenu(bool hasSave, int gardenBlooms)
     {
         while (true)
         {
-            DrawTitle();
+            DrawTitle(hasSave, gardenBlooms);
 
             var key = Console.ReadKey(intercept: true).Key;
 
@@ -564,7 +663,15 @@ internal static class ConsoleFrontend
             {
                 case ConsoleKey.D:
                 case ConsoleKey.Enter:
-                    return true;
+                    return TitleAction.Descend;
+
+                case ConsoleKey.R:
+                    if (hasSave)
+                    {
+                        return TitleAction.Resume;
+                    }
+
+                    break;
 
                 case ConsoleKey.T:
                     PrintTutorial();
@@ -575,7 +682,7 @@ internal static class ConsoleFrontend
                     // is whatever the lesson's last card says.
                     if (Practice())
                     {
-                        return true;
+                        return TitleAction.Descend;
                     }
 
                     break;
@@ -586,15 +693,17 @@ internal static class ConsoleFrontend
 
                 case ConsoleKey.Q:
                 case ConsoleKey.Escape:
-                    return false;
+                    return TitleAction.Leave;
             }
         }
     }
 
     /// <summary>
-    /// Draws the terminal title screen: the wordmark and the three menu entries.
+    /// Draws the terminal title screen: the wordmark, the garden and the menu entries.
     /// </summary>
-    private static void DrawTitle()
+    /// <param name="hasSave">Whether CONTINUE is on the menu.</param>
+    /// <param name="gardenBlooms">The garden grown across finished runs.</param>
+    private static void DrawTitle(bool hasSave, int gardenBlooms)
     {
         if (!Console.IsOutputRedirected)
         {
@@ -609,8 +718,30 @@ internal static class ConsoleFrontend
         Console.WriteLine("                       D E P T H S");
         Console.WriteLine();
         Console.WriteLine("   pick the blooms. open the arch. do not be caught.");
+
+        if (gardenBlooms > 0)
+        {
+            Console.WriteLine($"   the garden holds {gardenBlooms} bloom(s).");
+        }
+
         Console.WriteLine();
-        Console.WriteLine("   [D] descend    [T] tutorial    [P] practice    [C] cards    [Q] leave");
+        Console.WriteLine(
+            hasSave
+                ? "   [D] descend    [R] continue    [T] tutorial    [P] practice    [C] cards    [Q] leave"
+                : "   [D] descend    [T] tutorial    [P] practice    [C] cards    [Q] leave");
+    }
+
+    /// <summary>What the title screen was asked to do.</summary>
+    private enum TitleAction
+    {
+        /// <summary>Start a fresh run.</summary>
+        Descend,
+
+        /// <summary>Rebuild the saved run.</summary>
+        Resume,
+
+        /// <summary>Close the program.</summary>
+        Leave,
     }
 
     /// <summary>
@@ -704,7 +835,7 @@ internal static class ConsoleFrontend
 
             if (practice.IsComplete)
             {
-                Console.WriteLine("  [ENTER] begin the descent    [Q] back to the title");
+                Console.WriteLine("  [ENTER] begin the descent    [ESC] back to the title");
 
                 var done = Console.ReadKey(intercept: true).Key;
 
@@ -713,7 +844,7 @@ internal static class ConsoleFrontend
                     return true;
                 }
 
-                if (done is ConsoleKey.Q or ConsoleKey.Escape)
+                if (done == ConsoleKey.Escape)
                 {
                     return false;
                 }
@@ -721,11 +852,11 @@ internal static class ConsoleFrontend
                 continue;
             }
 
-            Console.WriteLine("  WASD / arrows: walk    Q: back to the title");
+            Console.WriteLine("  WASD / arrows: walk    ESC: back to the title");
 
             var key = Console.ReadKey(intercept: true).Key;
 
-            if (key is ConsoleKey.Q or ConsoleKey.Escape)
+            if (key == ConsoleKey.Escape)
             {
                 return false;
             }
@@ -816,16 +947,16 @@ internal static class ConsoleFrontend
     /// <summary>
     /// Shows the pause menu and waits for the player's choice.
     /// </summary>
-    /// <returns><see langword="true"/> when the run should be abandoned.</returns>
+    /// <returns>The entry the player took.</returns>
     /// <remarks>
     /// The floor is not ticked while this reads, which is what makes it a pause rather than a
-    /// menu drawn over a hunt that keeps moving. Escape resumes, matching the window.
+    /// menu drawn over a hunt that keeps moving. Escape resumes, matching the window. SAVE &amp;
+    /// QUIT and ABANDON RUN both go back to the title; they differ only in whether the run is
+    /// there when the player comes back.
     /// </remarks>
-    private static bool PauseMenu()
+    private static PauseChoice PauseMenu(Campaign campaign)
     {
-        Console.WriteLine();
-        Console.WriteLine("PAUSED — the dark waits");
-        Console.WriteLine("  [C] continue    [L] cards    [Q] quit run");
+        DrawPauseChoices();
 
         while (true)
         {
@@ -834,21 +965,134 @@ internal static class ConsoleFrontend
             if (key is ConsoleKey.C or ConsoleKey.Escape)
             {
                 Console.WriteLine("  you walk on.");
-                return false;
+                return PauseChoice.Resume;
+            }
+
+            if (key == ConsoleKey.S)
+            {
+                return PauseChoice.Save;
             }
 
             if (key == ConsoleKey.Q)
             {
-                return true;
+                return PauseChoice.Abandon;
             }
 
             if (key == ConsoleKey.L)
             {
                 PrintCodex();
-                Console.WriteLine("PAUSED — the dark waits");
-                Console.WriteLine("  [C] continue    [L] cards    [Q] quit run");
+                DrawPauseChoices();
+            }
+
+            if (key == ConsoleKey.V)
+            {
+                PrintRunDetails(campaign);
+                DrawPauseChoices();
             }
         }
+    }
+
+    /// <summary>
+    /// Prints the altar's card: the relic, its family and the promise it keeps for the rest of the
+    /// run.
+    /// </summary>
+    /// <param name="kind">The relic that was taken.</param>
+    /// <remarks>
+    /// A terminal cannot draw a gem, so the card is a frame and the family is a word. The wait is
+    /// skipped when input is redirected, exactly like the Echo, so a piped log still shows what the
+    /// altar paid.
+    /// </remarks>
+    private static void ReadRelic(RelicKind kind)
+    {
+        var card = RelicCatalog.CardFor(kind);
+
+        Console.WriteLine();
+        Console.WriteLine(new string('=', 64));
+        Console.WriteLine($"  A RELIC — {card.Name.ToUpperInvariant()}  ({RelicCatalog.FamilyOf(kind).ToString().ToUpperInvariant()})");
+        Console.WriteLine(new string('-', 64));
+
+        foreach (var line in Wrap(card.FaceText, 56))
+        {
+            Console.WriteLine($"    {line}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("  KEPT FOR THE REST OF THE RUN");
+        Console.WriteLine(new string('=', 64));
+
+        if (!Console.IsInputRedirected)
+        {
+            Console.WriteLine("  press any key to walk on...");
+            Console.ReadKey(intercept: true);
+        }
+    }
+
+    /// <summary>
+    /// Prints the run details: where the run is, what it has earned, and every card and relic it
+    /// is carrying.
+    /// </summary>
+    /// <param name="campaign">The run to describe.</param>
+    private static void PrintRunDetails(Campaign campaign)
+    {
+        Console.WriteLine();
+        Console.WriteLine(new string('=', 64));
+        Console.WriteLine($"  THE RUN — FLOOR {campaign.FloorNumber} OF {campaign.FloorCount}");
+        Console.WriteLine(new string('-', 64));
+        Console.WriteLine($"  hearts {campaign.Hearts}   blooms {campaign.BloomsPicked}   garden {campaign.GardenCount}");
+        Console.WriteLine($"  {campaign.Modifiers.Describe()}");
+
+        var conditions = DescentConditionCatalog.Line(campaign.ActiveConditions);
+        if (conditions.Length > 0)
+        {
+            Console.WriteLine($"  {conditions}");
+        }
+
+        if (campaign.CurrentFloor.Gimmick is { Length: > 0 } gimmick)
+        {
+            Console.WriteLine($"  {gimmick.ToUpperInvariant()}");
+        }
+
+        Console.WriteLine(new string('-', 64));
+
+        if (campaign.Modifiers.Cards.Count == 0)
+        {
+            Console.WriteLine("  nothing yet — the first draft is still ahead");
+        }
+
+        for (var index = 0; index < campaign.Modifiers.Cards.Count; index++)
+        {
+            var held = campaign.Modifiers.Cards[index];
+            var relic = RelicCatalog.KindOf(held.Id);
+            var tag = relic is { } kind
+                ? $"RELIC — {RelicCatalog.FamilyOf(kind).ToString().ToUpperInvariant()}"
+                : held.Tier.ToString().ToUpperInvariant();
+
+            Console.WriteLine($"  {index + 1,2}. {held.Name}  [{tag}]");
+
+            foreach (var line in Wrap(held.FaceText, 56))
+            {
+                Console.WriteLine($"      {line}");
+            }
+        }
+
+        Console.WriteLine(new string('=', 64));
+
+        if (!Console.IsInputRedirected)
+        {
+            Console.WriteLine("  press any key to go back...");
+            Console.ReadKey(intercept: true);
+        }
+    }
+
+    /// <summary>
+    /// Prints the pause card's heading and keys. Drawn again after the cards, so the player always
+    /// comes back to a menu rather than to a wall of card text.
+    /// </summary>
+    private static void DrawPauseChoices()
+    {
+        Console.WriteLine();
+        Console.WriteLine("PAUSED — the dark waits");
+        Console.WriteLine("  [C] continue    [V] run details    [L] cards    [S] save & quit    [Q] abandon run");
     }
 
     /// <summary>
@@ -878,11 +1122,10 @@ internal static class ConsoleFrontend
     }
 
     /// <summary>
-    /// Translates one key press into a command. Escape means "cancel" while aiming and "quit"
-    /// otherwise (the caller turns a non-aiming Escape into the pause menu first), Enter only
-    /// places while aiming, and Q always leaves the run.
+    /// Translates one key press into a command. Escape is the pause menu and is read by the
+    /// caller, so it is not a command here.
     /// </summary>
-    private static GameCommand? MapKey(ConsoleKey key, bool aiming) => key switch
+    private static GameCommand? MapKey(ConsoleKey key) => key switch
     {
         ConsoleKey.W or ConsoleKey.UpArrow => GameCommand.MoveNorth,
         ConsoleKey.S or ConsoleKey.DownArrow => GameCommand.MoveSouth,
@@ -894,9 +1137,6 @@ internal static class ConsoleFrontend
         ConsoleKey.L => GameCommand.Lantern,
         ConsoleKey.F => GameCommand.Shove,
         ConsoleKey.E => GameCommand.Interact,
-        ConsoleKey.Enter => aiming ? GameCommand.ConfirmAim : null,
-        ConsoleKey.Escape => aiming ? GameCommand.CancelAim : GameCommand.Quit,
-        ConsoleKey.Q => GameCommand.Quit,
         _ => null,
     };
 
@@ -907,4 +1147,30 @@ internal static class ConsoleFrontend
         GameStatus.Caught => "The killer took your last heart.",
         _ => "You slip back into the dark.",
     };
+
+    /// <summary>How the player left a floor or a run.</summary>
+    private enum RunExit
+    {
+        /// <summary>The floor or run ended on its own.</summary>
+        Ended,
+
+        /// <summary>The player saved the run and went back to the title, where CONTINUE offers it.</summary>
+        Saved,
+
+        /// <summary>The player walked away from the run, and its save went with it.</summary>
+        Abandoned,
+    }
+
+    /// <summary>The pause card's entries.</summary>
+    private enum PauseChoice
+    {
+        /// <summary>Back to the frozen floor, which starts moving again.</summary>
+        Resume,
+
+        /// <summary>Write the run and return to the title, keeping it for CONTINUE.</summary>
+        Save,
+
+        /// <summary>Return to the title and throw the run away.</summary>
+        Abandon,
+    }
 }

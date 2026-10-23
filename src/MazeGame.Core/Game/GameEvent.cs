@@ -38,21 +38,6 @@ public enum GameEvent
     /// <summary>The killer stepped one cell while hunting the player.</summary>
     KillerStep,
 
-    /// <summary>A barrier was confirmed and its seal started.</summary>
-    SealPlaced,
-
-    /// <summary>A placed seal ran out of time and cracked: the barrier is now only a slowdown.</summary>
-    SealCracked,
-
-    /// <summary>The killer tore a live seal apart to get through.</summary>
-    SealBroken,
-
-    /// <summary>A wisp was lit.</summary>
-    WispLit,
-
-    /// <summary>The killer reached the wisp, spending it.</summary>
-    WispConsumed,
-
     /// <summary>The player stepped through a wall, leaving a breach.</summary>
     Blink,
 
@@ -103,6 +88,18 @@ public enum GameEvent
 
     /// <summary>The Echo's card was closed and the hunt resumed.</summary>
     EchoClosed,
+
+    /// <summary>The floor's curiosity was taken: a bell rung, a reliquary opened or a shrine touched.</summary>
+    CuriosityFound,
+
+    /// <summary>The floor's altar was touched and its relic is now part of the run.</summary>
+    RelicFound,
+
+    /// <summary>One of the Gilded Cage's locks was thrown.</summary>
+    LockThrown,
+
+    /// <summary>The tide turned: the water came in, or went out.</summary>
+    TideTurned,
 
     /// <summary>The player reached the unlocked exit: this floor is cleared.</summary>
     FloorCleared,

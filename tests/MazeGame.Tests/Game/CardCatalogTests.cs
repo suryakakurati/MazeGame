@@ -236,8 +236,6 @@ public sealed class CardCatalogTests
             var changesSomething =
                 effect.VisionRadius != 0 ||
                 effect.EnemyAuraDistance != 0 ||
-                effect.BarrierBudget != 0 ||
-                effect.BarrierSealSeconds is not null ||
                 Math.Abs(effect.EnemyStepScale - 1.0) > 0.0001 ||
                 Math.Abs(effect.PlayerStepScale - 1.0) > 0.0001 ||
                 effect.InvulnerabilitySeconds != 0 ||
@@ -246,12 +244,7 @@ public sealed class CardCatalogTests
                 effect.MomentumMaxBonus != 0 ||
                 effect.TurnPenaltyScale != 0 ||
                 effect.TurnPenaltySeconds != 0 ||
-                effect.MaxHearts != 0 ||
                 effect.KeyCount != 0 ||
-                effect.LureCount != 0 ||
-                effect.LureSeconds is not null ||
-                effect.LureStunSeconds != 0 ||
-                effect.LureVisionPenalty != 0 ||
                 effect.BlinkCharges != 0 ||
                 effect.VeilCharges != 0 ||
                 effect.DragCharges != 0 ||

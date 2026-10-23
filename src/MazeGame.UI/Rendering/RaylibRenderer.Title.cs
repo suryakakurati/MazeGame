@@ -30,11 +30,13 @@ public sealed partial class RaylibRenderer
     /// </summary>
     /// <param name="font">The compiled face the title is set in.</param>
     /// <param name="selectedItem">
-    /// Zero-based index of the highlighted menu entry (0 = descend, 1 = leave). The renderer only
-    /// highlights it; the frontend owns the selection itself.
+    /// Zero-based index of the highlighted menu entry. The renderer only highlights it; the
+    /// frontend owns the selection itself.
     /// </param>
+    /// <param name="hasContinue">Whether a saved run is on the menu.</param>
+    /// <param name="gardenBlooms">The garden grown across finished runs, or zero for none.</param>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="font"/> is null.</exception>
-    public static void DrawTitle(PixelFont font, int selectedItem)
+    public static void DrawTitle(PixelFont font, int selectedItem, bool hasContinue = false, int gardenBlooms = 0)
     {
         ArgumentNullException.ThrowIfNull(font);
 
@@ -66,7 +68,7 @@ public sealed partial class RaylibRenderer
 
         DrawTitleSpores(time);
 
-        PixelCards.Title(font, selectedItem);
+        PixelCards.Title(font, selectedItem, hasContinue, gardenBlooms);
 
         DrawVignette(false);
         DrawGrain();

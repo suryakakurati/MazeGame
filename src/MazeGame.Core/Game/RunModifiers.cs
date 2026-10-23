@@ -36,8 +36,6 @@ public sealed class RunModifiers
         Card[] cards,
         int visionRadius,
         int enemyAuraDistance,
-        int barrierBudget,
-        double? barrierSealSeconds,
         double enemyStepScale,
         double playerStepScale,
         double invulnerabilitySeconds,
@@ -46,13 +44,8 @@ public sealed class RunModifiers
         double momentumMaxBonus,
         double turnPenaltyScale,
         double turnPenaltySeconds,
-        int maxHearts,
         int keyCount,
         int bloomGlowRadius,
-        int lureCount,
-        double? lureSeconds,
-        double lureStunSeconds,
-        int lureVisionPenalty,
         int blinkCharges,
         int veilCharges,
         int dragCharges,
@@ -74,8 +67,6 @@ public sealed class RunModifiers
         _cards = cards;
         VisionRadius = visionRadius;
         EnemyAuraDistance = enemyAuraDistance;
-        BarrierBudget = barrierBudget;
-        BarrierSealSeconds = barrierSealSeconds;
         EnemyStepScale = enemyStepScale;
         PlayerStepScale = playerStepScale;
         InvulnerabilitySeconds = invulnerabilitySeconds;
@@ -84,13 +75,8 @@ public sealed class RunModifiers
         MomentumMaxBonus = momentumMaxBonus;
         TurnPenaltyScale = turnPenaltyScale;
         TurnPenaltySeconds = turnPenaltySeconds;
-        MaxHearts = maxHearts;
         KeyCount = keyCount;
         BloomGlowReach = bloomGlowRadius;
-        LureCount = lureCount;
-        LureSeconds = lureSeconds;
-        LureStunSeconds = lureStunSeconds;
-        LureVisionPenalty = lureVisionPenalty;
         BlinkCharges = blinkCharges;
         VeilCharges = veilCharges;
         DragCharges = dragCharges;
@@ -115,8 +101,6 @@ public sealed class RunModifiers
         NoCards,
         visionRadius: 0,
         enemyAuraDistance: 0,
-        barrierBudget: 0,
-        barrierSealSeconds: null,
         enemyStepScale: 1.0,
         playerStepScale: 1.0,
         invulnerabilitySeconds: 0,
@@ -125,13 +109,8 @@ public sealed class RunModifiers
         momentumMaxBonus: 0,
         turnPenaltyScale: 0,
         turnPenaltySeconds: 0,
-        maxHearts: 0,
         keyCount: 0,
         bloomGlowRadius: 0,
-        lureCount: 0,
-        lureSeconds: null,
-        lureStunSeconds: 0,
-        lureVisionPenalty: 0,
         blinkCharges: 0,
         veilCharges: 0,
         dragCharges: 0,
@@ -159,12 +138,6 @@ public sealed class RunModifiers
     /// <summary>Gets the change to the distance at which the killer's aura shows.</summary>
     public int EnemyAuraDistance { get; }
 
-    /// <summary>Gets the change to the barrier budget.</summary>
-    public int BarrierBudget { get; }
-
-    /// <summary>Gets the absolute seal lifetime a card imposed, or null for the floor's own.</summary>
-    public double? BarrierSealSeconds { get; }
-
     /// <summary>Gets the multiplier on the killer's step time.</summary>
     public double EnemyStepScale { get; }
 
@@ -189,9 +162,6 @@ public sealed class RunModifiers
     /// <summary>Gets the change to how long the turn penalty lasts.</summary>
     public double TurnPenaltySeconds { get; }
 
-    /// <summary>Gets the change to each floor's heart ceiling.</summary>
-    public int MaxHearts { get; }
-
     /// <summary>Gets the change to each floor's key count.</summary>
     public int KeyCount { get; }
 
@@ -200,18 +170,6 @@ public sealed class RunModifiers
     /// floor, and each step above one lights a step around each of them.
     /// </summary>
     public int BloomGlowReach { get; }
-
-    /// <summary>Gets the change to each floor's wisp count.</summary>
-    public int LureCount { get; }
-
-    /// <summary>Gets the absolute wisp lifetime a card imposed, or null for the floor's own.</summary>
-    public double? LureSeconds { get; }
-
-    /// <summary>Gets the seconds the killer is stunned when it reaches a wisp.</summary>
-    public double LureStunSeconds { get; }
-
-    /// <summary>Gets how much vision a burning wisp costs.</summary>
-    public int LureVisionPenalty { get; }
 
     /// <summary>Gets the change to each floor's blink charges.</summary>
     public int BlinkCharges { get; }
@@ -332,8 +290,6 @@ public sealed class RunModifiers
             cards,
             VisionRadius + effect.VisionRadius,
             EnemyAuraDistance + effect.EnemyAuraDistance,
-            BarrierBudget + effect.BarrierBudget,
-            effect.BarrierSealSeconds ?? BarrierSealSeconds,
             EnemyStepScale * effect.EnemyStepScale,
             PlayerStepScale * effect.PlayerStepScale,
             InvulnerabilitySeconds + effect.InvulnerabilitySeconds,
@@ -342,13 +298,8 @@ public sealed class RunModifiers
             MomentumMaxBonus + effect.MomentumMaxBonus,
             TurnPenaltyScale + effect.TurnPenaltyScale,
             TurnPenaltySeconds + effect.TurnPenaltySeconds,
-            MaxHearts + effect.MaxHearts,
             KeyCount + effect.KeyCount,
             BloomGlowReach + effect.BloomGlowReach,
-            LureCount + effect.LureCount,
-            effect.LureSeconds ?? LureSeconds,
-            LureStunSeconds + effect.LureStunSeconds,
-            LureVisionPenalty + effect.LureVisionPenalty,
             BlinkCharges + effect.BlinkCharges,
             VeilCharges + effect.VeilCharges,
             DragCharges + effect.DragCharges,
@@ -390,29 +341,20 @@ public sealed class RunModifiers
             vision = Math.Max(1, vision);
         }
 
-        var sealSeconds = Math.Max(0, BarrierSealSeconds ?? config.BarrierSealSeconds);
         var powerups = config.Powerups
             .Adjust(PowerupKind.Blink, BlinkCharges)
             .Adjust(PowerupKind.Veil, VeilCharges)
             .Adjust(PowerupKind.Drag, DragCharges)
             .Adjust(PowerupKind.Lantern, LanternCharges)
             .Adjust(PowerupKind.Shove, ShoveCharges);
-        var lureSeconds = Math.Max(MinimumStepSeconds, LureSeconds ?? config.LureSeconds);
         var stepSeconds = Math.Max(MinimumStepSeconds, config.EnemyStepSeconds * EnemyStepScale);
 
         var composed = config with
         {
             VisionRadius = vision,
             EnemyAuraDistance = Math.Max(0, config.EnemyAuraDistance + EnemyAuraDistance),
-            BarrierBudget = Math.Max(0, config.BarrierBudget + BarrierBudget),
-            LureCount = Math.Max(0, config.LureCount + LureCount),
             KeyCount = Math.Max(0, config.KeyCount + KeyCount),
             BloomGlowReach = Math.Max(0, config.BloomGlowReach + BloomGlowReach),
-            MaxHearts = Math.Max(config.StartingHearts, config.MaxHearts + MaxHearts),
-            BarrierSealSeconds = sealSeconds,
-            LureSeconds = lureSeconds,
-            LureStunSeconds = Math.Max(0, config.LureStunSeconds + LureStunSeconds),
-            LureVisionPenalty = Math.Max(0, config.LureVisionPenalty + LureVisionPenalty),
             Powerups = powerups,
             FirstCatchFree = config.FirstCatchFree || FirstCatchFree,
             MagneticKeys = config.MagneticKeys || MagneticKeys,
@@ -460,11 +402,8 @@ public sealed class RunModifiers
         Append(text, "DRAG", DragCharges);
         Append(text, "LANTERN", LanternCharges);
         Append(text, "SHOVE", ShoveCharges);
-        Append(text, "BARRIERS", BarrierBudget);
-        Append(text, "WISPS", LureCount);
         Append(text, "BLOOMS", KeyCount);
         Append(text, "BLOOM GLOW", BloomGlowReach);
-        Append(text, "HEARTS", MaxHearts);
         Append(text, "LANTERN RANGE", LanternRange);
         Append(text, "ROOMS", RoomChancePercent);
 
@@ -497,26 +436,6 @@ public sealed class RunModifiers
             AppendText(
                 text,
                 $"DRAG HANGOVER {DragPenaltySeconds.ToString("+0.#;-0.#", CultureInfo.InvariantCulture)}s");
-        }
-
-        if (BarrierSealSeconds is { } seal)
-        {
-            AppendText(text, $"SEALS {seal.ToString("0.#", CultureInfo.InvariantCulture)}s");
-        }
-
-        if (LureSeconds is { } lure)
-        {
-            AppendText(text, $"WISP {lure.ToString("0.#", CultureInfo.InvariantCulture)}s");
-        }
-
-        if (LureStunSeconds > 0)
-        {
-            AppendText(text, $"WISP STUN {LureStunSeconds.ToString("0.#", CultureInfo.InvariantCulture)}s");
-        }
-
-        if (LureVisionPenalty > 0)
-        {
-            AppendText(text, $"WISP VISION -{LureVisionPenalty}");
         }
 
         if (Math.Abs(EnemyStepScale - 1.0) > 0.0001)

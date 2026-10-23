@@ -27,6 +27,10 @@ note it in `PROGRESS.md`.
 4. **Do not change a public API or reorganise working code** without an entry in
    `DECISIONS.md` and a note in `PROGRESS.md`.
 5. **Core must not reference UI.** Game rules in the UI project are always a bug.
+6. **Content and its lesson move together.** Adding a mechanic, a relic, a face, a card wave or a
+   screen means adding (or renumbering) the `Tutorial` page that teaches it in the same change;
+   removing content means removing its page. `TutorialTests` names the controls and content the
+   guide must cover, so a page left behind fails the build.
 
 ## Coding conventions
 

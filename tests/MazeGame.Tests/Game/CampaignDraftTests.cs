@@ -163,7 +163,6 @@ public sealed class CampaignDraftTests
         Assert.True(campaign.TryAdvanceFloor());
 
         Assert.Equal(4, campaign.Hearts);
-        Assert.Equal(4, campaign.MaxHearts);
     }
 
     [Fact]

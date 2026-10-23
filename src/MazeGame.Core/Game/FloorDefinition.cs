@@ -107,15 +107,6 @@ public sealed record FloorDefinition
     /// </summary>
     public PowerupCharges? Powerups { get; init; }
 
-    /// <summary>Gets how many barriers this floor allows, or null to inherit the run's budget.</summary>
-    public int? BarrierBudget { get; init; }
-
-    /// <summary>Gets how many wisps this floor allows, or null to inherit the run's count.</summary>
-    public int? LureCount { get; init; }
-
-    /// <summary>Gets how long a wisp burns on this floor, or null to inherit the run's seconds.</summary>
-    public double? LureSeconds { get; init; }
-
     /// <summary>Gets the extra walls the braider removes for loops, or null to inherit.</summary>
     public int? ExtraLoops { get; init; }
 
@@ -136,11 +127,11 @@ public sealed record FloorDefinition
     /// Gets the one exclusive rule this floor has, or null for a floor that is only numbers.
     /// </summary>
     /// <remarks>
-    /// Assigned to the four floors whose identity is a verb rather than a dial: the Loom's thread
-    /// gates, the Ossuary's sleeper, the Ash Garden's burning lantern and the Deep's long door. The
-    /// floors without one are deliberate — the Blind Mile and the Bramble already have the
-    /// strongest identities in the catalog, and stacking a rule on them would blur what they
-    /// teach.
+    /// Assigned to the six floors whose identity is a verb rather than a dial: the Drowned Halls'
+    /// tide, the Gilded Cage's three locks, the Loom's thread gates, the Ossuary's sleeper, the Ash
+    /// Garden's burning lantern and the Deep's long door. The floors without one are deliberate —
+    /// the Hush's single step of torch, the Blind Mile's missing glow and the Bramble's braided
+    /// maze already carry their floors, and stacking a rule on them would blur what they teach.
     /// </remarks>
     public FloorRule? Rule { get; init; }
 
@@ -171,6 +162,16 @@ public sealed record FloorDefinition
 
     /// <summary>Gets the grace period after a catch, in seconds, or null to inherit.</summary>
     public double? InvulnerabilitySeconds { get; init; }
+
+    /// <summary>
+    /// Gets the relic this floor's altar holds, or null for no altar.
+    /// </summary>
+    /// <remarks>
+    /// Shipped floor data leaves it null: the campaign fills it in when it builds the floor, so
+    /// the altar is part of the run rather than of the authored content. A hand-built test floor
+    /// can still stock one to exercise the altar without a campaign.
+    /// </remarks>
+    public RelicKind? Relic { get; init; }
 
     /// <summary>Gets how long the killer is stunned after a catch, or null to inherit.</summary>
     public double? RespawnStunSeconds { get; init; }
@@ -256,17 +257,7 @@ public sealed record FloorDefinition
             throw new ArgumentOutOfRangeException(nameof(VisionRadius), VisionRadius, "Vision cannot be negative.");
         }
 
-        if (BarrierBudget is < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(BarrierBudget), BarrierBudget, "A barrier budget cannot be negative.");
-        }
-
         Powerups?.Validate();
-
-        if (LureCount is < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(LureCount), LureCount, "A wisp count cannot be negative.");
-        }
 
         if (ExtraLoops is < 0)
         {
@@ -293,7 +284,6 @@ public sealed record FloorDefinition
 
         foreach (var (value, name) in new (double? Value, string Name)[]
                  {
-                     (LureSeconds, nameof(LureSeconds)),
                      (InvulnerabilitySeconds, nameof(InvulnerabilitySeconds)),
                      (RespawnStunSeconds, nameof(RespawnStunSeconds)),
                  })

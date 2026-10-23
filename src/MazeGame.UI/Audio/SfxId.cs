@@ -37,20 +37,17 @@ public enum SfxId
     /// <summary>The sonar ping of a key the run can still find.</summary>
     KeyPulse,
 
-    /// <summary>A barrier thudding into place.</summary>
-    SealPlaced,
+    /// <summary>A passage closing: a dry seal, then a heavy settle.</summary>
+    WallSealed,
 
-    /// <summary>A seal running out of time.</summary>
-    SealCracked,
+    /// <summary>Stone breaking apart: two cracks and a body blow.</summary>
+    WallBroken,
 
-    /// <summary>The killer tearing a live seal apart.</summary>
-    SealBroken,
+    /// <summary>Something glowing into life: airy noise under a rising tone.</summary>
+    SoftLight,
 
-    /// <summary>A wisp catching light.</summary>
-    WispLit,
-
-    /// <summary>The wisp being swallowed by the killer.</summary>
-    WispConsumed,
+    /// <summary>A light guttering out: a falling tone with the air going out of it.</summary>
+    LightOut,
 
     /// <summary>A locked arch: dull, immovable.</summary>
     ArchLocked,
