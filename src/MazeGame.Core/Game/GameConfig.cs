@@ -163,19 +163,31 @@ public sealed record GameConfig
     /// </remarks>
     public bool ReviveOnce { get; init; }
 
-    /// <summary>Gets a value indicating whether taking a key gives back a blink charge.</summary>
-    public bool BlinkRefundOnKey { get; init; }
+    /// <summary>
+    /// Gets how many blink charges taking a key returns. Defaults to zero.
+    /// </summary>
+    /// <remarks>
+    /// A count rather than a flag, so two cards that each refund a blink per bloom refund two.
+    /// </remarks>
+    public int BlinkRefundPerKey { get; init; }
 
     /// <summary>
     /// Gets how many hearts a single catch costs. Defaults to 1. Must be at least 1, so a catch is
     /// always a real cost; a free catch is expressed by <see cref="FirstCatchFree"/> instead.
     /// </summary>
     /// <remarks>
-    /// <see cref="ForFloor"/> adds one heart to this for every five floors of the descent, so the
-    /// hunt bites harder the deeper the run goes. Cards such as Glass Cannon add to the same
-    /// number through <see cref="RunModifiers"/>.
+    /// <see cref="ForFloor"/> adds one heart to this every four floors and stops at
+    /// <see cref="MaxFloorCatchCost"/>: floors 1-4 cost one heart, 5-8 two, 9-12 three, 13-16 four
+    /// and 17-20 five. Cards such as Glass Cannon add to the same number through
+    /// <see cref="RunModifiers"/>.
     /// </remarks>
     public int CatchCost { get; init; } = 1;
+
+    /// <summary>
+    /// Gets the most a floor's own depth may raise <see cref="CatchCost"/> to. Five from floor 17
+    /// on: past that the curve stops and only cards change the price of a mistake.
+    /// </summary>
+    public const int MaxFloorCatchCost = 5;
 
     /// <summary>
     /// Gets how far the floor's blooms glow after a catch. Defaults to zero, which leaves them
@@ -195,6 +207,18 @@ public sealed record GameConfig
     /// <see cref="BloomGlowReach"/> is zero. Must be finite and not negative.
     /// </summary>
     public double BloomGlowSeconds { get; init; } = 2.0;
+
+    /// <summary>
+    /// Gets how far, in tiles, a bloom is felt through the dark. Defaults to zero, which leaves
+    /// the blooms to the torch; a legendary relic is what lights them.
+    /// </summary>
+    /// <remarks>
+    /// This is straight-line distance in tiles rather than walking distance: a bloom within the
+    /// radius is visible on its own cell even through a wall, and no cell around it is revealed.
+    /// It is a passive sense, recomputed on every step, so the flowers appear and disappear as
+    /// the player walks through them. Must not be negative.
+    /// </remarks>
+    public int BloomSenseRadius { get; init; }
 
     /// <summary>Gets how long a completed veil lasts. Defaults to 3 seconds.</summary>
     public double VeilDurationSeconds { get; init; } = 3.0;
@@ -450,6 +474,14 @@ public sealed record GameConfig
                 "A bloom glow cannot have a negative radius.");
         }
 
+        if (BloomSenseRadius < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(BloomSenseRadius),
+                BloomSenseRadius,
+                "A bloom sense cannot have a negative radius.");
+        }
+
         // Written as "not greater than or equal to zero" so NaN is rejected as well as negatives.
         if (!(BloomGlowSeconds >= 0) || double.IsInfinity(BloomGlowSeconds))
         {
@@ -686,6 +718,14 @@ public sealed record GameConfig
                 "The distance at which the killer's glow appears cannot be negative.");
         }
 
+        if (BlinkRefundPerKey < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(BlinkRefundPerKey),
+                BlinkRefundPerKey,
+                "A key cannot cost a blink charge.");
+        }
+
         // long arithmetic: a huge row count must not overflow into a "big enough" answer.
         var requiredCells = 2L + HunterCount + KeyCount;
         if ((long)Rows * Columns < requiredCells)
@@ -758,9 +798,10 @@ public sealed record GameConfig
             PlayerStepSeconds = floor.PlayerStepSeconds,
             StartingHearts = hearts,
 
-            // The hunt deepens with the descent: floors 1-5 cost one heart, 6-10 two, 11-15
-            // three and 16-20 four. A card's own surcharge is added over this by RunModifiers.
-            CatchCost = CatchCost + ((floor.Number - 1) / 5),
+            // The hunt deepens every four floors and then holds: 1-4 cost one heart, 5-8 two,
+            // 9-12 three, 13-16 four and 17-20 five, which is the cap. A card's own surcharge is
+            // added over this by RunModifiers, so cards can still make a catch dearer.
+            CatchCost = Math.Min(MaxFloorCatchCost, CatchCost + ((floor.Number - 1) / 4)),
 
             // The design's own slot count. Hearts have no ceiling at runtime, so this is a
             // description of the floor rather than a limit on the hearts a run carries in.
@@ -794,6 +835,7 @@ public sealed record GameConfig
             // Shared rules: everything else the run tunes once and every floor inherits.
             BloomGlowReach = BloomGlowReach,
             BloomGlowSeconds = BloomGlowSeconds,
+            BloomSenseRadius = BloomSenseRadius,
             SprintMultiplier = SprintMultiplier,
             SprintStaminaSeconds = SprintStaminaSeconds,
             MomentumRampPerStep = MomentumRampPerStep,

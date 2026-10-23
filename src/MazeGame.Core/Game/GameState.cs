@@ -1498,11 +1498,6 @@ public sealed class GameState
                 radius--;
             }
 
-            if (IsVeiled)
-            {
-                radius--;
-            }
-
             return Math.Max(0, radius);
         }
     }
@@ -1689,9 +1684,10 @@ public sealed class GameState
             return false;
         }
 
-        // A step is movement, and movement gives the player away: a veil, charged or active,
-        // ends the moment the player commits to a cell.
-        BreakVeil();
+        // A step gives the player away while the veil is still being drawn — you cannot walk
+        // and hold still at once. Once it is complete the player is unseen, and walking is
+        // exactly what the veil is for, so the veil survives the step and runs out its clock.
+        CancelVeilChannel();
 
         var sprinting = IsSprinting;
         var (rowDelta, columnDelta) = direction.Delta();
@@ -1838,7 +1834,9 @@ public sealed class GameState
         _powerupsRemaining = _powerupsRemaining.Adjust(PowerupKind.Blink, -1);
         _maze.RemoveWall(_player.Row, _player.Column, _facing);
 
-        BreakVeil();
+        // Same rule as a step: a blink breaks the wind-up, never a finished veil. The breach is
+        // loud, but the player is unseen while it happens.
+        CancelVeilChannel();
         _playerFrom = _player;
         _player = destination;
         ResetExitHoldIfMoved();
@@ -2147,7 +2145,13 @@ public sealed class GameState
         return true;
     }
 
-    /// <summary>Ends a charged or active veil and returns the hunters to the chase.</summary>
+    /// <summary>
+    /// Ends a charged or active veil and puts the hunters back on the player's trail.
+    /// </summary>
+    /// <remarks>
+    /// This is the noisy way for a veil to end — being caught — so it grants nothing: the veil
+    /// drops and the hunters keep the cell they had, which is wherever they just caught you.
+    /// </remarks>
     private void BreakVeil()
     {
         if (_veilChannelLeft <= 0 && _veilSecondsLeft <= 0)
@@ -2158,13 +2162,21 @@ public sealed class GameState
         _veilChannelLeft = 0;
         _veilSecondsLeft = 0;
 
-        foreach (var hunter in _hunters)
-        {
-            hunter.KnownPlayer = null;
-        }
-
         InvalidateEnemyRoute();
         RecomputeVisibility();
+    }
+
+    /// <summary>Gives up a veil that is still being drawn, without spending its charge.</summary>
+    /// <remarks>
+    /// Walking during the wind-up is not a mistake the player should be charged for: the veil is
+    /// a moment of standing still, and a moment that is interrupted simply does not happen.
+    /// </remarks>
+    private void CancelVeilChannel()
+    {
+        if (_veilChannelLeft > 0)
+        {
+            _veilChannelLeft = 0;
+        }
     }
 
     /// <summary>Completes a veil once the channel has run out.</summary>
@@ -2181,14 +2193,10 @@ public sealed class GameState
         _veilSecondsLeft = _config.VeilDurationSeconds;
 
         // The hunters keep walking to the cell they last saw the player on; the veil is not a
-        // teleport, it is a moment of being unobserved.
-        foreach (var hunter in _hunters)
-        {
-            hunter.KnownPlayer = _player;
-            hunter.Route = null;
-            hunter.NextStep = 0;
-        }
-
+        // teleport, it is a moment of being unobserved. Their memory is frozen where it is — it
+        // is deliberately not refreshed to the cell the player is standing on, because that
+        // would hand every hunter the one thing the veil is meant to take away.
+        InvalidateEnemyRoute();
         RecomputeVisibility();
         Raise(GameEvent.Veiled);
     }
@@ -2492,9 +2500,9 @@ public sealed class GameState
         // A bloom taken is loud: the whole floor's sleeper hears it.
         WakeAllSleepers();
 
-        if (_config.BlinkRefundOnKey)
+        if (_config.BlinkRefundPerKey > 0)
         {
-            _powerupsRemaining = _powerupsRemaining.Adjust(PowerupKind.Blink, 1);
+            _powerupsRemaining = _powerupsRemaining.Adjust(PowerupKind.Blink, _config.BlinkRefundPerKey);
         }
 
         // Drift moves the last leg of the floor as the hunt tightens. It happens after the pickup
@@ -3056,7 +3064,11 @@ public sealed class GameState
 
             if (_veilSecondsLeft <= 0)
             {
-                BreakVeil();
+                // The veil runs out rather than breaking: the hunters resume watching from
+                // wherever their frozen memory left them, and find the player only when they
+                // actually see them again.
+                _veilSecondsLeft = 0;
+                RecomputeVisibility();
             }
         }
 
@@ -3509,24 +3521,25 @@ public sealed class GameState
     /// </remarks>
     private void RefreshHunterSenses(Hunter hunter)
     {
-        if (IsVeiled)
+        // A veil freezes the memory instead of refreshing it. The clear below still runs, so a
+        // hunter that arrives at the cell it last saw the player on starts searching again
+        // rather than standing on a stale spot for the whole veil.
+        if (!IsVeiled)
         {
-            return;
-        }
+            var radius = Math.Max(HunterPerceptionSteps, _config.EnemyAuraDistance);
+            var inAura = DistancesFrom(_maze, hunter.Cell, radius).ContainsKey(_player);
 
-        var radius = Math.Max(HunterPerceptionSteps, _config.EnemyAuraDistance);
-        var inAura = DistancesFrom(_maze, hunter.Cell, radius).ContainsKey(_player);
-
-        if (inAura)
-        {
-            if (hunter.KnownPlayer is not { } known || !SameCell(known, _player))
+            if (inAura)
             {
-                hunter.KnownPlayer = _player;
-                hunter.Route = null;
-                hunter.NextStep = 0;
-            }
+                if (hunter.KnownPlayer is not { } known || !SameCell(known, _player))
+                {
+                    hunter.KnownPlayer = _player;
+                    hunter.Route = null;
+                    hunter.NextStep = 0;
+                }
 
-            return;
+                return;
+            }
         }
 
         if (hunter.KnownPlayer is { } remembered && SameCell(hunter.Cell, remembered))
@@ -3697,6 +3710,26 @@ public sealed class GameState
                 foreach (var cell in DistancesFrom(_maze, bloom, halo).Keys)
                 {
                     _visible.Add(cell);
+                }
+            }
+        }
+
+        // The Grave Lantern: a bloom within the sense radius is felt where it grows, walls or no
+        // walls. The reach is straight-line in tiles rather than walking steps, which is why a
+        // flower can show through rock; only the bloom's own cell is lit, never the corridor to
+        // it, so the sense is a direction to walk in, not a map of the way.
+        if (_config.BloomSenseRadius > 0)
+        {
+            var reach = _config.BloomSenseRadius * _config.BloomSenseRadius;
+
+            foreach (var bloom in _keys)
+            {
+                var row = bloom.Row - _player.Row;
+                var column = bloom.Column - _player.Column;
+
+                if ((row * row) + (column * column) <= reach)
+                {
+                    _visible.Add(bloom);
                 }
             }
         }

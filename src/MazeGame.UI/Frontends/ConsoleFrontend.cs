@@ -450,8 +450,9 @@ internal static class ConsoleFrontend
         }
 
         var room = campaign.Room!;
+        var first = 0;
 
-        PrintRoom(room);
+        PrintRoom(room, first);
 
         if (Console.IsInputRedirected)
         {
@@ -465,14 +466,42 @@ internal static class ConsoleFrontend
 
             if (key == ConsoleKey.Escape)
             {
+                // The Confessional has no free exit: closing its card is refusing, and refusing
+                // is priced. Every other room may be read and left without spending anything.
+                if (RefusalOn(room) is { } refusal && campaign.ResolveRoom(refusal))
+                {
+                    PrintRoom(room);
+                    break;
+                }
+
                 campaign.CloseRoom();
                 return;
             }
 
+            // A long card — the casino's stakes, a purse full of cards — is read a page at a
+            // time: the digits address the page on screen, which is exactly what they address
+            // when the whole card fits.
+            if (key == ConsoleKey.PageUp || key == ConsoleKey.Oem4)
+            {
+                first = Math.Max(0, first - RoomPageSize);
+                PrintRoom(room, first);
+                continue;
+            }
+
+            if (key == ConsoleKey.PageDown || key == ConsoleKey.Oem6)
+            {
+                first = Math.Min(
+                    Math.Max(0, room.Options.Count - RoomPageSize),
+                    first + RoomPageSize);
+                PrintRoom(room, first);
+                continue;
+            }
+
+            var shown = Math.Min(RoomPageSize, room.Options.Count - first);
             var index = key - ConsoleKey.D1;
 
-            if (index >= 0 && index < room.Options.Count &&
-                campaign.ResolveRoom(room.Options[index]))
+            if (index >= 0 && index < shown &&
+                campaign.ResolveRoom(room.Options[first + index]))
             {
                 // Leaving clears the campaign's card without resolving the detached offer, so
                 // waiting on IsResolved would read keys forever. Both outcomes end the visit.
@@ -494,8 +523,30 @@ internal static class ConsoleFrontend
         campaign.CloseRoom();
     }
 
-    /// <summary>Prints one room card, or its outcome once it is resolved.</summary>
-    private static void PrintRoom(RoomOffer room)
+    /// <summary>Returns the Confessional's refusal option, or null when the card offers none.</summary>
+    /// <param name="room">The open room card.</param>
+    private static RoomOption? RefusalOn(RoomOffer room)
+    {
+        foreach (var option in room.Options)
+        {
+            if (string.Equals(option.Id, Campaign.RefuseOptionId, StringComparison.Ordinal))
+            {
+                return option;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>How many of a room's options one page shows.</summary>
+    private const int RoomPageSize = 9;
+
+    /// <summary>
+    /// Prints one room card, or its outcome once it is resolved.
+    /// </summary>
+    /// <param name="room">The open room card.</param>
+    /// <param name="first">The first option on the page being shown.</param>
+    private static void PrintRoom(RoomOffer room, int first = 0)
     {
         Console.WriteLine();
         Console.WriteLine($"SAFE ROOM — {room.Name.ToUpperInvariant()}");
@@ -509,11 +560,21 @@ internal static class ConsoleFrontend
 
         Console.WriteLine($"  price: {room.Price}");
 
-        for (var index = 0; index < room.Options.Count; index++)
+        var start = Math.Clamp(first, 0, Math.Max(0, room.Options.Count - 1));
+        var shown = Math.Min(RoomPageSize, room.Options.Count - start);
+
+        if (shown < room.Options.Count)
         {
-            var option = room.Options[index];
+            Console.WriteLine(
+                $"  showing {start + 1}-{start + shown} of {room.Options.Count}   " +
+                "PgUp: above   PgDn: below");
+        }
+
+        for (var offset = 0; offset < shown; offset++)
+        {
+            var option = room.Options[start + offset];
             var note = option.Note is { } text ? $" ({text})" : string.Empty;
-            Console.WriteLine($"  [{index + 1}] {option.Label}{note}");
+            Console.WriteLine($"  [{offset + 1}] {option.Label}{note}");
 
             // A card for sale prints its face under the price, so buying it does not depend on
             // remembering what the name did.
@@ -714,8 +775,7 @@ internal static class ConsoleFrontend
         Console.WriteLine();
         Console.WriteLine("      A   D E S C E N T   I N   T H E   D A R K");
         Console.WriteLine();
-        Console.WriteLine("      B I O L U M I N E S C E N T");
-        Console.WriteLine("                       D E P T H S");
+        Console.WriteLine("      L O S T     B L O O M S");
         Console.WriteLine();
         Console.WriteLine("   pick the blooms. open the arch. do not be caught.");
 
@@ -1008,7 +1068,9 @@ internal static class ConsoleFrontend
 
         Console.WriteLine();
         Console.WriteLine(new string('=', 64));
-        Console.WriteLine($"  A RELIC — {card.Name.ToUpperInvariant()}  ({RelicCatalog.FamilyOf(kind).ToString().ToUpperInvariant()})");
+        Console.WriteLine(
+            $"  A RELIC — {card.Name.ToUpperInvariant()}  " +
+            $"({RelicCatalog.FamilyOf(kind).ToString().ToUpperInvariant()}, {RelicCatalog.RarityOf(kind).ToString().ToUpperInvariant()})");
         Console.WriteLine(new string('-', 64));
 
         foreach (var line in Wrap(card.FaceText, 56))

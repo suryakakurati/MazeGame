@@ -92,6 +92,19 @@ public sealed class ConsoleRenderer : IRenderer
             .Append("   exit ")
             .Append(state.IsExitUnlocked ? "OPEN" : "LOCKED");
 
+        // The Deep's arch is stood on rather than walked into, so its hold is counted here: a
+        // door that must be held for five seconds looks broken if nothing moves while you hold it.
+        if (state.ExitHoldFraction > 0)
+        {
+            var tenths = (int)Math.Round(state.ExitHoldFraction * 10);
+            frame.Append("   hold [")
+                .Append('#', tenths)
+                .Append('-', 10 - tenths)
+                .Append("] ")
+                .Append((int)Math.Round(state.ExitHoldFraction * 100))
+                .Append('%');
+        }
+
         // The Gilded Cage's locks and the Drowned Halls' tide are state the player has to be able
         // to count from a still frame: a lock left unthrown is a walk that must still happen, and
         // the tide is a window that is about to close.

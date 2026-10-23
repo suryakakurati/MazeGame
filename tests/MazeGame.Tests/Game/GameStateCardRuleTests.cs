@@ -80,7 +80,7 @@ public sealed class GameStateCardRuleTests
         var state = Corridor(
             keyCount: 1,
             hearts: 2,
-            tweak: config => config with { BlinkRefundOnKey = true },
+            tweak: config => config with { BlinkRefundPerKey = 1 },
             powerups: PowerupCharges.None with { Blink = 0 });
 
         Assert.True(state.TryMove(Direction.East));
@@ -88,6 +88,24 @@ public sealed class GameStateCardRuleTests
         Assert.True(state.TryMove(Direction.East));
 
         Assert.Equal(1, state.PowerupsRemaining.Blink);
+    }
+
+    [Fact]
+    public void TwoBlinkRefunds_GiveTwoBlinksPerKey_NotOne()
+    {
+        // Two cards that each refund a blink are two blinks per bloom. A flag would have
+        // swallowed the second copy and the second card would have been a dead pick.
+        var state = Corridor(
+            keyCount: 1,
+            hearts: 2,
+            tweak: config => config with { BlinkRefundPerKey = 2 },
+            powerups: PowerupCharges.None with { Blink = 0 });
+
+        Assert.True(state.TryMove(Direction.East));
+        state.Tick(0.2);
+        Assert.True(state.TryMove(Direction.East));
+
+        Assert.Equal(2, state.PowerupsRemaining.Blink);
     }
 
     [Fact]

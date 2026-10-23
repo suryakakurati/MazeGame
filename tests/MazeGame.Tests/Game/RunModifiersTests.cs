@@ -198,7 +198,7 @@ public sealed class RunModifiersTests
     {
         var applied = RunModifiers.None.With(Card("blink-ledger")).Apply(Floor());
 
-        Assert.True(applied.BlinkRefundOnKey);
+        Assert.Equal(1, applied.BlinkRefundPerKey);
         Assert.Equal(0.6 * 0.92, applied.EnemyStepSeconds, precision: 9);
     }
 
@@ -230,12 +230,18 @@ public sealed class RunModifiersTests
     }
 
     [Fact]
-    public void GlassCannon_BuysSpeedAndDoublesTheCostOfACatch()
+    public void GlassCannon_BuysSpeedAndPutsOneMoreHeartOnEveryCatch()
     {
         var applied = RunModifiers.None.With(Card("glass-cannon")).Apply(Floor());
 
-        Assert.Equal(0.11 * 0.80, applied.PlayerStepSeconds, precision: 9);
+        Assert.Equal(0.11 * 0.833, applied.PlayerStepSeconds, precision: 9);
         Assert.Equal(2, applied.CatchCost);
+
+        // The card adds a heart to whatever the floor already charges, rather than fixing the
+        // price at two: the same card on a floor that costs three makes a catch cost four.
+        var deep = RunModifiers.None.With(Card("glass-cannon")).Apply(Floor() with { CatchCost = 3 });
+
+        Assert.Equal(4, deep.CatchCost);
     }
 
     [Fact]
@@ -275,7 +281,7 @@ public sealed class RunModifiersTests
     {
         var applied = RunModifiers.None.With(Card("light-feet")).Apply(Floor() with { StartingHearts = 2 });
 
-        Assert.Equal(0.11 * 0.825, applied.PlayerStepSeconds, precision: 9);
+        Assert.Equal(0.11 * 0.855, applied.PlayerStepSeconds, precision: 9);
         Assert.Equal(2, applied.StartingHearts);
     }
 
@@ -284,8 +290,8 @@ public sealed class RunModifiersTests
     {
         var applied = RunModifiers.None.With(Card("momentum")).Apply(Floor());
 
-        Assert.Equal(0.03, applied.MomentumRampPerStep, precision: 9);
-        Assert.Equal(0.175, applied.MomentumMaxBonus, precision: 9);
+        Assert.Equal(0.024, applied.MomentumRampPerStep, precision: 9);
+        Assert.Equal(0.14, applied.MomentumMaxBonus, precision: 9);
         Assert.Equal(0.15, applied.TurnPenaltyScale, precision: 9);
         Assert.Equal(2.0, applied.TurnPenaltySeconds, precision: 9);
     }
@@ -295,7 +301,7 @@ public sealed class RunModifiersTests
     {
         var applied = RunModifiers.None.With(Card("sprint-lungs")).Apply(Floor());
 
-        Assert.Equal(1.8, applied.SprintStaminaSeconds, precision: 9);
+        Assert.Equal(1.68, applied.SprintStaminaSeconds, precision: 9);
         Assert.Equal(8, applied.EnemyAuraDistance);
     }
 
@@ -306,6 +312,14 @@ public sealed class RunModifiersTests
 
         Assert.Equal(3.0, applied.InvulnerabilitySeconds, precision: 9);
         Assert.Equal(0.11 * 1.25, applied.PlayerStepSeconds, precision: 9);
+
+        // A floor with a shorter grace gets the same addition, not a flat three seconds: half a
+        // second becomes two.
+        var shortGrace = RunModifiers.None
+            .With(Card("hollow-bones"))
+            .Apply(Floor() with { InvulnerabilitySeconds = 0.5 });
+
+        Assert.Equal(2.0, shortGrace.InvulnerabilitySeconds, precision: 9);
     }
 
     [Fact]
@@ -316,9 +330,9 @@ public sealed class RunModifiersTests
             .With(Card("hollow-bones"))
             .Apply(Floor());
 
-        // 35% faster and 25% slower still leave the player faster, which is the honest result of
-        // holding both: the speed card has to be strong enough to be worth its heart cost.
-        Assert.Equal(0.11 * 0.825 * 1.25, applied.PlayerStepSeconds, precision: 9);
+        // 17% faster and 25% slower still leave the player a little faster, which is the honest
+        // result of holding both: the speed card has to be worth its heart cost.
+        Assert.Equal(0.11 * 0.855 * 1.25, applied.PlayerStepSeconds, precision: 9);
     }
 
     [Fact]

@@ -73,6 +73,17 @@ public sealed record CardEffect
     public int BloomGlowReach { get; init; }
 
     /// <summary>
+    /// Gets how far, in tiles, a bloom's own tile glows through the dark. Zero (the default)
+    /// leaves blooms to the torch.
+    /// </summary>
+    /// <remarks>
+    /// This is straight-line reach in tiles, not walking distance: a flower within the radius is
+    /// shown on its own cell even through a wall, and nothing around it is lit. It is a smell,
+    /// not a map — which is why the reach is measured in tiles rather than steps.
+    /// </remarks>
+    public int BloomSenseRadius { get; init; }
+
+    /// <summary>
     /// Gets the hearts restored the moment the card is picked. This is a one-shot, not a
     /// modifier: the campaign applies it to the hearts it carries to the next floor.
     /// </summary>
@@ -108,8 +119,15 @@ public sealed record CardEffect
     /// <summary>Gets a value indicating whether the first fatal catch each floor leaves one heart.</summary>
     public bool ReviveOnce { get; init; }
 
-    /// <summary>Gets a value indicating whether taking a key returns a blink charge.</summary>
-    public bool BlinkRefundOnKey { get; init; }
+    /// <summary>
+    /// Gets how many blink charges a taken key returns. Zero (the default) returns none.
+    /// </summary>
+    /// <remarks>
+    /// A count rather than a flag: two cards that each give a blink per bloom are two blinks per
+    /// bloom, because the effects add up like every other charge does. A flag would quietly
+    /// swallow the second copy.
+    /// </remarks>
+    public int BlinkRefundPerKey { get; init; }
 
     /// <summary>Gets the change to the hearts a single catch costs.</summary>
     public int CatchCost { get; init; }

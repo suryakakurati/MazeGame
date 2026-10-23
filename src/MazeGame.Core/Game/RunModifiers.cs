@@ -46,6 +46,7 @@ public sealed class RunModifiers
         double turnPenaltySeconds,
         int keyCount,
         int bloomGlowRadius,
+        int bloomSenseRadius,
         int blinkCharges,
         int veilCharges,
         int dragCharges,
@@ -54,7 +55,7 @@ public sealed class RunModifiers
         bool firstCatchFree,
         bool magneticKeys,
         bool reviveOnce,
-        bool blinkRefundOnKey,
+        int blinkRefundPerKey,
         int catchCost,
         double veilDurationSeconds,
         double dragSeconds,
@@ -77,6 +78,7 @@ public sealed class RunModifiers
         TurnPenaltySeconds = turnPenaltySeconds;
         KeyCount = keyCount;
         BloomGlowReach = bloomGlowRadius;
+        BloomSenseRadius = bloomSenseRadius;
         BlinkCharges = blinkCharges;
         VeilCharges = veilCharges;
         DragCharges = dragCharges;
@@ -85,7 +87,7 @@ public sealed class RunModifiers
         FirstCatchFree = firstCatchFree;
         MagneticKeys = magneticKeys;
         ReviveOnce = reviveOnce;
-        BlinkRefundOnKey = blinkRefundOnKey;
+        BlinkRefundPerKey = blinkRefundPerKey;
         CatchCost = catchCost;
         VeilDurationSeconds = veilDurationSeconds;
         DragSeconds = dragSeconds;
@@ -111,6 +113,7 @@ public sealed class RunModifiers
         turnPenaltySeconds: 0,
         keyCount: 0,
         bloomGlowRadius: 0,
+        bloomSenseRadius: 0,
         blinkCharges: 0,
         veilCharges: 0,
         dragCharges: 0,
@@ -119,7 +122,7 @@ public sealed class RunModifiers
         firstCatchFree: false,
         magneticKeys: false,
         reviveOnce: false,
-        blinkRefundOnKey: false,
+        blinkRefundPerKey: 0,
         catchCost: 0,
         veilDurationSeconds: 0,
         dragSeconds: 0,
@@ -171,6 +174,11 @@ public sealed class RunModifiers
     /// </summary>
     public int BloomGlowReach { get; }
 
+    /// <summary>
+    /// Gets how many tiles away a bloom's own tile glows, straight-line. Zero leaves them dark.
+    /// </summary>
+    public int BloomSenseRadius { get; }
+
     /// <summary>Gets the change to each floor's blink charges.</summary>
     public int BlinkCharges { get; }
 
@@ -195,8 +203,10 @@ public sealed class RunModifiers
     /// <summary>Gets a value indicating whether the first fatal catch each floor is survived.</summary>
     public bool ReviveOnce { get; }
 
-    /// <summary>Gets a value indicating whether a key returns a blink charge.</summary>
-    public bool BlinkRefundOnKey { get; }
+    /// <summary>
+    /// Gets how many blink charges a taken key returns. Two cards that each refund one make two.
+    /// </summary>
+    public int BlinkRefundPerKey { get; }
 
     /// <summary>Gets the change to the hearts a catch costs.</summary>
     public int CatchCost { get; }
@@ -300,6 +310,7 @@ public sealed class RunModifiers
             TurnPenaltySeconds + effect.TurnPenaltySeconds,
             KeyCount + effect.KeyCount,
             BloomGlowReach + effect.BloomGlowReach,
+            BloomSenseRadius + effect.BloomSenseRadius,
             BlinkCharges + effect.BlinkCharges,
             VeilCharges + effect.VeilCharges,
             DragCharges + effect.DragCharges,
@@ -308,7 +319,7 @@ public sealed class RunModifiers
             FirstCatchFree || effect.FirstCatchFree,
             MagneticKeys || effect.MagneticKeys,
             ReviveOnce || effect.ReviveOnce,
-            BlinkRefundOnKey || effect.BlinkRefundOnKey,
+            BlinkRefundPerKey + effect.BlinkRefundPerKey,
             CatchCost + effect.CatchCost,
             VeilDurationSeconds + effect.VeilDurationSeconds,
             DragSeconds + effect.DragSeconds,
@@ -355,11 +366,12 @@ public sealed class RunModifiers
             EnemyAuraDistance = Math.Max(0, config.EnemyAuraDistance + EnemyAuraDistance),
             KeyCount = Math.Max(0, config.KeyCount + KeyCount),
             BloomGlowReach = Math.Max(0, config.BloomGlowReach + BloomGlowReach),
+            BloomSenseRadius = Math.Max(0, config.BloomSenseRadius + BloomSenseRadius),
             Powerups = powerups,
             FirstCatchFree = config.FirstCatchFree || FirstCatchFree,
             MagneticKeys = config.MagneticKeys || MagneticKeys,
             ReviveOnce = config.ReviveOnce || ReviveOnce,
-            BlinkRefundOnKey = config.BlinkRefundOnKey || BlinkRefundOnKey,
+            BlinkRefundPerKey = config.BlinkRefundPerKey + BlinkRefundPerKey,
             CatchCost = Math.Max(1, config.CatchCost + CatchCost),
             VeilDurationSeconds = Math.Max(0.1, config.VeilDurationSeconds + VeilDurationSeconds),
             DragSeconds = Math.Max(0, config.DragSeconds + DragSeconds),
@@ -404,6 +416,7 @@ public sealed class RunModifiers
         Append(text, "SHOVE", ShoveCharges);
         Append(text, "BLOOMS", KeyCount);
         Append(text, "BLOOM GLOW", BloomGlowReach);
+        Append(text, "BLOOM SENSE", BloomSenseRadius);
         Append(text, "LANTERN RANGE", LanternRange);
         Append(text, "ROOMS", RoomChancePercent);
 

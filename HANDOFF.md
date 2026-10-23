@@ -24,7 +24,19 @@ If they are not green, fixing that is the first task, not the new feature.
 
 ## Project state at handoff (2026-10-22)
 
-**The latest pass (the relic card, run details and more content) is in:** touching an altar opens a
+**The latest pass (the name, relic rarity, the Grave Lantern, the harder catch curve and the
+Confessional's penance) is in:** the game is **Lost Blooms** everywhere a player sees it (the
+assemblies and save folder are still `MazeGame`). Relics carry a `RelicRarity` — common, rare,
+legendary — and the altar's draw is a weighted shuffle, so the run-defining finds (a cheaper
+catch, a free catch, a revival, a slower hunt) are about one altar in thirteen. Eleven relics are
+new (thirty-seven total), including the legendary **Grave Lantern**: every bloom within ten tiles
+is visible on its own cell through walls. `GameConfig.ForFloor` now adds a heart to the catch cost
+every **four** floors and clamps at **five**, so the curve is 1/2/3/4 and then 5 from floor 17 to
+the bottom. The **Confessional** has no free exit:
+`REFUSE TO CONFESS` costs a heart and a card of the room's choosing, and both frontends send
+Escape through it. **The suite is 847 tests, all green.**
+
+**The pass before that (the relic card, run details and more content) is in:** touching an altar opens a
 **relic card** and freezes the floor until it is read (window `Screen.Relic`, terminal
 `ReadRelic`), and the pause menu's **RUN DETAILS** page lists every card and relic the run carries
 (window scrolls with W/S; terminal opens with `V`). The pool is now **twenty-six relics** with a

@@ -333,6 +333,49 @@ public sealed partial class RaylibRenderer
     }
 
     /// <summary>
+    /// Draws the long door's hold as a bar that fills while the arch is stood on.
+    /// </summary>
+    /// <param name="state">The floor, for the hold's progress.</param>
+    /// <param name="accent">The floor's accent, used for the filled part of the bar.</param>
+    /// <remarks>
+    /// The Deep's arch is the one door that is not a touch, and five seconds of standing is
+    /// invisible without a clock: the player cannot tell a hold that is working from a door that
+    /// is still locked. It sits just above the footer, where the eyes already are, and it is
+    /// absent on every floor whose exit opens on touch.
+    /// </remarks>
+    private void DrawHoldGauge(GameState state, Color accent)
+    {
+        var fraction = (float)state.ExitHoldFraction;
+
+        if (fraction <= 0f)
+        {
+            return;
+        }
+
+        var width = Raylib.GetScreenWidth();
+        var height = Raylib.GetScreenHeight();
+        const float trackWidth = 260f;
+        const float trackHeight = 9f;
+        var left = (width - trackWidth) / 2f;
+        var top = height - RaylibLayout.FooterHeight - 34f;
+
+        Raylib.DrawRectangleRec(
+            new Rectangle(left - 3f, top - 3f, trackWidth + 6f, trackHeight + 6f),
+            Rgba(3, 10, 12, 215));
+        Raylib.DrawRectangleRec(
+            new Rectangle(left, top, trackWidth * fraction, trackHeight),
+            accent);
+
+        var label = FormattableString.Invariant($"HOLDING THE ARCH {fraction * 100f:0}%");
+        Font.Draw(
+            label,
+            (int)MathF.Round(left + ((trackWidth - TextWidth(label, 1)) / 2f)),
+            (int)MathF.Round(top - 15f),
+            1,
+            HintText);
+    }
+
+    /// <summary>
     /// Draws the status strip as floating glass pills: keys, barriers and the exit, each with a
     /// glowing dot in its own colour. When the killer is close an extra warning appears, so the
     /// player gets a cue that is not only visual atmosphere.
@@ -418,6 +461,7 @@ public sealed partial class RaylibRenderer
 
         DrawPowerups(state, width - RaylibLayout.OriginX, RaylibLayout.HudHeight - 27f, accent);
         DrawStamina(state, chrome is null);
+        DrawHoldGauge(state, accent);
 
         if (danger)
         {

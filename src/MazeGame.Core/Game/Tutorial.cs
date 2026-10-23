@@ -89,7 +89,7 @@ public static class Tutorial
             Lines =
             [
                 "You start with three hearts and there is no ceiling: heals add to the total and hearts carry between floors.",
-                "A catch costs one heart on floors 1 to 5, two on floors 6 to 10, three on floors 11 to 15 and four on floors 16 to 20.",
+                "A catch costs one heart on floors 1 to 4, then one more every four floors, up to five hearts from floor 17 down.",
                 "At the last heart the run is over. The death card tells you which floor you reached.",
             ],
             Keys = "HEARTS: THE ONLY THING YOU CAN RUN OUT OF",
@@ -112,9 +112,9 @@ public static class Tutorial
             Title = "HIDE, THEN SLOW THE HUNT",
             Lines =
             [
-                "Press V and stand still for a moment to veil: you become unseen for three seconds. Moving breaks the veil.",
+                "Press V and stand still for a moment to veil: you are unseen for three seconds, and the hunt searches where it last saw you.",
                 "Press T to drag: every hunter's clock slows for a few seconds, then speeds up afterwards as the price.",
-                "Veil is for losing a hunter that is already close. Drag is for making distance when it is not.",
+                "Veil is for walking out of a room a hunter is searching. Drag is for making distance when it is in sight.",
             ],
             Keys = "V: VEIL      T: DRAG",
         },
@@ -138,7 +138,7 @@ public static class Tutorial
             [
                 "Some floors hide a safe room behind a gold seam in the wall. Step inside and press E to open its card.",
                 "Nothing outside the room moves while you are inside. Rooms trade in hearts: a stake at the casino, a card at the stall, a rule at the toll.",
-                "The casino's wheel spins. The odds are printed on the card, and the last heart can never be staked.",
+                "The Confessional takes a card and a heart. Refusing costs the same, and it is the room that chooses the card. The casino's odds are printed, and the last heart can never be staked.",
             ],
             Keys = "E: OPEN THE ROOM",
         },
@@ -149,7 +149,7 @@ public static class Tutorial
             Lines =
             [
                 "Some floors hide an altar off the short way to the arch: a plinth with a floating gem. Walk onto it to take the relic above it.",
-                "A relic is permanent. It stays for the rest of the run, not just the floor, and the card that opens names it. The pause menu's RUN DETAILS lists every relic and card you carry.",
+                "A relic is permanent: it stays for the rest of the run. The rarest are legendary, and RUN DETAILS in the pause menu lists everything you carry.",
                 "Touching an altar wakes every sleeping hunter. The relic is free; the walk back is not, and the altar is never on the fastest route to the arch.",
             ],
             Keys = "WALK ONTO THE ALTAR TO TAKE ITS RELIC",

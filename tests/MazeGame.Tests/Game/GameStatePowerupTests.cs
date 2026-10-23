@@ -83,7 +83,7 @@ public sealed class GameStatePowerupTests
     }
 
     [Fact]
-    public void Veil_ABrokenChannelCostsNothingAndAStepBreaksTheVeil()
+    public void Veil_ABrokenChannelCostsNothingAndAStepKeepsThePlayerHidden()
     {
         var state = CorridorGame();
         var veil = state.PowerupsRemaining.Veil;
@@ -98,8 +98,85 @@ public sealed class GameStatePowerupTests
         state.Tick(0.6);
         Assert.True(state.IsVeiled);
 
+        // Walking is what a veil is for: it must not end the moment the player slips away.
         Assert.True(state.TryMove(Direction.East));
+        Assert.True(state.IsVeiled);
+        Assert.Equal(veil - 1, state.PowerupsRemaining.Veil);
+
+        state.Tick(3.0);
         Assert.False(state.IsVeiled);
+    }
+
+    [Fact]
+    public void Veil_LetsThePlayerWalkAwayWhileTheHuntSearchesTheOldCell()
+    {
+        // Two rows joined at both ends: the hunt's shortest route to the player is one way, and
+        // its route to the cell it last saw them on is the other. That is what makes the veil's
+        // promise visible — a frozen memory sends it back down the row it came from.
+        var state = TestLevels.GameOver(TwoRowCorridor(), new GameConfig
+        {
+            Rows = 2,
+            Columns = 6,
+            KeyCount = 3,
+            EnemyStepSeconds = 1.0,
+            StartingHearts = 1,
+            MaxHearts = 1,
+            VisionRadius = 3,
+
+            // Longer than the walk, so the test measures the veil rather than its clock.
+            VeilDurationSeconds = 10.0,
+            Seed = null,
+        });
+
+        Assert.Equal(state.Maze.GetCell(0, 0), state.Player);
+        Assert.Equal(state.Maze.GetCell(1, 5), state.Enemy);
+
+        // Half a second first, so the hunt has seen the player and taken a step down the row
+        // toward them before the veil is drawn.
+        state.Tick(0.5);
+
+        Assert.True(state.TryVeil());
+        state.Tick(0.6);
+        Assert.True(state.IsVeiled);
+        Assert.Equal(state.Maze.GetCell(1, 4), state.Enemy);
+
+        for (var step = 0; step < 5; step++)
+        {
+            Assert.True(state.TryMove(Direction.East));
+        }
+
+        Assert.Equal(state.Maze.GetCell(0, 5), state.Player);
+        Assert.True(state.IsVeiled);
+
+        for (var second = 0; second < 4; second++)
+        {
+            state.Tick(1.0);
+        }
+
+        // Four steps after the walk: the hunt came up into the top row and kept going west,
+        // toward the cell it last saw. A hunt that had followed the player would be three cells
+        // to the east instead, which is where the player is standing.
+        Assert.Equal(state.Maze.GetCell(0, 1), state.Enemy);
+        Assert.Equal(GameStatus.InProgress, state.Status);
+    }
+
+    /// <summary>
+    /// Builds a two-row corridor joined once, at column two — an unequal pair of routes, so the
+    /// hunt's target actually shows in which way it walks.
+    /// </summary>
+    private static Grid TwoRowCorridor()
+    {
+        var grid = new Grid(2, 6);
+
+        for (var column = 0; column < 5; column++)
+        {
+            grid.RemoveWall(0, column, Direction.East);
+            grid.RemoveWall(1, column, Direction.East);
+        }
+
+        grid.RemoveWall(0, 2, Direction.South);
+
+        return grid;
     }
 
     [Fact]

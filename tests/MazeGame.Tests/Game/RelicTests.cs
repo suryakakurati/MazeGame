@@ -65,6 +65,49 @@ public sealed class RelicTests
     }
 
     [Fact]
+    public void TheStrongestRelics_AreLegendary_AndTheSmallestAreCommon()
+    {
+        // The relics that change what a run is worth — a cheaper catch, a free catch, a revival —
+        // are the rarest finds in the catalog.
+        Assert.Equal(RelicRarity.Legendary, RelicCatalog.RarityOf(RelicKind.HollowIdol));
+        Assert.Equal(RelicRarity.Legendary, RelicCatalog.RarityOf(RelicKind.IronSkin));
+        Assert.Equal(RelicRarity.Legendary, RelicCatalog.RarityOf(RelicKind.SaltRing));
+        Assert.Equal(RelicRarity.Legendary, RelicCatalog.RarityOf(RelicKind.SlowCoil));
+        Assert.Equal(RelicRarity.Legendary, RelicCatalog.RarityOf(RelicKind.GraveLantern));
+
+        Assert.Equal(RelicRarity.Common, RelicCatalog.RarityOf(RelicKind.Veilwalker));
+        Assert.Equal(RelicRarity.Common, RelicCatalog.RarityOf(RelicKind.SaltCandle));
+
+        Assert.True(RelicCatalog.WeightOf(RelicKind.HollowIdol) < RelicCatalog.WeightOf(RelicKind.SaltCandle));
+    }
+
+    [Fact]
+    public void AnAltar_OffersALegendaryFarLessOftenThanACommon()
+    {
+        var legendary = 0;
+        var common = 0;
+
+        for (var seed = 1; seed <= 400; seed++)
+        {
+            for (var floor = 1; floor <= FloorCatalog.ShippedFloorCount; floor++)
+            {
+                switch (RelicCatalog.RarityOf(RelicCatalog.Pick(seed, floor)))
+                {
+                    case RelicRarity.Legendary:
+                        legendary++;
+                        break;
+
+                    case RelicRarity.Common:
+                        common++;
+                        break;
+                }
+            }
+        }
+
+        Assert.True(legendary * 4 < common, $"legendary {legendary} vs common {common}");
+    }
+
+    [Fact]
     public void Pick_WalksTheWholePoolBeforeRepeating()
     {
         var seen = new HashSet<RelicKind>();

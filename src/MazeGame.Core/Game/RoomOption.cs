@@ -14,8 +14,9 @@ namespace MazeGame.Core.Game;
 /// <param name="Label">The line drawn on the card, in capitals.</param>
 /// <param name="Note">The price or odds under the label, or null for none.</param>
 /// <param name="Preview">
-/// The card's face text, shown when the option is a card for sale. Players are not expected to
-/// memorise the catalog, so the shop states what each card does before it takes a heart for it.
+/// The card's face text, shown when the option names a card. Players are not expected to
+/// memorise the catalog, so the Stall, the Confessional and the Mirror all state what a card does
+/// before it is bought, given up or swapped away.
 /// </param>
 public sealed record RoomOption(string Id, string Label, string? Note = null, string? Preview = null)
 {

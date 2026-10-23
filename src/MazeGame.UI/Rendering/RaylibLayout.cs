@@ -47,7 +47,7 @@ internal static class RaylibLayout
     public const int MinWindowHeight = 560;
 
     /// <summary>Window title, matching the title screen rather than the repository name.</summary>
-    public const string Title = "Bioluminescent Depths";
+    public const string Title = "Lost Blooms";
 
     /// <summary>Left edge of the maze inside the window.</summary>
     public const int OriginX = Margin;

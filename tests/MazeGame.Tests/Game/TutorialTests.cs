@@ -55,6 +55,9 @@ public sealed class TutorialTests
         Assert.Contains("GREEDY", text, System.StringComparison.Ordinal);
         Assert.Contains("HAUNTED", text, System.StringComparison.Ordinal);
         Assert.Contains("STARVED", text, System.StringComparison.Ordinal);
+        Assert.Contains("LEGENDARY", text, System.StringComparison.Ordinal);
+        Assert.Contains("CONFESSIONAL", text, System.StringComparison.Ordinal);
+        Assert.Contains("REFUSING", text, System.StringComparison.Ordinal);
     }
 
     [Fact]

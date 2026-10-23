@@ -132,10 +132,10 @@ public sealed class CampaignRoomTests
     }
 
     [Fact]
-    public void TheCasino_CapsTheMenu_WhenTheRunIsRich()
+    public void TheCasino_CapsTheStakeAtTwiceTheFloorNumber()
     {
-        // Hearts have no ceiling, so a healed run could carry twenty; the card is drawn as rows
-        // and must stay a menu. The stakes stop at the table's own maximum.
+        // The table's limit deepens with the descent: a rich run on floor one may still only
+        // stake two hearts, because the house has not seen enough of it yet.
         var campaign = BuildCampaign(SeedFor(RoomKind.LongTable, 0), hearts: 20, maxHearts: 20);
 
         EnterRoom(campaign);
@@ -145,9 +145,12 @@ public sealed class CampaignRoomTests
             .Where(option => option.Id.StartsWith("stake-", StringComparison.Ordinal))
             .ToList();
 
-        Assert.Equal(RoomCatalog.MaxStake, stakes.Count);
+        Assert.Equal(RoomCatalog.MaxStakeFor(campaign.FloorNumber), stakes.Count);
         Assert.Equal("stake-1", stakes[0].Id);
-        Assert.Equal($"stake-{RoomCatalog.MaxStake}", stakes[^1].Id);
+        Assert.Equal($"stake-{RoomCatalog.MaxStakeFor(campaign.FloorNumber)}", stakes[^1].Id);
+
+        // The example the rule is written from: floor nineteen takes a stake of thirty-eight.
+        Assert.Equal(38, RoomCatalog.MaxStakeFor(19));
     }
 
     [Fact]
@@ -273,6 +276,79 @@ public sealed class CampaignRoomTests
 
         Assert.Empty(campaign.Modifiers.Cards);
         Assert.Equal(heartsBefore - 1, campaign.Hearts);
+    }
+
+    [Fact]
+    public void EveryCardNamedOnARoomCard_StatesWhatItDoes()
+    {
+        // The player is not expected to know the catalog by heart, so any option that names a
+        // card prints that card's face under the price — the Confessional and the Mirror as well
+        // as the Stall.
+        var confessional = BuildCampaign(SeedFor(RoomKind.Confessional, 1));
+
+        TakeACard(confessional);
+
+        EnterRoom(confessional);
+        Assert.True(confessional.OpenRoom());
+
+        var give = Option(confessional, "give-0");
+
+        Assert.Equal(confessional.Modifiers.Cards[0].FaceText, give.Preview);
+
+        var mirror = BuildCampaign(SeedFor(RoomKind.Mirror, 1));
+
+        TakeACard(mirror);
+
+        EnterRoom(mirror);
+        Assert.True(mirror.OpenRoom());
+
+        var swap = Option(mirror, "swap-0");
+
+        Assert.Equal(mirror.Modifiers.Cards[0].FaceText, swap.Preview);
+    }
+
+    [Fact]
+    public void TheConfessional_OffersNoFreeExitWhenItHasADeal()
+    {
+        var campaign = BuildCampaign(SeedFor(RoomKind.Confessional, 1));
+
+        TakeACard(campaign);
+
+        EnterRoom(campaign);
+        Assert.True(campaign.OpenRoom());
+
+        var ids = OptionIds(campaign);
+
+        Assert.Contains("give-0", ids);
+        Assert.Contains(Campaign.RefuseOptionId, ids);
+        Assert.DoesNotContain(RoomOption.Leave.Id, ids);
+
+        var refusal = Option(campaign, Campaign.RefuseOptionId);
+
+        Assert.Equal("ONE HEART AND A CARD IT CHOOSES", refusal.Note);
+    }
+
+    [Fact]
+    public void RefusingTheConfessional_TakesAHeartAndACardItChooses()
+    {
+        var campaign = BuildCampaign(SeedFor(RoomKind.Confessional, 1));
+
+        TakeACard(campaign);
+
+        Assert.Single(campaign.Modifiers.Cards);
+
+        EnterRoom(campaign);
+        Assert.True(campaign.OpenRoom());
+
+        var heartsBefore = campaign.Hearts;
+
+        Assert.True(campaign.ResolveRoom(Option(campaign, Campaign.RefuseOptionId)));
+
+        // The refusal is the same price as the confession; what it costs is the choice of card.
+        Assert.Empty(campaign.Modifiers.Cards);
+        Assert.Equal(heartsBefore - 1, campaign.Hearts);
+        Assert.StartsWith("IT TOOK ", campaign.Room!.Outcome);
+        Assert.EndsWith(" AND A HEART", campaign.Room.Outcome);
     }
 
     [Fact]

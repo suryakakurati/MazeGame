@@ -17,15 +17,17 @@ public static class RoomCatalog
     public const int TurnFloor = 6;
 
     /// <summary>
-    /// Gets the largest stake the casino will put on the table.
+    /// Gets the largest stake the table will take on <paramref name="floorNumber"/>.
     /// </summary>
+    /// <param name="floorNumber">The floor the casino is on.</param>
+    /// <returns>The cap, in hearts: twice the floor number.</returns>
     /// <remarks>
-    /// The card is drawn as a list of rows, so its length is a screen budget: before hearts were
-    /// uncapped the ceiling kept the list at two, and a healed run would otherwise be offered
-    /// ninety-eight stakes. Five is a wager, not a spreadsheet, and the heart count is on the same
-    /// screen if the player wants to bet more later.
+    /// The ceiling deepens with the descent instead of sitting at a flat five: a run on floor
+    /// nineteen has earned a wager of thirty-eight, and the cap is what keeps the list a card the
+    /// player can scroll rather than the run's whole heart count. It is still capped by the hearts
+    /// the run is carrying, so the last heart is never on the table.
     /// </remarks>
-    public const int MaxStake = 5;
+    public static int MaxStakeFor(int floorNumber) => Math.Max(1, floorNumber * 2);
 
     /// <summary>Gets the percentage chance that a stake doubles.</summary>
     /// <remarks>
@@ -148,7 +150,7 @@ public static class RoomCatalog
         RoomKind.Cartographer => "Charts of this floor, lit until you leave it.",
         RoomKind.LongTable => $"Stake hearts. Win at {winPercent}%, lose at {100 - winPercent}%.",
         RoomKind.Stall => "Three cards, one heart each.",
-        RoomKind.Confessional => "Surrender a card and a heart, and be lighter.",
+        RoomKind.Confessional => "Surrender a card and a heart, and be lighter. Refusing costs the same; it chooses the card.",
         RoomKind.Toll => "A heart buys the next floor one hunter fewer.",
         RoomKind.SeedVault => "Plant a seed. Three floors down it blooms, and pays a heart.",
         RoomKind.Mirror => "Trade a card for one the mirror chooses.",

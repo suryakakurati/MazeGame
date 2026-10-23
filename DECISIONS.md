@@ -2149,3 +2149,99 @@ colour that means nothing. The face roll's weights are unchanged for the four ol
 2, one ticket each); starved takes the sixth ticket. The tutorial gained pages for the altar/relic
 and for the run's faces, and `TutorialTests` asserts both are taught, so content and guide move
 together.
+
+## 2026-10-22 — Relic rarity is a weight, and the best relics are legendary
+
+**Decision:** `RelicRarity` (common, rare, legendary) lives in Core beside `RelicFamily`, and
+`RelicCatalog.WeightOf` gives a common six tickets, a rare three and a legendary one.
+`RelicCatalog.Pick` builds a weighted shuffle of the whole pool from the run seed and floor and
+walks it, instead of taking one raw weighted roll per altar.
+
+**Reason:** Every relic used to be equally likely, so the find that changes a run — a catch that
+costs one heart less, a free first catch, a revival, a slower hunt — arrived as often as a
+half-second of extra grace. A rarity band puts the strongest finds behind the altar's luck without
+hiding them from the catalogue. A weighted *shuffle* rather than a weighted roll keeps the property
+the campaign depends on: the altar walk skips relics the run already holds, and a permutation
+guarantees the walk can never land twice on the same relic or run out early.
+
+**Consequences:** A legendary is roughly one altar in thirteen; a specific legendary is roughly
+one in a hundred. The roll is still deterministic from seed and floor, so a restored run stocks the
+same altar. `RelicCatalog.Pick` remains the only entry point, and `RelicTests` asserts the
+strongest relics are legendary, that legendaries are far rarer than commons across seeds, and that
+the walk still covers the whole pool. The relic card and the terminal readout name the rarity so
+the player can see what they found.
+
+## 2026-10-22 — A bloom can be felt ten tiles away, and only on its own tile
+
+**Decision:** `CardEffect.BloomSenseRadius` / `GameConfig.BloomSenseRadius` add a passive sense:
+every bloom whose **straight-line** distance from the player is within the radius is visible on
+its own cell, through walls, with no cell around it revealed. The legendary Grave Lantern is the
+only source, at ten tiles.
+
+**Reason:** Straight-line tiles, not walking steps, is what makes the relic feel like a smell
+rather than a map: a flower behind a wall is worth walking to, and the route to it is still
+unknown. Revealing only the bloom's tile is the same rule the Ashen Bloom glow already uses, so the
+game has one vocabulary for "you can sense the flower, not the corridor".
+
+**Consequences:** The sense is recomputed with the rest of visibility on every step, so blooms
+fade in and out as the player moves; it never opens a wall or reveals the arch. `RunModifiers`
+clamps the radius at zero and `GameConfig.Validate` rejects a negative one.
+`GameStateBloomSenseTests` pins the ten-tile reach, the tile-not-steps rule, the through-wall
+reveal and the single lit cell.
+
+## 2026-10-22 — The Confessional charges for refusal
+
+**Decision:** When the Confessional has a deal to make (more than one heart and at least one card),
+its card replaces the free `LEAVE` with `REFUSE TO CONFESS`: one heart and one card chosen by the
+room from the run seed. One heart or no cards keeps the plain leave. Both frontends route Escape
+through the refusal when the card offers one, so closing the card is not a way to escape the price.
+
+**Reason:** The room's whole fiction is that it wants a confession; a free exit made it a shop
+with an opt-out and, worse, made the punishment the player never saw. Charging the same price for
+a refusal — and taking the choice of card away — turns the room into a real decision: give up the
+card you cannot use, or keep it and let the room decide. The last heart is never a room's to take,
+so the penance cannot kill a run; that is the same rule that keeps every other room card honest.
+
+**Consequences:** `Campaign.RefuseOptionId` names the option both frontends look for, and
+`ResolveRefusal` records what it took on the card ("IT TOOK X AND A HEART"). The room's prose says
+refusing costs the same, so the price is never a hidden modifier. `CampaignRoomTests` pins the
+options, the price and the seeded card loss; the one-heart case still offers only a leave.
+
+## 2026-10-22 — A hold you can watch, a veil you can walk under
+
+**Decision:** Floor 20's arch draws a hold bar above the footer that fills over its five seconds
+(`GameState.ExitHoldFraction`, drawn by `RaylibRenderer`, counted in `ConsoleRenderer`). The veil
+now freezes the hunters' memory instead of refreshing it, no longer ends when the player steps, and
+no longer dims the torch; only being caught breaks it, and its clock running out clears nothing.
+
+**Reason:** The long door was the one rule with no feedback: five seconds of standing still looked
+exactly like a locked door. For the veil, `CompleteVeil` used to hand *every* hunter the player's
+current cell — the one fact the ability exists to withhold — while any step cancelled it, so the
+"three seconds unseen" was unreachable and the correct play was to die standing in place. Freezing
+the memory is what makes it an escape: the hunt searches where it last saw you, and walking is how
+you leave.
+
+**Consequences:** `BreakVeil` is now only the caught path, and a new `CancelVeilChannel` gives up an
+interrupted wind-up without spending the charge. `Veil_LetsThePlayerWalkAwayWhileTheHuntSearchesTheOldCell`
+pins the behaviour in a two-row maze with unequal routes.
+
+## 2026-10-22 — Refunds add, speed is trimmed, the table deepens
+
+**Decision:** `CardEffect`/`GameConfig`/`RunModifiers` carry `BlinkRefundPerKey` as a count that sums,
+not a flag that ORs. Every player speed source — step scale, sprint stamina, the momentum ramp and
+cap, and the turn-penalty relief — gives **a fifth less** than it used to (Glass Cannon 0.833,
+Light Feet 0.855, Fleet Footed 0.902, Quiet Soles 0.944, sprint 1.4/1.48/1.24, momentum 0.024/0.14,
+Pilgrim's Step −0.4). Enemy pace is untouched. The Long Table's ceiling is `MaxStakeFor(floor)` =
+twice the floor number, and the Confessional and the Mirror name a card's face under its price.
+
+**Reason:** A second copy of a refund card was a dead pick, which is the opposite of what stacking
+means. Player speed had drifted past the intended margin — the face text said 20% where the card
+gave 25% — and the trim brings the numbers back to what the cards claim while making the last floor
+need two speed cards rather than one. The casino's flat five kept a deep run's wager trivial; tying
+it to the descent makes the heart economy scale with the run, and the page keys keep a thirty-eight
+row card readable.
+
+**Consequences:** Card faces were re-stated to the trimmed numbers. `TheCasino_CapsTheStakeAtTwiceTheFloorNumber`
+pins the table and the floor-19 example; `TwoBlinkRefunds_GiveTwoBlinksPerKey_NotOne` pins the sum;
+`EveryCardNamedOnARoomCard_StatesWhatItDoes` pins the previews. `FloorCatalogTests` now asserts that
+one speed card no longer outruns the Deep's base hunter and two do.

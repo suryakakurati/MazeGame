@@ -1098,6 +1098,9 @@ internal static class RaylibFrontend
         return false;
     }
 
+    /// <summary>How many rows one page key moves a room's list by.</summary>
+    private const int RoomPage = 8;
+
     /// <summary>
     /// Reads one safe-room command for this frame.
     /// </summary>
@@ -1151,6 +1154,26 @@ internal static class RaylibFrontend
             selected = (selected + 1) % options.Count;
         }
 
+        // A long list — the casino's stakes, a chest of cards — is walked a page at a time as
+        // well as a row at a time. One press per row would make thirty-eight stakes thirty-eight
+        // presses, and the card would stop being a choice and become a chore.
+        if (Pressed(KeyboardKey.PageUp))
+        {
+            selected = Math.Max(0, selected - RoomPage);
+        }
+        else if (Pressed(KeyboardKey.PageDown))
+        {
+            selected = Math.Min(options.Count - 1, selected + RoomPage);
+        }
+        else if (Pressed(KeyboardKey.Home))
+        {
+            selected = 0;
+        }
+        else if (Pressed(KeyboardKey.End))
+        {
+            selected = options.Count - 1;
+        }
+
         if (Pressed(KeyboardKey.Enter) || Pressed(KeyboardKey.KpEnter) || Pressed(KeyboardKey.Space))
         {
             var floorBefore = campaign.FloorNumber;
@@ -1189,11 +1212,35 @@ internal static class RaylibFrontend
 
         if (Pressed(KeyboardKey.Escape) || Pressed(KeyboardKey.E))
         {
+            // The Confessional does not let a run walk out unshriven: its card's own refusal is
+            // the price of leaving, so Escape takes that option and stays on the card to show
+            // what it took. Every other room closes for free.
+            if (RefusalOn(room) is { } refusal)
+            {
+                campaign.ResolveRoom(refusal);
+                return false;
+            }
+
             campaign.CloseRoom();
             return true;
         }
 
         return false;
+    }
+
+    /// <summary>Returns the Confessional's refusal option, or null when the card offers none.</summary>
+    /// <param name="room">The open room card.</param>
+    private static RoomOption? RefusalOn(RoomOffer room)
+    {
+        foreach (var option in room.Options)
+        {
+            if (string.Equals(option.Id, Campaign.RefuseOptionId, StringComparison.Ordinal))
+            {
+                return option;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

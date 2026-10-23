@@ -1,4 +1,4 @@
-# MazeGame — COP3503H Group Project (Group 5)
+# Lost Blooms — COP3503H Group Project (Group 5)
 
 A horror-themed maze game written in C# on .NET 8. The player wakes up in a
 randomly generated maze, must collect the objectives, and reach the exit before the
@@ -9,14 +9,14 @@ This is a course project, so the graded data structures and algorithms
 min-heap for the enemy) are implemented from scratch in this repository. No
 graph/pathfinding libraries are used.
 
-> **Status (2026-10-20):** Course Phases 1–6 complete, and roguelike **Phases 1–4, 7 and the
+> **Status (2026-10-22):** Course Phases 1–6 complete, and roguelike **Phases 1–4, 7 and the
 > content of Phase 8** are in — the
 > game is **playable in a Raylib window** as a **twenty-floor campaign with a card draft and timed
 > steps**. Each floor is a braided maze **drawn from the compiled pixel-art atlases** on a virtual
 > canvas at an integer scale, with fog of war, a per-cell lantern lightmap and a killer that carries
 > its own light: pick the blooms, open the arch, and descend.
-> **You start with three hearts**: a catch costs one on floors 1–5 and one more for every five
-> floors below, throws the killer to a distant dead end and
+> **You start with three hearts**: a catch costs one on floors 1–4 and one more for every four
+> floors below, capped at five from floor 17 on, throws the killer to a distant dead end and
 > stuns it, and **hearts carry between floors and have no ceiling**, so healing past three is real
 > progress; only running out ends the run. Walking
 > is a cadence (a constant 0.26 s per cell; enemies start at 1.20 s and ramp to 0.22 s, so the
@@ -39,28 +39,38 @@ graph/pathfinding libraries are used.
 > on its own tile; every extra copy lights a step around each flower). Rarity is on every card's face, and **House Favour** is the catalog's one
 > **super-rare**: the card that promises a casino. The shop shows every card's face before it takes a
 > heart, and a reroll buys a fresh table for hearts (1, then 2, and so on, per floor).
-> **The title screen also offers a Tutorial**: twelve pages that walk through walking, the blooms,
+> **The title screen also offers a Tutorial**: fourteen pages that walk through walking, the blooms,
 > the arch, the hunters, hearts and every ability, key by key, before the first descent, then hand
 > over to a **practice floor** — a nine-by-nine chamber whose hunter never moves, where the player
 > walks, takes two blooms and opens the arch with nothing at stake. ESC now opens a **pause menu**
 > (continue, the cards, save and quit, or abandon the run) instead of abandoning it, and a **card catalog** on the
 > title and in that menu lists every card with its rarity and its trade.
-> A run summary follows (835 unit tests; the sprite compiler has produced 2,264 validated pixel-art tiles across
+> A run summary follows (847 unit tests; the sprite compiler has produced 2,264 validated pixel-art tiles across
 > twenty themes, and the game draws the floor from them).
 > **Late floors have a rule, not just a dial**: floor 14 keeps one hunter asleep until you come
 > close, 18 carries you between two thread gates, 19's lantern burns down a step every forty
-> seconds (each bloom restores it) and 20's arch needs five continuous seconds of standing.
+> seconds (each bloom restores it) and 20's arch needs five continuous seconds of standing, with a
+> bar above the footer filling while it holds.
 > **A floor can hide a safe room** — a 3x3 chamber with one door, drawn in warm cream stone no floor
 > uses so it reads through the fog. The first floor always has one, so the mechanic is taught rather
 > than hoped for; every floor after it rolls a ten percent chance, and a run averages about three,
 > with room cards raising the rate. Its entrance is lit within three steps, so a door in the rock is
 > a find rather than a guess. Standing inside pauses the hunt, and the hunt will not follow you in, while
 > the room sells a hearts-and-cards trade for one visit. Cards may now stack up to three copies, and the
-> Confessional and the Mirror are the only ways to take one back.
+> Confessional and the Mirror are the only ways to take one back. The **Confessional** has no free
+> exit: refusing to confess costs the same heart and a card, and the room picks the card. The
+> **Long Table** raises its ceiling with the descent — a stake may be twice the floor number, so
+> floor nineteen takes thirty-eight hearts — and every card it, the Confessional or the Mirror
+> names shows its own face under the price. A room's list longer than the card is scrolled a page
+> at a time.
 > **Two runs are not the same descent.** Every floor hides an **altar** off the shortest route,
-> stocked with one of twenty-six permanent **relics** — a heart on every clear, a faster stride, a
-> third bloom on every floor, a resurrection, a magnet for flowers, an extra blink, a longer
-> sprint — that the run keeps from the moment it is touched. Touching one wakes anything asleep,
+> stocked with one of thirty-seven permanent **relics** — a heart on every clear, a faster stride,
+> a third bloom on every floor, a resurrection, a magnet for flowers, an extra blink, a longer
+> sprint — that the run keeps from the moment it is touched. Relics come in three rarities, and the
+> ones that change a run are **legendary** and much rarer on the altar: a catch that costs one
+> heart less, a free first catch, a resurrection, a slower hunt, a bloom fewer on every floor, and
+> the **Grave Lantern**, which makes every bloom within ten tiles glow on its own tile through the
+> dark and the walls. Touching one wakes anything asleep,
 > so the reward is paid for on the walk back, and the **relic card** freezes the floor to say what
 > you just gained. From the fourth floor down, each floor also wears a **face** rolled from the
 > run's seed: **quiet** (one hunter fewer, a step more light), **greedy** (one more bloom, and one
@@ -145,7 +155,7 @@ The first restore downloads the Raylib native library for your platform (see
 | W A S D / arrow keys | Walk: a tap is one tile, a hold keeps walking at the cadence |
 | Shift (hold) | Sprint, while the stamina bar lasts |
 | Space | Blink through the wall you face (the breach stays open) |
-| V | Veil: stand still for half a second to go unseen for 3 seconds |
+| V | Veil: stand still for half a second to go unseen for 3 seconds, and walk while unseen |
 | T | Drag: slow the hunt to 40% for 3 seconds |
 | L | Lantern: throw your light up to 5 cells ahead for 8 seconds |
 | F | Shove: push any adjacent hunter two cells away, whichever way you face |
@@ -162,7 +172,7 @@ The first restore downloads the Raylib native library for your platform (see
 
 ## How to play
 
-The game opens on a title screen over the cave: `BIOLUMINESCENT / DEPTHS`, with `DESCEND`,
+The game opens on a title screen over the cave: `LOST BLOOMS`, with `DESCEND`,
 `CONTINUE` (only while a run is saved), `TUTORIAL`, `CARDS` and `LEAVE`. The garden line under the
 rule is the running tally of every bloom your finished runs have grown. The tutorial is a guided read rather than a lecture: one idea per
 page, the exact keys for it, and a page count so the player knows how much explaining is left; its
@@ -241,7 +251,8 @@ a quarter of it to come back. Sprint is for breaking line of sight, not for goin
 
 1. Collect all three blooms — the exit stays `LOCKED` until the last one is picked up.
 2. Reach the exit. You start with three hearts, shown beside the control hints at the bottom:
-   a catch costs one heart on floors 1–5 and one more for every five floors below, throws the
+   a catch costs one heart on floors 1–4 and one more for every four floors below, up to five
+   from floor 17 on, throws the
    killer to a far dead end, stuns it for 1.5 seconds and
    gives you 1.5 seconds of grace, and **keeps your keys**. Hearts have no ceiling:
    an Echo, a room or a card can push you past three, so only the catch that empties the last
@@ -249,7 +260,8 @@ a quarter of it to come back. Sprint is for breaking line of sight, not for goin
 3. Each floor refills five powerups, one key each, and the HUD shows how many charges are
    left. **Space** blinks through the wall you face and leaves the breach open, so you make a
    shortcut the hunters can use too. **V** veils you after half a second of standing still, for
-   three seconds of being unseen, but any step breaks it. **T** drags the hunt down to 40% for
+   three seconds of being unseen: the hunters keep walking to the cell they last saw, so the veil
+   is what lets you walk out of the room they are searching. **T** drags the hunt down to 40% for
    three seconds, then leaves it 10% faster for five. **L** throws your light up to five cells
    ahead for eight seconds and the hunters walk toward it while your own cell goes dark. **F**
    shoves any hunter next to you two cells away, whichever way you face, and stuns it; every
@@ -363,7 +375,8 @@ teaches one verb at a time (Blink on floor 1, Veil on floor 2, Drag on floor 4, 
   real change to the maze for the rest of the floor, so it is both a shortcut and a hole the
   hunters can use.
 - **Veil** channels for 0.6 s while the player stands still, then hides them for 3 s. Hunters
-  keep walking to the last cell they saw; any step, or being caught, breaks it.
+  keep walking to the last cell they saw and cannot refresh it while the veil lasts, so walking
+  during it is the escape. Being caught still ends it; walking no longer does.
 - **Drag** scales the hunters' clock to 40% for 3 s, then to 110% for 5 s. Both the individual
   and Pack clocks read the same multiplier, so they cannot disagree about what time it is.
 - **Lantern** throws the light source up to five cells down a corridor and burns for 8 s. While

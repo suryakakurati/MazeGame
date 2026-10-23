@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using MazeGame.Core.Abstractions;
 
 namespace MazeGame.Core.Game;
 
@@ -54,6 +55,12 @@ public sealed class Campaign
 
     /// <summary>How many hearts the first reroll of a draft costs.</summary>
     private const int RerollBaseCost = 1;
+
+    /// <summary>The id of the Confessional's refusal option; it is the room's own exit.</summary>
+    public const string RefuseOptionId = "refuse";
+
+    /// <summary>Mixed into the card a refused confession takes, so it is not always the first.</summary>
+    private const int RefusalSalt = 0x4C0F;
 
     private readonly IReadOnlyList<FloorDefinition> _floors;
     private readonly Func<FloorDefinition, int, RunModifiers, IReadOnlyList<DescentCondition>, GameState> _createFloor;
@@ -689,7 +696,15 @@ public sealed class Campaign
                 break;
 
             case RoomKind.Confessional:
-                ResolveGive(offer);
+                if (string.Equals(offer.Chosen!.Id, RefuseOptionId, StringComparison.Ordinal))
+                {
+                    ResolveRefusal(offer);
+                }
+                else
+                {
+                    ResolveGive(offer);
+                }
+
                 break;
 
             case RoomKind.Toll:
@@ -990,10 +1005,10 @@ public sealed class Campaign
                 break;
 
             case RoomKind.LongTable:
-                // The stake is bounded by the hearts the run is actually carrying, not by the
-                // floor's design, and by the card's own row budget: with no ceiling a rich run
-                // would otherwise be offered a list longer than the window.
-                var most = Math.Min(_floor.Hearts - 1, RoomCatalog.MaxStake);
+                // The stake is bounded by the hearts the run is actually carrying and by the
+                // floor's own table limit: the descent raises the ceiling by two hearts a floor,
+                // so a deep run is offered a wager it could not take at the top of the mine.
+                var most = Math.Min(_floor.Hearts - 1, RoomCatalog.MaxStakeFor(FloorNumber));
 
                 var winPercent = CasinoWinPercent;
 
@@ -1056,19 +1071,30 @@ public sealed class Campaign
                 break;
 
             case RoomKind.Confessional:
-                // Removal is a heart; with one left there is nothing to give up.
-                if (_floor.Hearts <= 1)
+                // Removal is a heart; with one left there is nothing to give up, and no penance
+                // either: the last heart is never a room's to take.
+                if (_floor.Hearts <= 1 || _modifiers.Cards.Count == 0)
                 {
                     break;
                 }
 
                 for (var index = 0; index < _modifiers.Cards.Count; index++)
                 {
+                    var card = _modifiers.Cards[index];
+
                     options.Add(new RoomOption(
                         $"give-{index}",
-                        _modifiers.Cards[index].Name.ToUpperInvariant(),
-                        "ONE HEART"));
+                        card.Name.ToUpperInvariant(),
+                        "ONE HEART",
+                        card.FaceText));
                 }
+
+                // The confessional has no free exit. Refusing is its own price, and it is the
+                // room's choice of card, not the player's.
+                options.Add(new RoomOption(
+                    RefuseOptionId,
+                    "REFUSE TO CONFESS",
+                    "ONE HEART AND A CARD IT CHOOSES"));
 
                 break;
 
@@ -1092,10 +1118,13 @@ public sealed class Campaign
                         continue;
                     }
 
+                    var card = _modifiers.Cards[index];
+
                     options.Add(new RoomOption(
                         $"swap-{index}",
-                        $"GIVE {_modifiers.Cards[index].Name.ToUpperInvariant()}",
-                        "FOR ONE THE MIRROR PICKS"));
+                        $"GIVE {card.Name.ToUpperInvariant()}",
+                        "FOR ONE THE MIRROR PICKS",
+                        card.FaceText));
                 }
 
                 break;
@@ -1111,7 +1140,12 @@ public sealed class Campaign
                 break;
         }
 
-        options.Add(RoomOption.Leave);
+        // Every room but the Confessional may be read and left. A confessional that had nothing
+        // to take (one heart or no cards) falls through to the plain exit above.
+        if (!options.Exists(option => string.Equals(option.Id, RefuseOptionId, StringComparison.Ordinal)))
+        {
+            options.Add(RoomOption.Leave);
+        }
 
         return new RoomOffer(
             kind,
@@ -1126,7 +1160,9 @@ public sealed class Campaign
     {
         var stake = OptionIndex(offer.Chosen!.Id, "stake-");
 
-        if (stake < 1 || stake > _floor.Hearts - 1)
+        if (stake < 1 ||
+            stake > _floor.Hearts - 1 ||
+            stake > RoomCatalog.MaxStakeFor(FloorNumber))
         {
             offer.RecordOutcome("THE TABLE REFUSES");
             return;
@@ -1198,6 +1234,34 @@ public sealed class Campaign
         var name = cards[index].Name.ToUpperInvariant();
         _modifiers = RunModifiers.FromCards(Without(cards, index));
         offer.RecordOutcome($"GAVE UP {name}");
+    }
+
+    /// <summary>
+    /// Takes the confessional's penance for walking out unshriven: a heart and a card of its own
+    /// choosing.
+    /// </summary>
+    /// <remarks>
+    /// Refusing is worse than confessing on purpose. The deal is the same price either way; what
+    /// the refusal costs is the choice of which card goes. The heart is taken first and the card
+    /// second, and the last heart is never taken, so the penance can never kill a run.
+    /// </remarks>
+    private void ResolveRefusal(RoomOffer offer)
+    {
+        var cards = _modifiers.Cards;
+
+        if (cards.Count == 0)
+        {
+            offer.RecordOutcome("THERE IS NOTHING LEFT TO TAKE");
+            return;
+        }
+
+        var random = new SeededRandom(unchecked((_runSeed * 397) ^ (FloorNumber * 7919) ^ RefusalSalt));
+        var index = random.NextInt(cards.Count);
+        var name = cards[index].Name.ToUpperInvariant();
+        var tookHeart = _floor.TrySpendHeart();
+
+        _modifiers = RunModifiers.FromCards(Without(cards, index));
+        offer.RecordOutcome(tookHeart ? $"IT TOOK {name} AND A HEART" : $"IT TOOK {name}");
     }
 
     /// <summary>Swaps one card for one the mirror picks, free.</summary>

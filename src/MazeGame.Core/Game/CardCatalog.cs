@@ -130,7 +130,7 @@ public static class CardCatalog
             Name = "Blink Ledger",
             Tier = CardTier.Uncommon,
             FaceText = "Every bloom you pick gives back a blink, but the killer gains 8% speed.",
-            Effect = new CardEffect { BlinkRefundOnKey = true, EnemyStepScale = 0.92 },
+            Effect = new CardEffect { BlinkRefundPerKey = 1, EnemyStepScale = 0.92 },
         },
         new()
         {
@@ -162,8 +162,8 @@ public static class CardCatalog
             Name = "Glass Cannon",
             Tier = CardTier.Rare,
             MaxCopies = 2,
-            FaceText = "You move 20% faster, but every catch costs two hearts instead of one.",
-            Effect = new CardEffect { PlayerStepScale = 0.80, CatchCost = 1 },
+            FaceText = "You move 20% faster, but every catch costs one more heart.",
+            Effect = new CardEffect { PlayerStepScale = 0.833, CatchCost = 1 },
         },
         new()
         {
@@ -196,8 +196,8 @@ public static class CardCatalog
             Name = "Light Feet",
             Tier = CardTier.Common,
             MaxCopies = 3,
-            FaceText = "You walk nearly 18 percent faster, but the killer gives you 8% less time between steps.",
-            Effect = new CardEffect { PlayerStepScale = 0.825, EnemyStepScale = 0.92 },
+            FaceText = "You walk 17 percent faster, but the killer gives you 8% less time between steps.",
+            Effect = new CardEffect { PlayerStepScale = 0.855, EnemyStepScale = 0.92 },
         },
         new()
         {
@@ -205,11 +205,11 @@ public static class CardCatalog
             Name = "Momentum",
             Tier = CardTier.Uncommon,
             MaxCopies = 2,
-            FaceText = "Each straight step makes you faster, up to nearly 18 percent, but a turn slows you by 15% for 2 seconds.",
+            FaceText = "Each straight step makes you faster, up to 14 percent, but a turn slows you by 15% for 2 seconds.",
             Effect = new CardEffect
             {
-                MomentumRampPerStep = 0.03,
-                MomentumMaxBonus = 0.175,
+                MomentumRampPerStep = 0.024,
+                MomentumMaxBonus = 0.14,
                 TurnPenaltyScale = 0.15,
                 TurnPenaltySeconds = 2.0,
             },
@@ -219,8 +219,8 @@ public static class CardCatalog
             Id = "sprint-lungs",
             Name = "Sprint Lungs",
             Tier = CardTier.Common,
-            FaceText = "Your sprint lasts half again as long, but the killer's light reaches 2 steps further for the rest of the run.",
-            Effect = new CardEffect { SprintStaminaScale = 1.5, EnemyAuraDistance = 2 },
+            FaceText = "Your sprint lasts 40% longer, but the killer's light reaches 2 steps further for the rest of the run.",
+            Effect = new CardEffect { SprintStaminaScale = 1.4, EnemyAuraDistance = 2 },
         },
         new()
         {
@@ -228,7 +228,7 @@ public static class CardCatalog
             Name = "Hollow Bones",
             Tier = CardTier.Uncommon,
             MaxCopies = 2,
-            FaceText = "After a hit you are safe for 3 seconds instead of a second and a half, but every step you take is 25% slower.",
+            FaceText = "The grace after a catch lasts a second and a half longer, but every step you take is 25% slower.",
             Effect = new CardEffect { InvulnerabilitySeconds = 1.5, PlayerStepScale = 1.25 },
         },
         new()
@@ -279,16 +279,16 @@ public static class CardCatalog
             Name = "Fleet Footed",
             Tier = CardTier.Common,
             MaxCopies = 2,
-            FaceText = "You move 12% faster, but every floor from now on asks for one more bloom.",
-            Effect = new CardEffect { PlayerStepScale = 0.88, KeyCount = 1 },
+            FaceText = "You move 11% faster, but every floor from now on asks for one more bloom.",
+            Effect = new CardEffect { PlayerStepScale = 0.902, KeyCount = 1 },
         },
         new()
         {
             Id = "coiled-spring",
             Name = "Coiled Spring",
             Tier = CardTier.Uncommon,
-            FaceText = "Your sprint lasts 60% longer, but the killer moves 6% faster.",
-            Effect = new CardEffect { SprintStaminaScale = 1.6, EnemyStepScale = 0.94 },
+            FaceText = "Your sprint lasts 48% longer, but the killer moves 6% faster.",
+            Effect = new CardEffect { SprintStaminaScale = 1.48, EnemyStepScale = 0.94 },
         },
         new()
         {
@@ -364,7 +364,7 @@ public static class CardCatalog
             Name = "Thorn Debt",
             Tier = CardTier.Uncommon,
             FaceText = "Every bloom you pick gives back a blink, but every catch costs one more heart.",
-            Effect = new CardEffect { BlinkRefundOnKey = true, CatchCost = 1 },
+            Effect = new CardEffect { BlinkRefundPerKey = 1, CatchCost = 1 },
         },
         new()
         {

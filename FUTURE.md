@@ -1976,3 +1976,54 @@ the arch or a hunter unreachable.
 | Shop purchases | **Three cards, buy any number while above one heart** | One card per visit |
 | Last-heart spending | **Never allowed** | Allowed, and the room can kill you |
 | Copies | **MaxCopies by card, 1-3** | Keep single copies and shorten the run instead |
+
+## 24. Fourth playtest: more game to touch (2026-10-22)
+
+Six ideas that make *Lost Blooms* feel more like an indie game and less like a ruleset, in order
+of payoff per unit of work. None of them changes the core loop; each adds a decision or a memory.
+
+### 24.1 The garden remembers (meta-progression, cheap)
+
+The garden is currently a tally of blooms with no effect. Let it unlock things: at 100 blooms the
+first legendary relic enters the altar pool, at 250 a fifth floor face ("rootbound": the maze is
+braided harder and the arch moves), at 500 a *Charter* seed that starts a run with one relic of the
+player's family choice. It gives a reason to keep descending after the novelty of the first win, and
+it uses the one number the game already persists. Cost: a threshold table, a reader in `SaveStore`
+and a line on the title screen. This is the single highest-value addition on the list.
+
+### 24.2 The hunter that remembers you (one persistent stalker)
+
+Designate one hunter per run as **the one that knows**: it keeps the cell where it last caught the
+player and patrols there while the others hunt as they do now, and after a veil it searches the last
+place it saw you. It turns a catch from a speed bump into a personal grudge, and it is all state the
+hunters already have (cells, routes, stun timers). It would need one new route target and a visual
+tell (a scarred gem in its glow).
+
+### 24.3 Noise (the cost of being fast)
+
+Sprinting, blinking and shoving emit a **noise ring** that pulls nearby hunters for a few seconds;
+the HUD shows the ring's edge. It gives the fastest verbs a cost that is not a cooldown, makes the
+Veil's "stand still" trade legible, and gives the player a reason to walk when they could run. Cheap:
+a decaying per-cell interest map and a hook in `WakeSleepers`' neighbourhood.
+
+### 24.4 Bloom choice: carry one, plant one
+
+Let a player keep one picked bloom across floors and spend it on a floor's altar to change the next
+floor: a standing lantern, a wall opened, a hunter starting asleep. It turns "pick every bloom" into
+"which bloom do I save", gives the altar a second use, and costs almost nothing because bloom counts
+are already carried per floor and the floor's gimmick is already a config knob.
+
+### 24.5 Rooms that remember you (the Confessional's second face)
+
+Rooms already have per-run state (spent or not). Let them remember *what you did*: the second
+Confessional in a run charges two cards for one, the Mirror offers back the card you refused the
+first time, the Long Table's house remembers a big win and lowers the odds. It is the cheapest
+storytelling the game can buy — a few booleans on `Campaign` and one extra line on the card — and
+it makes the descent feel watched.
+
+### 24.6 Daily descent (the seed is already everything)
+
+A run is fully determined by its seed, so a **daily seed** (date hashed) plus a shareable run code
+is nearly free. Post the day's seed on the title screen with the garden total as the only score and
+the game has a reason to be opened twice. The save format already stores the seed; the work is a
+title entry and a `Lost Blooms — seed 12345` header on the summary.

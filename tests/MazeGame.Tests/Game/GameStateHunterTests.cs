@@ -133,16 +133,19 @@ public sealed class GameStateHunterTests
     }
 
     [Fact]
-    public void ForFloor_MakesEveryCatchCostOneMoreHeartEveryFiveFloors()
+    public void ForFloor_MakesEveryCatchCostOneMoreHeartEveryFourFloors_AndCapsAtFive()
     {
         var config = new GameConfig();
 
         Assert.Equal(1, config.ForFloor(FloorCatalog.ByNumber(1), 3).CatchCost);
-        Assert.Equal(1, config.ForFloor(FloorCatalog.ByNumber(5), 3).CatchCost);
-        Assert.Equal(2, config.ForFloor(FloorCatalog.ByNumber(6), 3).CatchCost);
-        Assert.Equal(2, config.ForFloor(FloorCatalog.ByNumber(10), 3).CatchCost);
-        Assert.Equal(3, config.ForFloor(FloorCatalog.ByNumber(11), 3).CatchCost);
-        Assert.Equal(4, config.ForFloor(FloorCatalog.ByNumber(20), 3).CatchCost);
+        Assert.Equal(1, config.ForFloor(FloorCatalog.ByNumber(4), 3).CatchCost);
+        Assert.Equal(2, config.ForFloor(FloorCatalog.ByNumber(5), 3).CatchCost);
+        Assert.Equal(3, config.ForFloor(FloorCatalog.ByNumber(9), 3).CatchCost);
+        Assert.Equal(4, config.ForFloor(FloorCatalog.ByNumber(13), 3).CatchCost);
+        Assert.Equal(4, config.ForFloor(FloorCatalog.ByNumber(16), 3).CatchCost);
+        Assert.Equal(GameConfig.MaxFloorCatchCost, config.ForFloor(FloorCatalog.ByNumber(17), 3).CatchCost);
+        Assert.Equal(5, config.ForFloor(FloorCatalog.ByNumber(19), 3).CatchCost);
+        Assert.Equal(5, config.ForFloor(FloorCatalog.ByNumber(20), 3).CatchCost);
     }
 
     [Fact]

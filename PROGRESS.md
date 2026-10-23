@@ -3,12 +3,13 @@
 Single source of truth for the state of the project. Update this file at the end of
 every work session (see the handoff protocol in `HANDOFF.md`).
 
-Last updated: 2026-10-22 (twelfth pass: the relic card, run details, eight more relics and a
-starved face)
+Last updated: 2026-10-22 (fourteenth pass: a visible hold gauge on the Deep's arch, blink refunds
+that stack, player speed trimmed a fifth, a veil you can walk under, a casino stake of twice the
+floor number, card previews in every room, and scrollable room cards)
 
 ## Current Status
 
-The solution builds with zero warnings, `dotnet test` is green (835 tests), and the game runs
+The solution builds with zero warnings, `dotnet test` is green (847 tests), and the game runs
 **in a Raylib window** as a **twenty-floor campaign with a card draft between floors, five
 powerups and timed steps**: the title leads to a floor intro card, then a seeded maze (15x15 at
 the top, 25x25 at the bottom) drawn as a bioluminescent cave — fog of war, braided dead ends,
@@ -50,13 +51,42 @@ Raylib's stream callback; with no device the game is silent rather than broken.
 **faces** from the run's seed — quiet (one less hunter, a step more light), greedy (one more bloom
 and one more hunter) or haunted (a step less light, more ways through, or a burning lantern where
 the floor had no rule) — and most floors still keep the shape the campaign wrote. Every floor also
-holds an **altar** off the shortest route, stocked with one of **twenty-six relics**: permanent,
-non-drafted boons (a heart on every clear, a faster stride, a third bloom on every floor, a
+holds an **altar** off the shortest route, stocked with one of **thirty-seven relics**: permanent,
+non-drafted boons (a heart on every clear, a faster stride, a bloom fewer on every floor, a
 resurrection, a magnet for blooms) that the campaign folds into the run's cards the moment they are
-touched. The floor's find, the altar and the Echo all wait off the route, so a run is now a route
+touched. Relics carry a **rarity** — common, rare or legendary — and the run-defining ones (a
+cheaper catch, a free catch, a revival, a slower hunt, the Grave Lantern's bloom sense) are the
+legendary ones and much the least likely to be on an altar. The floor's find, the altar and the Echo all wait off the route, so a run is now a route
 question as much as a chase.
 
-What changed in this pass (a relic is an event, and the run is inspectable):
+What changed in this pass (a name, rarer relics, a deeper bite and a room that collects):
+
+- **The game is called Lost Blooms.** The window title, both title screens, the README and the
+docs use it; the assemblies, namespaces and save folder are still `MazeGame`, because renaming a
+solution is churn with no player-visible payoff.
+- **Relics have a rarity, and the good ones are rare.** `RelicRarity` (common, rare, legendary)
+  weights the altar's draw, and `RelicCatalog.Pick` now walks a weighted shuffle instead of a plain
+  one: an altar is most likely to hold a common and needs the shuffle to put a legendary first
+  (about one altar in thirteen). The shuffle is still a permutation, so the skip walk that avoids
+  relics the run already holds can never loop. Eleven relics are new, four of them legendary: the
+  Grave Lantern, a bloom fewer on every floor, two steps more torch, and two hearts on every clear.
+  The relic card and the terminal's readout now name the rarity.
+- **The Grave Lantern (legendary) sees blooms through the dark.** `CardEffect.BloomSenseRadius` /
+  `GameConfig.BloomSenseRadius` make every bloom within ten **tiles** — straight-line, not walking
+  steps — visible on its own cell, through walls, with nothing around it lit. It is recomputed on
+  every step, so the flowers fade in and out as the player walks.
+- **A catch costs one more heart every four floors, and then stops.** `GameConfig.ForFloor`
+  divides by four and clamps at `GameConfig.MaxFloorCatchCost` (5), so the curve is 1/2/3/4 and
+  then five from floor 17 to the bottom. Cards can still add to a catch; the floor's own depth
+  cannot. The tutorial, README and the hunter test moved with it.
+- **The Confessional has no free exit.** Its card offers each card for a heart as before, plus a
+  priced `REFUSE TO CONFESS`: the same heart and a card of the room's choosing, drawn from the
+  run seed. Refusing is worse than confessing only in that the player loses the choice of card,
+  and the penance can never take the last heart. Both frontends route Escape through the refusal
+  when the card has one, so walking out is not a loophole; with one heart or no cards the room
+  still offers a plain leave, because it has no deal to break.
+
+What changed in the previous pass (a relic is an event, and the run is inspectable):
 
 - **A relic opens a card, and the floor stops.** `PixelCards.RelicFound` (window) and
   `ConsoleFrontend.ReadRelic` (terminal) show the gem, its family, the relic's name and its
@@ -1463,7 +1493,7 @@ Run these from the repository root (the folder containing `MazeGame.sln`):
 
 ```bash
 dotnet build                      # must report 0 Warning(s), 0 Error(s)
-dotnet test                       # currently 835/835 passing
+dotnet test                       # currently 847/847 passing
 dotnet run --project tools/AssetForge -- --check   # atlases and themes are healthy
 dotnet run --project src/MazeGame.UI              # Raylib window
 dotnet run --project src/MazeGame.UI -- --console # terminal fallback

@@ -259,9 +259,21 @@ public sealed class FloorCatalogTests
             faster.PlayerStepSeconds < config.PlayerStepSeconds,
             "Light Feet must still speed up the player on the last floor.");
 
+        // One card is no longer enough to outrun the Deep's base hunter: player speed bonuses
+        // were trimmed by a fifth, so the last floor needs two of them. The hunter's own numbers
+        // were deliberately left alone.
         Assert.True(
-            faster.PlayerStepSeconds < config.EnemyStepSeconds,
-            "one speed card must be enough to outrun the last floor's base hunter.");
+            faster.PlayerStepSeconds > config.EnemyStepSeconds,
+            "one speed card alone no longer beats the last floor's base hunter.");
+
+        var twoCards = RunModifiers.None
+            .With(CardCatalog.ById("light-feet")!)
+            .With(CardCatalog.ById("glass-cannon")!)
+            .Apply(config);
+
+        Assert.True(
+            twoCards.PlayerStepSeconds < config.EnemyStepSeconds,
+            "two speed cards are enough to outrun the last floor's base hunter.");
     }
 
     /// <summary>Returns a floor's danger as hunter-steps per second.</summary>

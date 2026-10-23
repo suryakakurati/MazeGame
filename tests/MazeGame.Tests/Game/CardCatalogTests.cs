@@ -253,7 +253,7 @@ public sealed class CardCatalogTests
                 effect.FirstCatchFree ||
                 effect.MagneticKeys ||
                 effect.ReviveOnce ||
-                effect.BlinkRefundOnKey ||
+                effect.BlinkRefundPerKey != 0 ||
                 effect.CatchCost != 0 ||
                 effect.VeilDurationSeconds != 0 ||
                 effect.DragSeconds != 0 ||

@@ -69,16 +69,22 @@ public static class PixelCards
         var captionScale = width >= 760 ? 2 : 1;
         font.DrawCentered("A DESCENT IN THE DARK", centreX, (int)(height * 0.105f), captionScale, Dim);
 
-        var wordScale = Math.Clamp(width / 128, 4, 7);
+        // One wordmark line, the second word carried in the cave's own light. The whole thing is
+        // sized from the window so it fills a wide frame without crowding a narrow one.
+        var wordScale = Math.Clamp(width / 96, 4, 9);
         var wordY = (int)(height * 0.145f);
-        font.DrawCentered("BIOLUMINESCENT", centreX, wordY, wordScale, new Color(232, 248, 240, 255));
+        var wordmarkLeft = centreX - (PixelFont.MeasureWidth("LOST BLOOMS", wordScale) / 2);
 
-        var markScale = Math.Clamp(width / 112, 5, 9);
-        var markY = wordY + (PixelFont.LineHeight * wordScale) + 14;
-        font.DrawCentered("DEPTHS", centreX, markY, markScale, Fade(Glow, breath));
+        font.Draw("LOST", wordmarkLeft, wordY, wordScale, new Color(232, 248, 240, 255));
+        font.Draw(
+            "BLOOMS",
+            wordmarkLeft + (5 * PixelFont.Advance * wordScale),
+            wordY,
+            wordScale,
+            Fade(Glow, breath));
 
         // A pixel rule either side of a single bright seed, which is the title screen's one flourish.
-        var ruleY = markY + (PixelFont.LineHeight * markScale) + 30;
+        var ruleY = wordY + (PixelFont.LineHeight * wordScale) + 34;
         DrawTitleRule(centreX, ruleY, Glow);
 
         font.DrawCentered(
@@ -361,10 +367,31 @@ public static class PixelCards
             wheelBottom = y + 22 + (radius * 2) + 12;
         }
 
-        var rowHeight = 46;
-        var listTop = Math.Max(
-            wheelBottom,
-            Math.Max(y + 44, height / 2 - ((options.Count * rowHeight) / 2)));
+        const int rowHeight = 46;
+        var promptTop = height - 54;
+        var listTop = Math.Max(wheelBottom, y + 44);
+
+        // A room's list is a window, not the whole card: the Long Table offers a stake per heart
+        // up to the floor's own limit, which on a deep floor is dozens of rows. The preview of a
+        // card takes its own space under the window, and the selected row is always kept in it.
+        var previewed = selected >= 0 && options[selected].Preview is { Length: > 0 };
+        var previewReserve = previewed ? 76 : 0;
+        var capacity = Math.Max(1, (promptTop - 12 - previewReserve - listTop) / rowHeight);
+        var visibleRows = Math.Min(capacity, options.Count);
+        var first = options.Count <= visibleRows
+            ? 0
+            : Math.Clamp(selected - (visibleRows / 2), 0, options.Count - visibleRows);
+
+        // A list short enough to fit is centred in the room it has; a long one starts at the top
+        // of the space below the prose and fills downward.
+        if (options.Count <= capacity)
+        {
+            var centred = (height - previewReserve - (options.Count * rowHeight)) / 2;
+            listTop = Math.Max(
+                listTop,
+                Math.Min(centred, promptTop - previewReserve - (options.Count * rowHeight)));
+        }
+
         var rowWidth = Math.Min(width - 96, 520);
         var left = centreX - (rowWidth / 2);
 
@@ -376,9 +403,10 @@ public static class PixelCards
             return;
         }
 
-        for (var index = 0; index < options.Count; index++)
+        for (var row = 0; row < visibleRows; row++)
         {
-            var top = listTop + (index * rowHeight);
+            var index = first + row;
+            var top = listTop + (row * rowHeight);
             var isSelected = index == selected;
             var colour = isSelected ? accent : Fade(accent, 0.40);
 
@@ -403,13 +431,26 @@ public static class PixelCards
             }
         }
 
-        // A shop's card face under the list. A name and a price is not enough to spend a heart on:
+        var listBottom = listTop + (visibleRows * rowHeight);
+        var scrolling = visibleRows < options.Count;
+
+        if (scrolling)
+        {
+            font.DrawCentered(
+                FormattableString.Invariant($"SHOWING {first + 1}-{first + visibleRows} OF {options.Count}"),
+                centreX,
+                listBottom,
+                1,
+                Dim);
+        }
+
+        // A card's face under the list. A name and a price is not enough to spend a heart on:
         // the player has not memorised the catalog, and the draft's own cards are the reference.
-        if (selected >= 0 && options[selected].Preview is { Length: > 0 } preview)
+        if (previewed)
         {
             var previewWidth = Math.Min(width - 72, 660);
-            var previewLines = Wrap(preview, 1, previewWidth);
-            var previewTop = listTop + (options.Count * rowHeight) + 6;
+            var previewLines = Wrap(options[selected].Preview!, 1, previewWidth);
+            var previewTop = listBottom + (scrolling ? 16 : 6);
             var maxLines = Math.Max(0, (height - 96 - previewTop) / (PixelFont.LineHeight + 3));
 
             if (maxLines > 0)
@@ -437,7 +478,12 @@ public static class PixelCards
         var promptScale = width >= 700 ? 2 : 1;
 
         font.DrawCentered(
-            Fit("A / D: CHOOSE   ENTER: TAKE   ESC: LEAVE", promptScale, width - 24),
+            Fit(
+                scrolling
+                    ? "A / D: CHOOSE   PGUP / PGDN: SCROLL   ENTER: TAKE"
+                    : "A / D: CHOOSE   ENTER: TAKE   ESC: LEAVE",
+                promptScale,
+                width - 24),
             centreX,
             height - 54,
             promptScale,
@@ -977,7 +1023,12 @@ public static class PixelCards
         Raylib.DrawRectangle(centreX - 8, gemY - 4, 16, 7, tint);
         Raylib.DrawRectangle(centreX - 5, gemY + 3, 10, 5, tint);
 
-        font.DrawCentered("RELIC FOUND", centreX, top + 72, 1, Fade(tint, 1.0));
+        font.DrawCentered(
+            $"RELIC FOUND - {RelicCatalog.RarityOf(kind).ToString().ToUpperInvariant()}",
+            centreX,
+            top + 72,
+            1,
+            Fade(tint, 1.0));
         Heading(font, card.Name.ToUpperInvariant(), centreX, top + 92, panelWidth - 48, accent);
         font.DrawCentered(
             Fit($"{FamilyWord(kind)} - KEPT FOR THE REST OF THE RUN", 1, panelWidth - 40),
