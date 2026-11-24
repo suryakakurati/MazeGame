@@ -52,7 +52,7 @@ public static class Tutorial
             Title = "PICK EVERY BLOOM",
             Lines =
             [
-                "A bloom is the floor's key: a small glowing flower on the ground. Walk onto it to pick it up.",
+                "A bloom is the floor's key: a flower ringed in gold that glows even at the edge of your torch. Walk onto it to pick it up. Other flowers are only scenery.",
                 "The footer counts what is left. The arch at the floor's end stays locked until the count reaches zero.",
                 "Losing a heart never takes a bloom away. Progress is only ever forward.",
             ],

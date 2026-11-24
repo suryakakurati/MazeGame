@@ -24,8 +24,10 @@ namespace MazeGame.UI.Rendering.Pixels;
 /// gradient call per cell.
 /// </para>
 /// <para>
-/// The figures snap to their cells, like the vector renderer: the sprite is chosen by the step's
-/// fraction (a walk cycle), never drawn between two tiles.
+/// The rules move a figure a whole tile at the start of its step; the drawing glides it across
+/// that tile over the step's length, and the camera follows the drawn explorer by the pixel, so
+/// walking reads as continuous motion while the game itself stays on the grid. The sprite frame
+/// still comes from the step's fraction (a walk cycle).
 /// </para>
 /// </remarks>
 public sealed class PixelRenderer : IRenderer, IDisposable
@@ -83,6 +85,18 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     /// <summary>When the current relic announcement fades out.</summary>
     private double _relicAnnounceUntil;
 
+    /// <summary>The ring traced around every bloom: a saturated marigold no floor's scenery uses.</summary>
+    private static readonly Color BloomGold = new(255, 196, 46, 255);
+
+    /// <summary>The bloom's inner glow and twinkle: a pale, warm white-gold.</summary>
+    private static readonly Color BloomGlow = new(255, 240, 170, 255);
+
+    /// <summary>The hunter's rim and the bloom around its eyes: a deep blood red.</summary>
+    private static readonly Color HunterRim = new(214, 22, 34, 255);
+
+    /// <summary>The hunter's eyes themselves: a hot, near-white red.</summary>
+    private static readonly Color HunterEye = new(255, 120, 96, 255);
+
     /// <summary>The Echo's mark: cold moonlight, deliberately nothing like a bloom's gold.</summary>
     private static readonly Color EchoPale = new(198, 206, 255, 255);
 
@@ -124,9 +138,44 @@ public sealed class PixelRenderer : IRenderer, IDisposable
 
     private Texture2D _light;
 
-    private int _lightStamp = int.MinValue;
+    /// <summary>
+    /// How quickly a cell's light eases toward where it should be, in seconds: about a step's
+    /// length to settle, so the lantern's edge rolls forward with the walk instead of jumping.
+    /// </summary>
+    private const double LightEaseSeconds = 0.08;
 
+    /// <summary>A cell dimmer than this is drawn as unlit and skipped.</summary>
+    private const float LightFloor = 0.02f;
+
+    /// <summary>Each cell's current light, 0 to 1, row-major over the floor; eased every frame.</summary>
+    private float[] _levels = [];
+
+    /// <summary>How much each cell is "in the torch" rather than remembered, 0 to 1, eased the same way.</summary>
+    private float[] _seen = [];
+
+    /// <summary>How much each cell is in a hunter's cold light, 0 to 1, eased the same way.</summary>
+    private float[] _glow = [];
+
+    /// <summary>The floor size the eased arrays were made for.</summary>
+    private (int Rows, int Columns) _levelSize;
+
+    /// <summary>Whether the eased arrays hold a real frame yet; a new floor starts at its targets.</summary>
+    private bool _levelsPrimed;
+
+    /// <summary>
+    /// The first cell the viewport touches, top-left. Loops over the viewport start here and run
+    /// one cell further than the view, because a gliding camera straddles two cells.
+    /// </summary>
     private PixelCamera _camera;
+
+    /// <summary>The camera's left edge in atlas pixels from the floor's first column.</summary>
+    private int _cameraX;
+
+    /// <summary>The camera's top edge in atlas pixels from the floor's first row.</summary>
+    private int _cameraY;
+
+    /// <summary>Where the explorer is drawn this frame, in cells; fractional mid-step.</summary>
+    private (double Row, double Column) _playerAt;
 
     private int _viewCells;
 
@@ -166,9 +215,10 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         // the same compiled face as the canvas, so it has to be handed over before the first frame.
         _chrome.UsePixelFont(Font);
 
-        _lightImage = Raylib.GenImageColor(_viewCells, _viewCells, Color.Black);
+        _lightImage = Raylib.GenImageColor(_viewCells + 1, _viewCells + 1, Color.Black);
         _light = Raylib.LoadTextureFromImage(_lightImage);
         Raylib.SetTextureFilter(_light, TextureFilter.Bilinear);
+        Raylib.SetTextureWrap(_light, TextureWrap.Clamp);
     }
 
     /// <summary>Gets the theme being drawn.</summary>
@@ -214,7 +264,6 @@ public sealed class PixelRenderer : IRenderer, IDisposable
 
         _themeId = themeId;
         _style = FloorStyleCatalog.For(themeId);
-        _lightStamp = int.MinValue;
     }
 
     /// <summary>
@@ -232,14 +281,13 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         ArgumentNullException.ThrowIfNull(floor);
 
         _floorChrome = FloorChrome.For(floor, conditions);
-        _lightStamp = int.MinValue;
     }
 
     /// <summary>Forgets which cells have been explored, for the start of a new floor.</summary>
     public void Reset()
     {
         _explored.Clear();
-        _lightStamp = int.MinValue;
+        _levelsPrimed = false;
         _playerFacing = Direction.South;
         _enemyFacings.Clear();
         _chrome.Reset();
@@ -260,14 +308,25 @@ public sealed class PixelRenderer : IRenderer, IDisposable
 
         TrackFacing(state);
         Follow(state);
+        TrackExploration(state);
+        EaseLight(state);
 
         _view.Begin(CanvasColour);
+
+        // The camera glides by the pixel, so the edge cells are half in view: everything of the
+        // floor is clipped to the viewport rather than spilling into the canvas margin.
+        BeginViewport();
         DrawCells(state, atlas);
         DrawProps(state, atlas);
         DrawSafeRoom(state);
         DrawEntities(state, atlas);
-        DrawLight(state);
+        DrawLight();
+        DrawBloomMarks(state, atlas);
+        DrawHunterMarks(state, atlas);
         DrawAmbience();
+        Raylib.EndScissorMode();
+
+        DrawRelicAnnouncement(state);
         PixelView.End();
 
         // The chrome is the existing HUD: pulled, glass status strip and hints. It draws in window
@@ -328,12 +387,39 @@ public sealed class PixelRenderer : IRenderer, IDisposable
             _view = new PixelView(PixelLayout.CanvasWidth(cells), PixelLayout.CanvasHeight(cells));
 
             Raylib.UnloadImage(_lightImage);
-            _lightImage = Raylib.GenImageColor(cells, cells, Color.Black);
-            _lightStamp = int.MinValue;
+            _lightImage = Raylib.GenImageColor(cells + 1, cells + 1, Color.Black);
+
+            // The light is updated in place every frame, so the texture has to be the image's size.
+            Raylib.UnloadTexture(_light);
+            _light = Raylib.LoadTextureFromImage(_lightImage);
+            Raylib.SetTextureFilter(_light, TextureFilter.Bilinear);
+            Raylib.SetTextureWrap(_light, TextureWrap.Clamp);
         }
 
-        _camera = PixelCamera.For(_rows, _columns, _viewCells, _viewCells, state.Player);
+        // The rules move the explorer a whole tile at the start of a step; the drawing glides
+        // across that tile over the step's length, and the camera rides the drawn position, so
+        // the floor scrolls under a walking figure instead of jumping when the step lands.
+        _playerAt = state.IsPlayerStepping
+            ? PixelLayout.Glide(state.PreviousPlayer, state.Player, state.PlayerStepFraction)
+            : (state.Player.Row, state.Player.Column);
+
+        _cameraX = PixelLayout.CameraOffset(_columns, _viewCells, _playerAt.Column);
+        _cameraY = PixelLayout.CameraOffset(_rows, _viewCells, _playerAt.Row);
+        _camera = new PixelCamera(
+            (int)Math.Floor(_cameraX / (double)PixelLayout.CellSize),
+            (int)Math.Floor(_cameraY / (double)PixelLayout.CellSize));
     }
+
+    /// <summary>The canvas rectangle the maze is drawn in; nothing of the floor spills past it.</summary>
+    private void BeginViewport() =>
+        Raylib.BeginScissorMode(
+            PixelLayout.Pad,
+            PixelLayout.HeaderHeight + PixelLayout.Pad,
+            _viewCells * PixelLayout.CellSize,
+            _viewCells * PixelLayout.CellSize);
+
+    /// <summary>How many cells a loop over the viewport visits: one more than the view, for the glide.</summary>
+    private int SpanCells => _viewCells + 1;
 
     /// <summary>
     /// Returns the colour the letterbox is cleared to: the floor's accent, drowned in the cave's
@@ -342,13 +428,21 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     private Color Backdrop() => _style.Fog;
 
     /// <summary>Returns the canvas x of a cell, as the camera sees it.</summary>
-    private int CanvasX(int column) => PixelLayout.CellX(column, _camera.Column);
+    private int CanvasX(int column) => PixelLayout.Pad + (column * PixelLayout.CellSize) - _cameraX;
 
     /// <summary>Returns the canvas y of a cell, as the camera sees it.</summary>
-    private int CanvasY(int row) => PixelLayout.CellY(row, _camera.Row);
+    private int CanvasY(int row) => PixelLayout.HeaderHeight + PixelLayout.Pad + (row * PixelLayout.CellSize) - _cameraY;
 
-    /// <summary>Returns whether a cell is inside the current viewport.</summary>
-    private bool OnScreen(Cell cell) => _camera.Shows(cell, _viewCells, _viewCells);
+    /// <summary>Returns the canvas x of a fractional column, for a figure between two cells.</summary>
+    private int CanvasX(double column) =>
+        PixelLayout.Pad + (int)Math.Round(column * PixelLayout.CellSize) - _cameraX;
+
+    /// <summary>Returns the canvas y of a fractional row, for a figure between two cells.</summary>
+    private int CanvasY(double row) =>
+        PixelLayout.HeaderHeight + PixelLayout.Pad + (int)Math.Round(row * PixelLayout.CellSize) - _cameraY;
+
+    /// <summary>Returns whether any part of a cell is inside the current viewport.</summary>
+    private bool OnScreen(Cell cell) => _camera.Shows(cell, SpanCells, SpanCells);
 
     /// <summary>Gets the atlas for the current theme, loading it the first time it is needed.</summary>
     private TileAtlas Atlas
@@ -387,14 +481,14 @@ public sealed class PixelRenderer : IRenderer, IDisposable
 
         // Only the viewport is drawn: the camera moves with the player, so a cell further away than
         // the viewport could not be seen even if it were painted.
-        for (var row = _camera.Row; row < _camera.Row + _viewCells; row++)
+        for (var row = _camera.Row; row < _camera.Row + SpanCells; row++)
         {
             if (row < 0 || row >= _rows)
             {
                 continue;
             }
 
-            for (var column = _camera.Column; column < _camera.Column + _viewCells; column++)
+            for (var column = _camera.Column; column < _camera.Column + SpanCells; column++)
             {
                 if (column < 0 || column >= _columns)
                 {
@@ -402,14 +496,13 @@ public sealed class PixelRenderer : IRenderer, IDisposable
                 }
 
                 var cell = state.Maze.GetCell(row, column);
-                var visible = state.IsVisible(cell);
 
-                if (!visible && !RememberedCell(state, cell))
+                if (!Drawn(state, cell))
                 {
                     continue;
                 }
 
-                var tint = visible ? Color.White : Remembered;
+                var tint = CellTint(cell);
                 var x = CanvasX(column);
                 var y = CanvasY(row);
 
@@ -437,7 +530,7 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         DrawFace(atlas, state, cell, Direction.West, x, y, tint);
 
         var southKnown = cell.Row + 1 < _rows &&
-            Known(state, state.Maze.GetCell(cell.Row + 1, cell.Column));
+            Drawn(state, state.Maze.GetCell(cell.Row + 1, cell.Column));
 
         if (!southKnown)
         {
@@ -445,7 +538,7 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         }
 
         var eastKnown = cell.Column + 1 < _columns &&
-            Known(state, state.Maze.GetCell(cell.Row, cell.Column + 1));
+            Drawn(state, state.Maze.GetCell(cell.Row, cell.Column + 1));
 
         if (!eastKnown)
         {
@@ -484,14 +577,14 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         var hasFeature = atlas.Has("floor-feature");
         var emblem = atlas.PropCount > props ? $"prop-{props}" : null;
 
-        for (var row = _camera.Row; row < _camera.Row + _viewCells; row++)
+        for (var row = _camera.Row; row < _camera.Row + SpanCells; row++)
         {
             if (row < 0 || row >= _rows)
             {
                 continue;
             }
 
-            for (var column = _camera.Column; column < _camera.Column + _viewCells; column++)
+            for (var column = _camera.Column; column < _camera.Column + SpanCells; column++)
             {
                 if (column < 0 || column >= _columns)
                 {
@@ -500,13 +593,13 @@ public sealed class PixelRenderer : IRenderer, IDisposable
 
                 var cell = state.Maze.GetCell(row, column);
 
-                if (!Known(state, cell) || IsBusy(state, cell))
+                if (!Drawn(state, cell) || IsBusy(state, cell))
                 {
                     continue;
                 }
 
                 var hash = Hash(row, column);
-                var tint = state.IsVisible(cell) ? Color.White : Remembered;
+                var tint = CellTint(cell);
 
                 // The signature object is rare on purpose: it should be a landmark the player
                 // remembers, not the most common thing on the floor.
@@ -674,6 +767,9 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     private static int Hash(int row, int column) =>
         unchecked(((row * 73856093) ^ (column * 19349663)) & 0x7FFFFFFF);
 
+    /// <summary>Returns <paramref name="value"/> wrapped into [0, <paramref name="span"/>).</summary>
+    private static double Wrap(double value, double span) => value - (Math.Floor(value / span) * span);
+
     /// <summary>Returns the fractional part of a value, the basis of the weather hashes.</summary>
     private static double Frac(double value) => value - Math.Floor(value);
 
@@ -758,7 +854,6 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         DrawLocks(state);
         DrawCuriosity(state);
         DrawRelic(state);
-        DrawRelicAnnouncement(state);
 
         if (state.Exit is var exit && Known(state, exit) && OnScreen(exit))
         {
@@ -774,22 +869,36 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         {
             var hunter = hunters[index];
 
-            if (!OnScreen(hunter.Cell))
+            if (!OnScreen(hunter.Cell) && !OnScreen(hunter.From))
             {
                 continue;
             }
 
             var facing = index < _enemyFacings.Count ? _enemyFacings[index] : Direction.South;
 
+            // A hunter's step is as long as its clock, so it slides the whole way between two
+            // cells rather than appearing on the next one.
+            var (hunterRow, hunterColumn) = PixelLayout.Glide(hunter.From, hunter.Cell, hunter.StepFraction);
+
+            // A pool of dark red under its feet, as if the floor stains where it stands.
+            Raylib.DrawEllipse(
+                CanvasX(hunterColumn) + (PixelLayout.CellSize / 2),
+                CanvasY(hunterRow) + PixelLayout.CellSize - 1,
+                7f,
+                2.5f,
+                hunter.Stunned ? new Color(20, 30, 60, 110) : new Color(70, 0, 6, 130));
+
             atlas.Draw(
                 $"killer-{NameOf(facing)}-{EnemyFrame(hunter)}",
-                CanvasX(hunter.Cell.Column),
-                CanvasY(hunter.Cell.Row),
+                CanvasX(hunterColumn),
+                CanvasY(hunterRow),
                 hunter.Stunned ? Stunned : Color.White);
-        }            atlas.Draw(
-                $"player-{NameOf(_playerFacing)}-{PlayerFrame(state)}",
-                CanvasX(state.Player.Column),
-                CanvasY(state.Player.Row));
+        }
+
+        atlas.Draw(
+            $"player-{NameOf(_playerFacing)}-{PlayerFrame(state)}",
+            CanvasX(_playerAt.Column),
+            CanvasY(_playerAt.Row));
 
         // The tide is a wash over the whole frame rather than a change to the tiles: the water does
         // not replace the hall, it sits over it, and the player can still read the floorplan the
@@ -811,6 +920,160 @@ public sealed class PixelRenderer : IRenderer, IDisposable
             }
         }
     }
+
+    /// <summary>
+    /// Marks every bloom the player has seen so it cannot be mistaken for scenery: a pulsing gold
+    /// halo, a gold outline traced around the flower's own pixels, and a twinkle above it.
+    /// </summary>
+    /// <param name="state">The floor being drawn.</param>
+    /// <param name="atlas">The floor's atlas, for the bloom tile and its outline.</param>
+    /// <remarks>
+    /// The floors are full of flowers — props, emblems, signature objects — and several themes
+    /// paint them in the same hue as the bloom, so the bloom alone could not be told apart. This
+    /// is drawn after the lightmap on purpose: the darkness multiplies everything under it, and
+    /// the one thing the player is looking for has to read at the edge of the lantern too. The
+    /// gold is <see cref="BloomGold"/>, which no floor uses for its scenery.
+    /// </remarks>
+    private void DrawBloomMarks(GameState state, TileAtlas atlas)
+    {
+        var time = Raylib.GetTime();
+        var frame = (int)(time * 3.0) % 3;
+        const int Half = PixelLayout.CellSize / 2;
+
+        foreach (var key in state.Keys)
+        {
+            if (!Known(state, key) || !OnScreen(key))
+            {
+                continue;
+            }
+
+            var x = CanvasX(key.Column);
+            var y = CanvasY(key.Row);
+
+            // Each bloom breathes on its own phase, so a room with three of them shimmers
+            // rather than blinking in unison.
+            var phase = (key.Row * 1.3) + (key.Column * 0.7);
+            var pulse = 0.5 + (0.5 * Math.Sin((time * 3.2) + phase));
+
+            // A remembered bloom (out of the torch, still in memory) keeps its mark, a little
+            // quieter, so the player can walk back to one they passed.
+            var strength = state.IsVisible(key) ? 1.0 : 0.7;
+
+            Raylib.DrawCircle(x + Half, y + Half, 10.0f, Alpha(BloomGold, (35 + (35 * pulse)) * strength));
+            Raylib.DrawCircle(x + Half, y + Half, 6.5f, Alpha(BloomGlow, (45 + (45 * pulse)) * strength));
+
+            var tile = $"key-{(frame + (key.Column + key.Row)) % 3}";
+
+            atlas.DrawOutline(tile, x, y, Alpha(BloomGold, (190 + (65 * pulse)) * strength));
+            atlas.Draw(tile, x, y);
+
+            // A four-point twinkle over the flower's shoulder, flaring on the pulse.
+            if (pulse > 0.35)
+            {
+                var sparkle = Alpha(BloomGlow, 255 * strength * pulse);
+                var sx = x + PixelLayout.CellSize - 3;
+                var sy = y + 1;
+
+                Raylib.DrawRectangle(sx, sy - 1, 1, 3, sparkle);
+                Raylib.DrawRectangle(sx - 1, sy, 3, 1, sparkle);
+
+                if (pulse > 0.8)
+                {
+                    Raylib.DrawRectangle(sx, sy - 2, 1, 5, sparkle);
+                    Raylib.DrawRectangle(sx - 2, sy, 5, 1, sparkle);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gives every hunter in the light a blood-red rim and burning eyes, drawn over the darkness.
+    /// </summary>
+    /// <param name="state">The floor being drawn.</param>
+    /// <param name="atlas">The floor's atlas, for the hunter's outline.</param>
+    /// <remarks>
+    /// <para>
+    /// The hunter's cloak is the darkest colour on the floor, so under the lightmap its body is
+    /// close to black: what the player sees is a red outline around a shape, and two eyes. That
+    /// is drawn here, after the light, so it does not sink into the dark with the body.
+    /// </para>
+    /// <para>
+    /// The marks are scaled by the eased light where the hunter stands, so a hunter in the dark
+    /// stays hidden exactly as before — this never shows the player something the torch does not
+    /// — and one walking into the light fades in rather than popping. A stunned hunter's rim goes
+    /// cold blue and its eyes go out; a sleeping one keeps its rim but shuts its eyes.
+    /// </para>
+    /// </remarks>
+    private void DrawHunterMarks(GameState state, TileAtlas atlas)
+    {
+        var hunters = state.Enemies;
+        var time = Raylib.GetTime();
+
+        for (var index = 0; index < hunters.Count; index++)
+        {
+            var hunter = hunters[index];
+
+            if (!OnScreen(hunter.Cell) && !OnScreen(hunter.From))
+            {
+                continue;
+            }
+
+            var (row, column) = PixelLayout.Glide(hunter.From, hunter.Cell, hunter.StepFraction);
+            var lit = LevelAt((int)Math.Round(row), (int)Math.Round(column));
+
+            if (lit <= LightFloor)
+            {
+                continue;
+            }
+
+            var strength = Math.Clamp(lit / 0.6, 0.0, 1.0);
+            var facing = index < _enemyFacings.Count ? _enemyFacings[index] : Direction.South;
+            var x = CanvasX(column);
+            var y = CanvasY(row);
+            var pulse = 0.5 + (0.5 * Math.Sin((time * 4.0) + (index * 2.1)));
+            var tile = $"killer-{NameOf(facing)}-{EnemyFrame(hunter)}";
+
+            atlas.DrawOutline(
+                tile,
+                x,
+                y,
+                Alpha(hunter.Stunned ? Stunned : HunterRim, (150 + (90 * pulse)) * strength));
+
+            // The outline is the silhouette stamped around the figure, so the body is drawn back
+            // over it — dimmed by the light it stands in, as the lightmap would have, so the
+            // cloak stays a shadow inside a red rim.
+            var shade = (byte)Math.Clamp((int)(lit * 255f), 0, 255);
+            var body = hunter.Stunned
+                ? new Color((byte)(Stunned.R * shade / 255), (byte)(Stunned.G * shade / 255), (byte)(Stunned.B * shade / 255), (byte)255)
+                : new Color(shade, shade, shade, (byte)255);
+
+            atlas.Draw(tile, x, y, body);
+
+            if (hunter.Stunned || hunter.Dormant || facing == Direction.North)
+            {
+                continue;
+            }
+
+            // The eyes sit where the rig draws them: both face-on, the forward pair in profile.
+            var (leftEye, rightEye) = facing switch
+            {
+                Direction.South => (7, 9),
+                Direction.East => (9, 10),
+                _ => (5, 6),
+            };
+            const int EyeRow = 4;
+
+            foreach (var eye in (ReadOnlySpan<int>)[leftEye, rightEye])
+            {
+                Raylib.DrawCircle(x + eye, y + EyeRow, 2.5f, Alpha(HunterRim, (60 + (70 * pulse)) * strength));
+                Raylib.DrawRectangle(x + eye, y + EyeRow, 1, 1, Alpha(HunterEye, 255 * strength));
+            }
+        }
+    }
+
+    /// <summary>Returns a colour with its alpha replaced, clamped to a byte.</summary>
+    private static Color Alpha(Color colour, double alpha) =>
+        new(colour.R, colour.G, colour.B, (byte)Math.Clamp((int)Math.Round(alpha), 0, 255));
 
     /// <summary>Draws the Gilded Cage's three locks, shut or thrown.</summary>
     /// <param name="state">The floor being drawn.</param>
@@ -1008,10 +1271,10 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         }
 
         var fade = (byte)(255 * Math.Clamp(left / 1.2, 0, 1));
-        var centre = CanvasX(state.Player.Column) + (PixelLayout.CellSize / 2);
+        var centre = CanvasX(_playerAt.Column) + (PixelLayout.CellSize / 2);
         var name = RelicCatalog.CardFor(kind).Name.ToUpperInvariant();
 
-        Font.DrawCentered(name, centre, CanvasY(state.Player.Row) - 12, 1, new Color((byte)238, (byte)228, (byte)255, fade));
+        Font.DrawCentered(name, centre, CanvasY(_playerAt.Row) - 12, 1, new Color((byte)238, (byte)228, (byte)255, fade));
     }
 
     /// <summary>Returns the gem colour that names a relic's family.</summary>
@@ -1103,20 +1366,11 @@ public sealed class PixelRenderer : IRenderer, IDisposable
     /// Multiplies the scene by one texel per cell: lantern falloff, remembered cells, and the
     /// killer's cold light.
     /// </summary>
-    private void DrawLight(GameState state)
+    private void DrawLight()
     {
-        TrackExploration(state);
+        UploadLight();
 
-        var stamp = LightStamp(state);
-
-        if (stamp != _lightStamp)
-        {
-            _lightStamp = stamp;
-            UploadLight(state);
-        }
-
-        // The flicker rides on the draw's tint instead of being baked into the texture, so the
-        // texture is only rebuilt when what is lit actually changes rather than ten times a second.
+        // The flicker rides on the draw's tint instead of being baked into the texture.
         var flicker = Flicker();
         var light = _style.LightTint;
         var tint = new Color(
@@ -1126,43 +1380,20 @@ public sealed class PixelRenderer : IRenderer, IDisposable
             (byte)255);
 
         Raylib.BeginBlendMode(BlendMode.Multiplied);
+        // One texel per cell from the camera's first cell, drawn where that cell is: the light
+        // scrolls with the floor, and the viewport's clip trims the extra row and column.
         Raylib.DrawTexturePro(
             _light,
-            new Rectangle(0, 0, _viewCells, _viewCells),
+            new Rectangle(0, 0, SpanCells, SpanCells),
             new Rectangle(
-                PixelLayout.Pad,
-                PixelLayout.HeaderHeight + PixelLayout.Pad,
-                _viewCells * PixelLayout.CellSize,
-                _viewCells * PixelLayout.CellSize),
+                CanvasX(_camera.Column),
+                CanvasY(_camera.Row),
+                SpanCells * PixelLayout.CellSize,
+                SpanCells * PixelLayout.CellSize),
             Vector2.Zero,
             0f,
             tint);
         Raylib.EndBlendMode();
-    }
-
-    /// <summary>
-    /// Returns a value that changes exactly when the light would: the two figures' cells, how much
-    /// has been seen, and a tenth-of-a-second bucket for the lantern's flicker.
-    /// </summary>
-    private int LightStamp(GameState state)
-    {
-        // Every hunter carries light, so every hunter's cell belongs in the stamp. Folding them
-        // into one number keeps the combine below to the arguments it already had.
-        var hunters = 17;
-
-        foreach (var hunter in state.Enemies)
-        {
-            hunters = unchecked((hunters * 31) + HashCode.Combine(hunter.Cell.Row, hunter.Cell.Column));
-        }
-
-        return HashCode.Combine(
-            state.Player.Row,
-            state.Player.Column,
-            hunters,
-            _explored.Count,
-            state.EnemyGlow.Count,
-            state.EffectiveVisionRadius,
-            HashCode.Combine(_camera.Column, _camera.Row, _viewCells));
     }
 
     /// <summary>Returns the lantern's flicker as a multiplier, from 0.88 to 1.0.</summary>
@@ -1196,42 +1427,61 @@ public sealed class PixelRenderer : IRenderer, IDisposable
         }
     }
 
-    /// <summary>Rebuilds the light texture: one texel per cell of the viewport.</summary>
+    /// <summary>
+    /// Eases every cell's light toward what the floor says it should be this frame.
+    /// </summary>
+    /// <param name="state">The floor being drawn.</param>
     /// <remarks>
-    /// Sized to the viewport rather than the floor, so the cost of a move is the size of the screen
-    /// rather than the size of the maze.
+    /// <para>
+    /// The rules decide what is lit a whole tile at a time, at the moment a step starts, so a
+    /// lightmap read straight from them jumps a cell with every step. Here each cell keeps its own
+    /// level and slides toward its target over about a step, and the lantern's falloff is measured
+    /// from where the explorer is drawn — between two cells while walking — rather than from the
+    /// tile the rules have already moved them to. The edge of the light rolls forward with the
+    /// walk, cells ahead brighten as they come into the torch, and the room behind dims away
+    /// instead of blinking out.
+    /// </para>
+    /// <para>
+    /// It runs over the whole floor, not only the viewport, so a cell that scrolls into view has
+    /// been easing all along and does not arrive with a stale level. The largest floor is a few
+    /// hundred cells, so this is cheap.
+    /// </para>
     /// </remarks>
-    private void UploadLight(GameState state)
+    private void EaseLight(GameState state)
     {
-        var radius = Math.Max(1, state.EffectiveVisionRadius);
-        var player = state.Player;
+        var size = (_rows, _columns);
 
-        Raylib.ImageDrawRectangle(ref _lightImage, 0, 0, _viewCells, _viewCells, Color.Black);
-
-        for (var row = 0; row < _viewCells; row++)
+        if (size != _levelSize || _levels.Length != _rows * _columns)
         {
-            var mazeRow = _camera.Row + row;
+            _levelSize = size;
+            _levels = new float[_rows * _columns];
+            _seen = new float[_rows * _columns];
+            _glow = new float[_rows * _columns];
+            _levelsPrimed = false;
+        }
 
-            if (mazeRow < 0 || mazeRow >= _rows)
+        // A new floor starts at its targets: fading in from black would hide the first second.
+        var step = _levelsPrimed
+            ? (float)(1.0 - Math.Exp(-Math.Min(Raylib.GetFrameTime(), 0.25) / LightEaseSeconds))
+            : 1f;
+        _levelsPrimed = true;
+
+        var radius = Math.Max(1, state.EffectiveVisionRadius);
+        var (playerRow, playerColumn) = _playerAt;
+        var glowing = state.EnemyGlow.Count > 0;
+
+        for (var row = 0; row < _rows; row++)
+        {
+            for (var column = 0; column < _columns; column++)
             {
-                continue;
-            }
-
-            for (var column = 0; column < _viewCells; column++)
-            {
-                var mazeColumn = _camera.Column + column;
-
-                if (mazeColumn < 0 || mazeColumn >= _columns)
-                {
-                    continue;
-                }
-
-                var cell = state.Maze.GetCell(mazeRow, mazeColumn);
+                var cell = state.Maze.GetCell(row, column);
+                var index = (row * _columns) + column;
+                var visible = state.IsVisible(cell);
                 double level;
 
-                if (state.IsVisible(cell))
+                if (visible)
                 {
-                    var distance = Math.Max(Math.Abs(cell.Row - player.Row), Math.Abs(cell.Column - player.Column));
+                    var distance = Math.Max(Math.Abs(row - playerRow), Math.Abs(column - playerColumn));
                     var falloff = 1.0 - (distance / (radius + 1.0));
                     level = 0.70 + (Math.Clamp(falloff, 0.0, 1.0) * 0.30);
                 }
@@ -1244,27 +1494,87 @@ public sealed class PixelRenderer : IRenderer, IDisposable
                     level = 0.0;
                 }
 
-                var brightness = (byte)Math.Clamp(level * 255.0, 0, 255);
-                var light = _style.LightTint;
-                var colour = state.EnemyGlow.Count > 0 && state.EnemyGlow.Contains(cell)
-                    ? new Color(
-                        (byte)Math.Clamp((brightness * 0.80 * light.R) / 255, 0, 255),
-                        (byte)Math.Clamp((brightness * 0.94 * light.G) / 255, 0, 255),
-                        (byte)Math.Clamp((brightness * light.B) / 255, 0, 255),
-                        (byte)255)
-                    : new Color(
-                        (byte)Math.Clamp((brightness * light.R) / 255, 0, 255),
-                        (byte)Math.Clamp((brightness * light.G) / 255, 0, 255),
-                        (byte)Math.Clamp((brightness * light.B) / 255, 0, 255),
+                _levels[index] += ((float)level - _levels[index]) * step;
+                _seen[index] += ((visible ? 1f : 0f) - _seen[index]) * step;
+                _glow[index] += ((glowing && state.EnemyGlow.Contains(cell) ? 1f : 0f) - _glow[index]) * step;
+            }
+        }
+    }
+
+    /// <summary>Writes the viewport's eased light into the light texture, one texel per cell.</summary>
+    /// <remarks>
+    /// The texture is updated in place rather than recreated, since it now changes every frame
+    /// something is moving. It covers the camera's first cell and one more row and column than
+    /// the view, because a gliding camera straddles two cells.
+    /// </remarks>
+    private void UploadLight()
+    {
+        var light = _style.LightTint;
+
+        for (var row = 0; row < SpanCells; row++)
+        {
+            var mazeRow = _camera.Row + row;
+
+            for (var column = 0; column < SpanCells; column++)
+            {
+                var mazeColumn = _camera.Column + column;
+                var colour = Color.Black;
+
+                if (mazeRow >= 0 && mazeRow < _rows && mazeColumn >= 0 && mazeColumn < _columns)
+                {
+                    var index = (mazeRow * _columns) + mazeColumn;
+                    var brightness = Math.Clamp(_levels[index], 0f, 1f) * 255f;
+
+                    // The hunter's light is colder: red and green give way a little to blue.
+                    var cold = _glow[index];
+                    var red = brightness * (1f - (0.20f * cold));
+                    var green = brightness * (1f - (0.06f * cold));
+
+                    colour = new Color(
+                        (byte)Math.Clamp((int)(red * light.R / 255f), 0, 255),
+                        (byte)Math.Clamp((int)(green * light.G / 255f), 0, 255),
+                        (byte)Math.Clamp((int)(brightness * light.B / 255f), 0, 255),
                         (byte)255);
+                }
 
                 Raylib.ImageDrawPixel(ref _lightImage, column, row, colour);
             }
         }
 
-        Raylib.UnloadTexture(_light);
-        _light = Raylib.LoadTextureFromImage(_lightImage);
-        Raylib.SetTextureFilter(_light, TextureFilter.Bilinear);
+        unsafe
+        {
+            Raylib.UpdateTexture(_light, _lightImage.Data);
+        }
+    }
+
+    /// <summary>Returns a cell's eased light, 0 to 1; 0 off the floor.</summary>
+    private float LevelAt(int row, int column) =>
+        row < 0 || row >= _rows || column < 0 || column >= _columns || _levels.Length != _rows * _columns
+            ? 0f
+            : _levels[(row * _columns) + column];
+
+    /// <summary>
+    /// Returns whether a cell's floor and walls are drawn: it is seen or remembered, or it is
+    /// still fading out of the light.
+    /// </summary>
+    private bool Drawn(GameState state, Cell cell) =>
+        Known(state, cell) || LevelAt(cell.Row, cell.Column) > LightFloor;
+
+    /// <summary>
+    /// Returns the tint a cell's tiles are drawn with: white in the torch, the remembered grey
+    /// out of it, and in between while it crosses from one to the other.
+    /// </summary>
+    private Color CellTint(Cell cell)
+    {
+        var seen = _seen.Length == _rows * _columns
+            ? Math.Clamp(_seen[(cell.Row * _columns) + cell.Column], 0f, 1f)
+            : 1f;
+
+        return new Color(
+            (byte)(Remembered.R + ((255 - Remembered.R) * seen)),
+            (byte)(Remembered.G + ((255 - Remembered.G) * seen)),
+            (byte)(Remembered.B + ((255 - Remembered.B) * seen)),
+            (byte)255);
     }
 
     /// <summary>
@@ -1392,6 +1702,11 @@ public sealed class PixelRenderer : IRenderer, IDisposable
             {
                 continue;
             }
+
+            // The weather hangs in the cave, not on the lens: it is shifted by the camera and
+            // wrapped, so it scrolls with the floor as the explorer walks.
+            x = left + Wrap(x - left - _cameraX, areaWidth);
+            y = top + Wrap(y - top - _cameraY, areaHeight);
 
             Raylib.DrawRectangle(
                 (int)Math.Round(x),

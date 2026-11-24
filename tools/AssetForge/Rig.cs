@@ -123,12 +123,30 @@ public static class Rig
         return canvas;
     }
 
-    /// <summary>Draws the killer: long limbs, small head, two bright eyes.</summary>
+    /// <summary>
+    /// Draws the killer: a hooded wraith in a near-black, ragged cloak, with a bone jaw under the
+    /// hood, two burning eyes and long bone claws at the ends of its sleeves.
+    /// </summary>
     /// <param name="theme">The theme whose palette roles are used.</param>
     /// <param name="facing">Which way the figure looks.</param>
-    /// <param name="frame">The reach pose; the arms and legs swap between frames.</param>
+    /// <param name="frame">The reach pose; the claws, sleeves and hem swap between frames.</param>
     /// <returns>A 16x16 sprite.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="theme"/> is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// It used to be a bone-white stick figure, which read as a skeleton doodle rather than a
+    /// threat. The cloak is now the darkest colour on the floor, so the hunter is a hole in the
+    /// light shaped like a person; the only bright things on it are the eyes, the jaw and the
+    /// claws, which is where a player should be looking. The window traces a red rim around it,
+    /// so the dark body still reads against the dark floor.
+    /// </para>
+    /// <para>
+    /// Every colour is a palette role, as with the rest of the cast: the cloak is
+    /// <see cref="PaletteRole.WallEdge"/> with folds in <see cref="PaletteRole.FloorDark"/>, the
+    /// hood's hollow is <see cref="PaletteRole.Shadow"/>, and the eyes are
+    /// <see cref="PaletteRole.Hazard"/>, the palette's colour for danger.
+    /// </para>
+    /// </remarks>
     public static PixelCanvas Killer(Theme theme, RigFacing facing, KillerFrame frame)
     {
         ArgumentNullException.ThrowIfNull(theme);
@@ -140,27 +158,115 @@ public static class Rig
 
         var canvas = new PixelCanvas(Size, Size);
         var reach = frame == KillerFrame.Walk0 ? -1 : frame == KillerFrame.Walk1 ? 1 : 0;
+        var cloak = Index(PaletteRole.WallEdge);
+        var fold = Index(PaletteRole.FloorDark);
+        var hollow = Index(PaletteRole.Shadow);
+        var bone = Index(PaletteRole.Bone);
+        var eye = Index(PaletteRole.Hazard);
 
-        canvas.Rect(7, 5, 2, 7, Index(PaletteRole.Bone));
-        canvas.Ellipse(8, 3, 2, 2, Index(PaletteRole.Bone));
+        // The robe: a long bell that flares from the shoulders to the floor. In profile it leans
+        // into the walk, wider behind than in front.
+        var profile = facing == RigFacing.East;
 
-        // Ribs: three dark gaps, so the torso is not a white post.
-        canvas.Rect(7, 7, 2, 1, Index(PaletteRole.WallEdge));
-        canvas.Rect(7, 9, 2, 1, Index(PaletteRole.WallEdge));
-
-        canvas.Line(7, 6, 3, 9 + reach, Index(PaletteRole.Bone));
-        canvas.Line(8, 6, 13, 9 - reach, Index(PaletteRole.Bone));
-        canvas.Line(7, 12, 5 - reach, 15, Index(PaletteRole.Bone));
-        canvas.Line(8, 12, 10 + reach, 15, Index(PaletteRole.Bone));
-
-        if (facing != RigFacing.North)
+        for (var y = 7; y <= 14; y++)
         {
-            var eyeY = 3;
-            canvas.Set(facing == RigFacing.South ? 7 : 8, eyeY, Index(PaletteRole.Glow));
-            canvas.Set(facing == RigFacing.South ? 9 : 9, eyeY, Index(PaletteRole.Glow));
+            var flare = (y - 7) / 2;
+            var left = profile ? 6 - flare : 6 - flare;
+            var right = profile ? 9 + ((y - 7) / 3) : 10 + flare;
+            canvas.Rect(left, y, right - left + 1, 1, cloak);
+        }
+
+        // A ragged hem: every other pixel hangs one row lower, and the tatters shift with the
+        // step so the cloak drags rather than glides.
+        var hemLeft = profile ? 2 : 2;
+        var hemRight = profile ? 11 : 13;
+
+        for (var x = hemLeft; x <= hemRight; x++)
+        {
+            if (((x + reach + 3) % 2) == 0)
+            {
+                canvas.Set(x, 15, cloak);
+            }
+        }
+
+        // Two folds down the robe, so it is cloth and not a cut-out.
+        canvas.Line(7, 9, 6 - (reach < 0 ? 1 : 0), 14, fold);
+        canvas.Line(profile ? 9 : 10, 9, profile ? 10 : 11 + (reach > 0 ? 1 : 0), 14, fold);
+
+        // The hood: a pointed cowl over the shoulders.
+        canvas.Ellipse(8, 5, 3, 3, cloak);
+        canvas.Set(8, 1, cloak);
+        canvas.Rect(5, 7, 7, 1, cloak);
+        canvas.Set(profile ? 6 : 8, 1, cloak);
+        canvas.Set(profile ? 7 : 8, 0, cloak);
+
+        if (facing == RigFacing.South)
+        {
+            // The face is a hollow in the hood with two burning eyes and a bone jaw.
+            canvas.Rect(7, 4, 3, 3, hollow);
+            canvas.Set(7, 4, eye);
+            canvas.Set(9, 4, eye);
+            canvas.Set(7, 6, bone);
+            canvas.Set(9, 6, bone);
+            canvas.Set(8, 7, bone);
+        }
+        else if (profile)
+        {
+            // In profile the hollow opens forward: one eye, and the jaw jutting past the cowl.
+            canvas.Rect(9, 4, 2, 3, hollow);
+            canvas.Set(10, 4, eye);
+            canvas.Set(9, 4, eye);
+            canvas.Set(10, 6, bone);
+            canvas.Set(11, 6, bone);
+        }
+        else
+        {
+            // From behind: only the cowl's seam, and the pale crown of the skull through it.
+            canvas.Line(8, 2, 8, 6, fold);
+            canvas.Set(8, 1, bone);
+        }
+
+        // The arms: sleeves held out from the body at chest height, each ending in a spread bone
+        // hand, so the figure is always reaching. In profile the leading arm grabs ahead and the
+        // trailing one drags; face-on both are out wide, rising and falling with the step.
+        if (profile)
+        {
+            canvas.Line(9, 8, 12, 8 + reach, cloak);
+            canvas.Line(9, 9, 12, 9 + reach, cloak);
+            Claw(canvas, 13, 8 + reach, 1, bone);
+
+            canvas.Line(6, 8, 4, 10 - reach, cloak);
+            Claw(canvas, 3, 10 - reach, -1, bone);
+        }
+        else
+        {
+            canvas.Line(5, 8, 3, 8 + reach, cloak);
+            canvas.Line(5, 9, 3, 9 + reach, cloak);
+            Claw(canvas, 2, 8 + reach, -1, bone);
+
+            canvas.Line(11, 8, 13, 8 - reach, cloak);
+            canvas.Line(11, 9, 13, 9 - reach, cloak);
+            Claw(canvas, 14, 8 - reach, 1, bone);
         }
 
         return canvas;
+    }
+
+    /// <summary>Draws a bone hand at a sleeve's end: three fingers fanning outward into talons.</summary>
+    /// <param name="canvas">The sprite being drawn.</param>
+    /// <param name="x">The wrist's column.</param>
+    /// <param name="y">The wrist's row.</param>
+    /// <param name="outward">+1 when the hand opens to the right, -1 to the left.</param>
+    /// <param name="bone">The palette index for the hand.</param>
+    private static void Claw(PixelCanvas canvas, int x, int y, int outward, byte bone)
+    {
+        canvas.Set(x, y, bone);
+        canvas.Set(x + outward, y - 1, bone);
+        canvas.Set(x + outward, y + 1, bone);
+        canvas.Set(x + outward, y, bone);
+        canvas.Set(x + (2 * outward), y - 2, bone);
+        canvas.Set(x + (2 * outward), y + 2, bone);
+        canvas.Set(x + (2 * outward), y, bone);
     }
 
     /// <summary>Draws the key: a glowing cap on a pale stem, bobbing over three frames.</summary>

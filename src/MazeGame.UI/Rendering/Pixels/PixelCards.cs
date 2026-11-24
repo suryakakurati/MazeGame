@@ -114,13 +114,19 @@ public static class PixelCards
             row++;
         }
 
-        DrawMenuItem(font, "TUTORIAL", centreX, menuY + (rowStep * row), selectedItem == (hasContinue ? 2 : 1), time, menuScale);
+        // The entries keep fixed numbers whether or not CONTINUE is drawn — DESCEND 0, CONTINUE 1,
+        // TUTORIAL 2, CARDS 3, LEAVE 4 — because that is how the title's input numbers them: with
+        // no save it skips 1 rather than renumbering. Only the row position closes the gap. The
+        // highlight used to renumber as well, so on a fresh load it sat one row below the entry
+        // actually selected: TUTORIAL could never light up, and pressing down appeared to jump
+        // straight to CARDS.
+        DrawMenuItem(font, "TUTORIAL", centreX, menuY + (rowStep * row), selectedItem == 2, time, menuScale);
         row++;
 
-        DrawMenuItem(font, "CARDS", centreX, menuY + (rowStep * row), selectedItem == (hasContinue ? 3 : 2), time, menuScale);
+        DrawMenuItem(font, "CARDS", centreX, menuY + (rowStep * row), selectedItem == 3, time, menuScale);
         row++;
 
-        DrawMenuItem(font, "LEAVE", centreX, menuY + (rowStep * row), selectedItem == (hasContinue ? 4 : 3), time, menuScale);
+        DrawMenuItem(font, "LEAVE", centreX, menuY + (rowStep * row), selectedItem == 4, time, menuScale);
 
         font.DrawCentered(
             "W/S OR ARROWS: SELECT   ENTER: CONFIRM   ESC: LEAVE",
@@ -1283,14 +1289,18 @@ public static class PixelCards
             y += lineHeight;
         }
 
-        // The footer's ability hints are for the real floors: here the only keys are walking and
-        // leaving, so the strip says exactly that.
-        Raylib.DrawRectangle(0, height - footer, width, footer, new Color(3, 12, 14, 234));
+        // The footer's ability hints are for the real floors: here the keys are the ones the
+        // lesson uses, so the strip says exactly that. It is opaque so the real footer's hints
+        // underneath do not show through it.
+        Raylib.DrawRectangle(0, height - footer, width, footer, new Color(3, 12, 14, 255));
         font.DrawCentered(
-            practice.IsComplete
-                ? "ENTER: BEGIN THE DESCENT   ESC: TITLE"
-                : FormattableString.Invariant(
-                    $"STEP {Math.Min(practice.CompletedSteps + 1, PracticeTutorial.StepCount)} OF {PracticeTutorial.StepCount}   WASD / ARROWS: WALK   ESC: TITLE"),
+            Fit(
+                practice.IsComplete
+                    ? "ENTER: BEGIN THE DESCENT   ESC: TITLE"
+                    : FormattableString.Invariant(
+                        $"STEP {Math.Min(practice.CompletedSteps + 1, PracticeTutorial.StepCount)} OF {PracticeTutorial.StepCount}   WASD / ARROWS: WALK   SHIFT: SPRINT   SPACE: BLINK   ESC: TITLE"),
+                1,
+                width - 24),
             centreX,
             height - (footer / 2) - (PixelFont.LineHeight / 2),
             1,

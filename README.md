@@ -21,8 +21,8 @@ graph/pathfinding libraries are used.
 > progress; only running out ends the run. Walking
 > is a cadence (a constant 0.26 s per cell; enemies start at 1.20 s and ramp to 0.22 s, so the
 > player starts ahead and has to draft speed to stay ahead; only cards and sprint make you faster),
-> one press is buffered, **Shift sprints** on a stamina bar. The explorer snaps to its tile (one
-> press, one tile) while the killer slides between cells. The hunt itself escalates: **one hunter
+> one press is buffered, **Shift sprints** on a stamina bar. One press is still one tile, but
+> the explorer and the killers glide between cells and the camera scrolls with the walk. The hunt itself escalates: **one hunter
 > for nine floors, two from floor 10, three from floor 16**, each with its own route and clock, and
 > by the bottom the base hunter is quicker than the base player — speed cards close the gap. All twenty floors
 > differ in **shape, weather, light and music**, not only in

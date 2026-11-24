@@ -1536,16 +1536,18 @@ public sealed class GameState
 
     /// <summary>Gets the cell the player stepped from.</summary>
     /// <remarks>
-    /// The rule-side position is <see cref="Player"/>, which changes at the start of a step. The
-    /// window deliberately does <b>not</b> draw between the two cells: the explorer snaps to its
-    /// tile so one press is one tile and the player can count them. These two members exist for a
-    /// walk-cycle animation and for tests that measure the cadence.
+    /// The rule-side position is <see cref="Player"/>, which changes at the start of a step, so
+    /// the rules only ever see whole tiles and one press is still one tile. The window draws the
+    /// explorer gliding from this cell to <see cref="Player"/> over the step, using
+    /// <see cref="PlayerStepFraction"/>, so the walk reads as continuous motion. These two members
+    /// also drive the walk cycle and the tests that measure the cadence.
     /// </remarks>
     public Cell PreviousPlayer => _playerFrom;
 
     /// <summary>Gets how far through its step the player is, from 0 to 1.</summary>
     /// <remarks>1 means "standing still on a cell". This is the step's clock, not a position: the
-    /// window draws the explorer on its cell and uses this only to pick a walk frame.</remarks>
+    /// window uses it to glide the drawn explorer between the two cells and to pick a walk
+    /// frame, while the rules keep the player on <see cref="Player"/>.</remarks>
     public double PlayerStepFraction => StepFraction(_playerStepLeft, _playerStepTotal);
 
     /// <summary>Gets the cell the first hunter stepped from, for the renderer's slide.</summary>

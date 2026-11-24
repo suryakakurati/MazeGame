@@ -311,29 +311,28 @@ internal static class RaylibFrontend
                         break;
                     }
 
-                    // Walking only: the practice floor has no verbs, and the tutorial has already
-                    // taught the keys for them.
-                    if (Pressed(KeyboardKey.W) || Pressed(KeyboardKey.Up))
+                    // The practice floor reads input exactly as a real floor does — a tap is one
+                    // tile, a hold keeps walking, Shift sprints and Space blinks — so what the
+                    // lesson teaches is what the descent will do. It used to read taps only, which
+                    // made its own "hold a key to keep walking" untrue.
+                    practice.Floor.SetSprinting(
+                        Held(KeyboardKey.LeftShift) || Held(KeyboardKey.RightShift));
+
+                    if (TryReadCommand(practice.Floor, walk, Raylib.GetTime(), out var lesson) &&
+                        lesson != GameCommand.Interact)
                     {
-                        GameCommands.Apply(practice.Floor, GameCommand.MoveNorth);
+                        GameCommands.Apply(practice.Floor, lesson);
                     }
-                    else if (Pressed(KeyboardKey.S) || Pressed(KeyboardKey.Down))
-                    {
-                        GameCommands.Apply(practice.Floor, GameCommand.MoveSouth);
-                    }
-                    else if (Pressed(KeyboardKey.A) || Pressed(KeyboardKey.Left))
-                    {
-                        GameCommands.Apply(practice.Floor, GameCommand.MoveWest);
-                    }
-                    else if (Pressed(KeyboardKey.D) || Pressed(KeyboardKey.Right))
-                    {
-                        GameCommands.Apply(practice.Floor, GameCommand.MoveEast);
-                    }
+
+                    // The lesson checks itself before the tick as well as after it: sprinting is
+                    // counted on the frame a step starts, while Shift is still known to be down.
+                    practice.Update();
 
                     // The floor ticks even though nothing hunts: the step is timed, so a walk has
                     // to be spent before the next tap counts.
                     practice.Floor.Tick(Raylib.GetFrameTime());
                     practice.Update();
+                    audio?.Handle(practice.Floor.DrainEvents());
 
                     break;
 
@@ -731,6 +730,7 @@ internal static class RaylibFrontend
         void StartPractice()
         {
             practice = new PracticeTutorial();
+            walk.Clear();
             pixels.Reset();
             pixels.SetFloor(practice.Definition);
             pixels.SetTheme(practice.Definition.ThemeId);

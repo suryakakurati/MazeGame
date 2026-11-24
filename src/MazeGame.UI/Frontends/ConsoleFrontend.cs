@@ -912,9 +912,10 @@ internal static class ConsoleFrontend
                 continue;
             }
 
-            Console.WriteLine("  WASD / arrows: walk    ESC: back to the title");
+            Console.WriteLine("  WASD / arrows: walk    SHIFT+direction: sprint    SPACE: blink    ESC: title");
 
-            var key = Console.ReadKey(intercept: true).Key;
+            var info = Console.ReadKey(intercept: true);
+            var key = info.Key;
 
             if (key == ConsoleKey.Escape)
             {
@@ -927,12 +928,18 @@ internal static class ConsoleFrontend
                 ConsoleKey.S or ConsoleKey.DownArrow => GameCommand.MoveSouth,
                 ConsoleKey.A or ConsoleKey.LeftArrow => GameCommand.MoveWest,
                 ConsoleKey.D or ConsoleKey.RightArrow => GameCommand.MoveEast,
+                ConsoleKey.Spacebar => GameCommand.Blink,
                 _ => (GameCommand?)null,
             };
 
             if (move is { } command)
             {
+                // A terminal cannot see Shift held on its own, so the practice reads it as a
+                // modifier on the step: Shift with a direction is a sprinting step.
+                practice.Floor.SetSprinting((info.Modifiers & ConsoleModifiers.Shift) != 0);
                 GameCommands.Apply(practice.Floor, command);
+                practice.Update();
+                practice.Floor.SetSprinting(false);
             }
 
             // The floor is timed even with nothing hunting: the tick spends the step, so the

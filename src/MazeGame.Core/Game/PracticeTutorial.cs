@@ -8,26 +8,30 @@ using MazeGame.Core.Pathfinding;
 namespace MazeGame.Core.Game;
 
 /// <summary>
-/// The guided practice floor behind the tutorial: a small, safe chamber that teaches walking, a
-/// bloom and the arch by asking for each one in turn.
+/// The guided practice floor behind the tutorial: a small, safe chamber that teaches walking,
+/// blinking, the blooms, sprinting and the arch by asking for each one in turn.
 /// </summary>
 /// <remarks>
 /// <para>
 /// This is the tutorial's "do it" half. The pages in <see cref="Tutorial"/> say what everything
-/// is; this floor makes the player walk, pick up a bloom and open the arch on a floor where
-/// nothing can hurt them — one hunter, and a clock slow enough that it never takes a step.
+/// is; this floor makes the player walk, blink through a wall, pick up the blooms, sprint and
+/// open the arch on a floor where nothing can hurt them — one hunter, and a clock slow enough
+/// that it never takes a step.
 /// </para>
 /// <para>
 /// The steps are derived from the floor rather than counted by hand: "walked" is the player no
-/// longer standing on the cell they started on, "picked a bloom" is <see cref="GameState.KeysCollected"/>,
-/// "opened the arch" is the arch's own rule. That is why one long walk can pass two steps, and why
-/// a frontend only has to call <see cref="Update"/> and read <see cref="Prompt"/>.
+/// longer standing on the cell they started on, "blinked" is a spent blink charge, "picked a
+/// bloom" is <see cref="GameState.KeysCollected"/>, "sprinted" is a few steps taken while
+/// <see cref="GameState.IsSprinting"/>, and "opened the arch" is the arch's own rule. That is why
+/// one action can pass two steps, and why a frontend only has to call <see cref="Update"/> and
+/// read <see cref="Prompt"/>.
 /// </para>
 /// <para>
 /// The chamber is laid out the way the game places things — player first, then the arch, then the
 /// blooms — so the arch is right beside the start and stays locked until the blooms are picked.
-/// The player walks past it, collects, and walks back, which is the whole loop of the real game in
-/// fifteen seconds.
+/// A short wall stands between the arch and the first bloom: the player walks onto the arch,
+/// blinks through the wall straight onto a bloom, takes the second, sprints a few steps and walks
+/// back, which is the whole loop of the real game in under a minute.
 /// </para>
 /// <para>
 /// It is a room rather than a corridor on purpose: the window draws a floor through a viewport
@@ -57,11 +61,19 @@ public sealed class PracticeTutorial
     /// </remarks>
     private const int LanternRadius = 6;
 
+    /// <summary>How many sprinting steps the sprint lesson asks for.</summary>
+    public const int SprintStepsNeeded = 3;
+
+    /// <summary>How many blinks the practice floor hands out: one for the lesson, one spare.</summary>
+    private const int PracticeBlinks = 2;
+
     private static readonly string[] Prompts =
     [
-        "WALK EAST: A TAP IS ONE TILE. HOLD A KEY TO KEEP WALKING.",
-        "STEP ONTO A BLOOM TO PICK IT UP.",
+        "WALK EAST ONTO THE ARCH: A TAP IS ONE TILE. HOLD A KEY TO KEEP WALKING.",
+        "A WALL BLOCKS THE WAY. FACE IT AND PRESS SPACE TO BLINK THROUGH.",
+        "STEP ONTO A BLOOM - THE FLOWER RINGED IN GOLD - TO PICK IT UP.",
         "TAKE THE OTHER BLOOM: THE ARCH UNLOCKS WHEN THE COUNT REACHES ZERO.",
+        "HOLD SHIFT WHILE YOU WALK TO SPRINT. TAKE A FEW QUICK STEPS.",
         "NOW STAND ON THE ARCH. THE WAY DOWN OPENS.",
     ];
 
@@ -70,6 +82,13 @@ public sealed class PracticeTutorial
 
     private readonly Grid _maze;
     private readonly Cell _start;
+
+    // The cell the player stood on at the last Update, so a new step is noticed once.
+    private Cell _lastSeen;
+
+    // Steps taken while sprinting. Sprint is a hold, so it is counted as it happens rather than
+    // read back afterwards: the flag drops the moment Shift is let go.
+    private int _sprintSteps;
 
     /// <summary>Creates the practice floor at its first step.</summary>
     public PracticeTutorial()
@@ -90,7 +109,7 @@ public sealed class PracticeTutorial
             VisionRadius = LanternRadius,
             EnemyAuraRadius = 0,
             EnemyAuraDistance = 0,
-            Powerups = PowerupCharges.None,
+            Powerups = PowerupCharges.None with { Blink = PracticeBlinks },
             MaxHearts = 3,
         };
 
@@ -101,6 +120,7 @@ public sealed class PracticeTutorial
             new LaidOutInOrder());
 
         _start = Floor.Player;
+        _lastSeen = _start;
     }
 
     /// <summary>
@@ -136,6 +156,24 @@ public sealed class PracticeTutorial
     /// </remarks>
     public void Update()
     {
+        if (!SameCell(Floor.Player, _lastSeen))
+        {
+            _lastSeen = Floor.Player;
+
+            if (Floor.IsSprinting)
+            {
+                _sprintSteps++;
+            }
+        }
+
+        // The arch ends the floor, and a finished floor cannot be asked for anything more: a
+        // player who skipped a lesson has still walked the loop, so the practice is done.
+        if (Floor.Status == GameStatus.Won)
+        {
+            CompletedSteps = Prompts.Length;
+            return;
+        }
+
         while (!IsComplete && Satisfied(CompletedSteps))
         {
             CompletedSteps++;
@@ -146,8 +184,10 @@ public sealed class PracticeTutorial
     private bool Satisfied(int step) => step switch
     {
         0 => !SameCell(Floor.Player, _start),
-        1 => Floor.KeysCollected >= 1,
-        2 => Floor.KeysRemaining == 0,
+        1 => Floor.PowerupsRemaining.Blink < PracticeBlinks,
+        2 => Floor.KeysCollected >= 1,
+        3 => Floor.KeysRemaining == 0,
+        4 => _sprintSteps >= SprintStepsNeeded,
         _ => Floor.Status == GameStatus.Won,
     };
 
@@ -181,7 +221,9 @@ public sealed class PracticeTutorial
     /// <remarks>
     /// Every cell starts walled, and only the walls between two cells of the chamber are taken
     /// out, so the room arrives with the grid's own boundary as its rock without any of the maze's
-    /// machinery.
+    /// machinery. Two walls are left standing east of the arch's column, in the top two rows: the
+    /// wall the blink lesson asks the player to pass through. The room stays open around it, so
+    /// the floor is still one connected space.
     /// </remarks>
     private static Grid Chamber(int size)
     {
@@ -191,7 +233,7 @@ public sealed class PracticeTutorial
         {
             for (var column = 0; column < size; column++)
             {
-                if (column < size - 1)
+                if (column < size - 1 && !IsBlinkWall(row, column))
                 {
                     grid.RemoveWall(row, column, Direction.East);
                 }
@@ -201,7 +243,15 @@ public sealed class PracticeTutorial
                     grid.RemoveWall(row, column, Direction.South);
                 }
             }
-        }        return grid;
+        }
+
+        return grid;
     }
+
+    /// <summary>
+    /// Returns whether the east wall of a cell is the one the blink lesson keeps: between the
+    /// arch's column and the blooms', in the top two rows.
+    /// </summary>
+    private static bool IsBlinkWall(int row, int column) => column == 1 && row <= 1;
 }
 

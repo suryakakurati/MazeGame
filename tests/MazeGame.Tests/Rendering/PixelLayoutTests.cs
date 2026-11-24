@@ -232,4 +232,70 @@ public sealed class PixelLayoutTests
         Assert.Throws<ArgumentOutOfRangeException>(() => PixelLayout.CanvasHeight(0));
         Assert.Throws<ArgumentOutOfRangeException>(() => PixelLayout.ViewCells(-1));
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    [InlineData(7)]
+    [InlineData(11)]
+    [InlineData(14)]
+    public void CameraOffset_OnAWholeCell_IsTheSnappedCameraInPixels(int focus)
+    {
+        // Standing still, the gliding camera must sit exactly where the tile camera always did.
+        var snapped = PixelCamera.For(15, 15, 9, 9, Maze.GetCell(focus, focus));
+
+        Assert.Equal(snapped.Column * PixelLayout.CellSize, PixelLayout.CameraOffset(15, 9, focus));
+        Assert.Equal(snapped.Row * PixelLayout.CellSize, PixelLayout.CameraOffset(15, 9, focus));
+    }
+
+    [Fact]
+    public void CameraOffset_BetweenTwoCells_GlidesByThePixel()
+    {
+        // Halfway from column 7 to column 8, the camera is halfway between the two snapped ones.
+        var from = PixelLayout.CameraOffset(15, 9, 7.0);
+        var to = PixelLayout.CameraOffset(15, 9, 8.0);
+        var middle = PixelLayout.CameraOffset(15, 9, 7.5);
+
+        Assert.Equal(PixelLayout.CellSize, to - from);
+        Assert.Equal(from + (PixelLayout.CellSize / 2), middle);
+    }
+
+    [Fact]
+    public void CameraOffset_NeverLooksPastTheFloor()
+    {
+        Assert.Equal(0, PixelLayout.CameraOffset(15, 9, 0.4));
+        Assert.Equal(6 * PixelLayout.CellSize, PixelLayout.CameraOffset(15, 9, 14.0));
+    }
+
+    [Fact]
+    public void CameraOffset_CentresAFloorSmallerThanTheView()
+    {
+        // A 9-cell floor in a 13-cell view sits two cells in, wherever the player stands.
+        Assert.Equal(-2 * PixelLayout.CellSize, PixelLayout.CameraOffset(9, 13, 0.0));
+        Assert.Equal(-2 * PixelLayout.CellSize, PixelLayout.CameraOffset(9, 13, 4.5));
+    }
+
+    [Fact]
+    public void Glide_MovesAFigureAcrossOneTileOverItsStep()
+    {
+        var from = Maze.GetCell(4, 4);
+        var to = Maze.GetCell(4, 5);
+
+        Assert.Equal((4.0, 4.0), PixelLayout.Glide(from, to, 0.0));
+        Assert.Equal((4.0, 4.25), PixelLayout.Glide(from, to, 0.25));
+        Assert.Equal((4.0, 5.0), PixelLayout.Glide(from, to, 1.0));
+    }
+
+    [Fact]
+    public void Glide_NeverSlidesAJumpAcrossTheFloor()
+    {
+        // A hunter thrown across the floor, or a thread gate, lands at once.
+        var from = Maze.GetCell(1, 1);
+        var to = Maze.GetCell(9, 12);
+
+        Assert.Equal((9.0, 12.0), PixelLayout.Glide(from, to, 0.5));
+
+        // Standing still is not a step either.
+        Assert.Equal((1.0, 1.0), PixelLayout.Glide(from, from, 0.5));
+    }
 }

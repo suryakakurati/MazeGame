@@ -16,6 +16,10 @@ internal sealed class TileAtlas : IDisposable
 {
     private readonly Texture2D _texture;
     private readonly ThemeAtlas _info;
+    private readonly string _path;
+
+    // The atlas with every opaque pixel turned white, built the first time an outline is drawn.
+    private Texture2D _silhouette;
 
     /// <summary>Loads a theme's atlas.</summary>
     /// <param name="info">The manifest entry describing it.</param>
@@ -27,7 +31,8 @@ internal sealed class TileAtlas : IDisposable
         ArgumentNullException.ThrowIfNull(directory);
 
         _info = info;
-        _texture = Raylib.LoadTexture(System.IO.Path.Combine(directory, info.FileName));
+        _path = System.IO.Path.Combine(directory, info.FileName);
+        _texture = Raylib.LoadTexture(_path);
         Raylib.SetTextureFilter(_texture, TextureFilter.Point);
     }
 
@@ -97,6 +102,53 @@ internal sealed class TileAtlas : IDisposable
     /// <param name="y">The top edge in canvas pixels.</param>
     public void Draw(string name, int x, int y) => Draw(name, x, y, Color.White);
 
-    /// <summary>Releases the texture.</summary>
-    public void Dispose() => Raylib.UnloadTexture(_texture);
+    /// <summary>
+    /// Draws a one-pixel outline around a tile's shape, in a solid colour.
+    /// </summary>
+    /// <param name="name">The tile's manifest name.</param>
+    /// <param name="x">The tile's left edge in canvas pixels.</param>
+    /// <param name="y">The tile's top edge in canvas pixels.</param>
+    /// <param name="colour">The outline's colour; its alpha fades the whole ring.</param>
+    /// <remarks>
+    /// The outline is the tile's own silhouette stamped one pixel out in eight directions, so it
+    /// follows the sprite's exact shape on the pixel grid. Draw the tile itself afterwards and
+    /// only the ring is left showing. The silhouette sheet is the atlas brightened to white, made
+    /// once, so a tint can turn it any colour.
+    /// </remarks>
+    public void DrawOutline(string name, int x, int y, Color colour)
+    {
+        if (_silhouette.Id == 0)
+        {
+            var image = Raylib.LoadImage(_path);
+            Raylib.ImageColorBrightness(ref image, 255);
+            _silhouette = Raylib.LoadTextureFromImage(image);
+            Raylib.SetTextureFilter(_silhouette, TextureFilter.Point);
+            Raylib.UnloadImage(image);
+        }
+
+        var tile = _info.Tile(name);
+        var source = new Rectangle(tile.X, tile.Y, tile.Width, tile.Height);
+
+        for (var dy = -1; dy <= 1; dy++)
+        {
+            for (var dx = -1; dx <= 1; dx++)
+            {
+                if (dx != 0 || dy != 0)
+                {
+                    Raylib.DrawTextureRec(_silhouette, source, new Vector2(x + dx, y + dy), colour);
+                }
+            }
+        }
+    }
+
+    /// <summary>Releases the textures.</summary>
+    public void Dispose()
+    {
+        Raylib.UnloadTexture(_texture);
+
+        if (_silhouette.Id != 0)
+        {
+            Raylib.UnloadTexture(_silhouette);
+        }
+    }
 }

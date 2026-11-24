@@ -126,6 +126,73 @@ public static class PixelLayout
     public static int CellY(int row, int cameraRow) => HeaderHeight + Pad + ((row - cameraRow) * CellSize);
 
     /// <summary>
+    /// Returns where a smoothly following camera's left (or top) edge sits, in atlas pixels from
+    /// the floor's first cell, along one axis.
+    /// </summary>
+    /// <param name="maze">The floor's size along this axis, in cells.</param>
+    /// <param name="view">The viewport's size along this axis, in cells.</param>
+    /// <param name="focus">
+    /// The followed figure's position along this axis, in cells; fractional while it is between
+    /// two tiles.
+    /// </param>
+    /// <returns>
+    /// The camera's offset in atlas pixels: negative when a floor smaller than the viewport is
+    /// centred, otherwise clamped so the camera never looks past the floor's edge.
+    /// </returns>
+    /// <remarks>
+    /// This is the pixel version of <see cref="PixelCamera"/>: on a whole cell it gives exactly
+    /// that camera times <see cref="CellSize"/>, and between two cells it glides, so the world
+    /// scrolls with a walking figure instead of jumping a tile at the end of the step.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when a size is not positive.</exception>
+    public static int CameraOffset(int maze, int view, double focus)
+    {
+        if (maze <= 0 || view <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(view), "A camera needs a positive maze and viewport.");
+        }
+
+        if (maze <= view)
+        {
+            // A floor narrower than the viewport is centred, with darkness on both sides. Whole
+            // cells, like PixelCamera, so the small floors sit where they always have.
+            return -((view - maze) / 2) * CellSize;
+        }
+
+        var centre = (int)Math.Round(focus * CellSize) + (CellSize / 2);
+        var offset = centre - ((view * CellSize) / 2);
+
+        return Math.Clamp(offset, 0, (maze - view) * CellSize);
+    }
+
+    /// <summary>
+    /// Returns a figure's drawn position between the cell it stepped from and the cell it is on.
+    /// </summary>
+    /// <param name="from">The cell the step started on.</param>
+    /// <param name="to">The cell the rules already have the figure on.</param>
+    /// <param name="fraction">How far through the step it is, from 0 to 1.</param>
+    /// <returns>The (row, column) to draw at, fractional while the step is running.</returns>
+    /// <remarks>
+    /// Only a step between two neighbouring cells is slid. A jump — a hunter thrown across the
+    /// floor, a thread gate — is drawn on the new cell at once, so a figure never glides through
+    /// rock to get there.
+    /// </remarks>
+    public static (double Row, double Column) Glide(Cell from, Cell to, double fraction)
+    {
+        var rows = to.Row - from.Row;
+        var columns = to.Column - from.Column;
+
+        if (Math.Abs(rows) + Math.Abs(columns) != 1 || fraction >= 1.0)
+        {
+            return (to.Row, to.Column);
+        }
+
+        var t = Math.Clamp(fraction, 0.0, 1.0);
+
+        return (from.Row + (rows * t), from.Column + (columns * t));
+    }
+
+    /// <summary>
     /// Works out the integer scale and offset that put a canvas inside a window.
     /// </summary>
     /// <param name="canvasWidth">The canvas width in atlas pixels.</param>
@@ -200,10 +267,11 @@ public static class PixelLayout
 /// The cell the canvas's top-left corner sits on: the camera that follows the player.
 /// </summary>
 /// <remarks>
-/// Kept as two integers rather than a pixel offset so the world can only ever be drawn on the tile
-/// grid — the camera snaps one cell at a time, like the figure it follows. When a floor is smaller
-/// than the viewport the camera centres the floor instead of clamping to zero, so a small maze does
-/// not hug the top-left corner of the screen.
+/// Two whole cells: the camera a figure standing still on a tile is seen from. The renderer's
+/// gliding camera (<see cref="PixelLayout.CameraOffset"/>) is this camera in pixels while the
+/// player stands still, and uses it as the first cell its loops visit while the player walks. When a
+/// floor is smaller than the viewport the camera centres the floor instead of clamping to zero, so
+/// a small maze does not hug the top-left corner of the screen.
 /// </remarks>
 public readonly record struct PixelCamera(int Column, int Row)
 {
